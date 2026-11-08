@@ -37,6 +37,7 @@ import { renderExportsPage } from "@worker/transport/owner-pages/exports";
 import { renderGrantsPage } from "@worker/transport/owner-pages/grants";
 import { renderMeasurementsPage } from "@worker/transport/owner-pages/measurements";
 import type { OwnerServiceMetadata } from "@worker/transport/owner-pages/shell";
+import { WORKER_VERSION } from "@worker/transport/owner-pages/version";
 import { Hono } from "hono";
 
 /** Browser cookie that binds one-use owner form state to this browser. */
@@ -141,11 +142,12 @@ function completedSnapshots(
 
 /** Return the escaped service facts that the current handler can prove. */
 function ownerServiceMetadata(env: Env): OwnerServiceMetadata {
-	if (!env.SERVICE_ORIGIN) return {};
+	const metadata: OwnerServiceMetadata = { workerVersion: WORKER_VERSION };
+	if (!env.SERVICE_ORIGIN) return metadata;
 	try {
-		return { serviceHost: new URL(env.SERVICE_ORIGIN).host };
+		return { ...metadata, serviceHost: new URL(env.SERVICE_ORIGIN).host };
 	} catch {
-		return {};
+		return metadata;
 	}
 }
 

@@ -48,12 +48,21 @@ describe("owner page rendering", () => {
 	it("renders escaped service metadata in the shared owner shell", () => {
 		const html = renderOwnerShell("clients", "<h1>Connected clients</h1>", {
 			serviceHost: "service.test&lt;&amp;",
+			workerVersion: "1.2.3<",
 			vaultEpoch: "epoch-1",
 		});
 		expect(html).toContain("service.test&amp;lt;&amp;amp;");
-		expect(html).toContain('<span class="label">Worker</span> 0.3.0');
+		expect(html).toContain('<span class="label">Worker</span> 1.2.3&lt;');
 		expect(html).toContain('<span class="label">Vault epoch</span> epoch-1');
 		expect(html).not.toContain("Service metadata unknown");
+	});
+
+	it("omits the Worker line when the handler passes no version", () => {
+		const html = renderOwnerShell("clients", "<h1>Connected clients</h1>");
+		expect(html).not.toContain('<span class="label">Worker</span>');
+		expect(html).toContain(
+			'<section class="owner-service"><h2>Service</h2></section>',
+		);
 	});
 
 	it("formats decimal megabytes, short counts, durations, and UTC values", () => {

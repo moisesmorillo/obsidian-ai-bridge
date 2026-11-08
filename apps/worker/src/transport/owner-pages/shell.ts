@@ -1,10 +1,14 @@
 import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
-import { WORKER_VERSION } from "@worker/transport/owner-pages/version";
 
 /** Raw optional service facts. The shell escapes every value before HTML output. */
 export interface OwnerServiceMetadata {
 	/** Host from SERVICE_ORIGIN, including its port when one is set. */
 	serviceHost?: string;
+	/**
+	 * Worker package version that the handler embeds at build time.
+	 * The shell omits the line when absent, so tests stay independent of release bumps.
+	 */
+	workerVersion?: string;
 	/** Current epoch for the selected vault when the handler can prove it. */
 	vaultEpoch?: string;
 }
@@ -53,7 +57,11 @@ export function renderOwnerShell(
 					`<p><span class="label">Host</span> ${escapeServiceText(metadata.serviceHost)}</p>`,
 				]
 			: []),
-		`<p><span class="label">Worker</span> ${WORKER_VERSION}</p>`,
+		...(metadata.workerVersion
+			? [
+					`<p><span class="label">Worker</span> ${escapeServiceText(metadata.workerVersion)}</p>`,
+				]
+			: []),
 		...(metadata.vaultEpoch
 			? [
 					`<p><span class="label">Vault epoch</span> ${escapeServiceText(metadata.vaultEpoch)}</p>`,

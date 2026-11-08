@@ -71,6 +71,9 @@ describe("consent page rendering", () => {
 		);
 		expect(html).toContain(".consent-deny{order:0;");
 		expect(html).toContain(
+			".consent-deny:hover,.consent-deny:active{background:transparent;border-color:var(--highlight-high);color:var(--text)}",
+		);
+		expect(html).toContain(
 			'.consent-actions button[name="decision"][value="approve"]{order:1',
 		);
 		expect(html).toContain(

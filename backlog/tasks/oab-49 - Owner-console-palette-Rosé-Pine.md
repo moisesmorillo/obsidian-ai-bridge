@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-08T02:45:00Z'
-updated_date: '2026-11-08T02:54:00Z'
+updated_date: '2026-11-08T03:00:00Z'
 labels:
   - worker
   - design
@@ -54,9 +54,17 @@ Check consent CSS overrides, 12px meaningful labels, attention and fresh chips, 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implementation status: safe partial palette implementation completed and committed. Blocker: Fresh and Stale are both rendered by apps/worker/src/transport/owner-pages/measurements.ts:80 as <span class="chip"> with text only, so CSS cannot distinguish foam from gold without a state selector. Agent kind has no semantic class in apps/worker/src/transport/owner-pages/clients.ts:42, where the Kind column renders Unknown as plain text. Per parent decision, no renderer markup or class changed. No unused selectors or false tests were added. Remaining work needs a separately authorized class-only markup change before full acceptance.
+## Status
+Safe partial palette work and whole-branch review corrections are committed. OAB-49 remains In Progress. Fresh/Stale and agent-kind color mappings remain blocked because their markup lacks semantic selectors. No markup changed.
 
-Validation: Focused worker test command was blocked before Vitest because apps/worker/node_modules/wrangler/bin/wrangler.js is absent. bun run docs:check passed. `biome check` passed for all three changed TypeScript files. bun run check failed at root lint with 53 diagnostics, mainly existing unrelated formatting issues across the repository. Worker preflight failed because Wrangler is absent. Snapshot comparison confirmed all rendered HTML outside <style> is unchanged across five snapshot entries. CSS token inspection found one :root block and no hex or rgba literals outside it. Exact WCAG values from the token colors: text/base 13.3889:1, text/surface 12.5048:1, text/overlay 11.5066:1, subtle/surface 5.1180:1, base/rose 10.4549:1.
+## Review findings
+- Finding 1 fixed: updated consent-page snapshot for current Rosé Pine styles. A comparison confirms HTML outside <style> stayed unchanged.
+- Finding 2 fixed: existing .consent-deny hover and active selectors preserve transparent background, highlight-high border, and text ink. Added a focused assertion.
+- Finding 3 remains open: Fresh/Stale and agent kind lack selectors. Keep this as a draft blocker.
+- Finding 4 fixed: .owner-sidebar uses --surface and .about-panel uses --overlay. Added focused mapping assertions.
 
-Task review finding disposition: selectors remain a known blocker because Fresh/Stale and agent-kind values lack semantic selectors. The F2 token table now labels gold, foam, and iris as unused tokens with their intended mappings and states the selector limits. Validation remains incomplete: docs:check passed for this correction, but prior full check, focused tests, and Worker preflight did not pass due repository lint diagnostics and missing Wrangler.
+## Validation
+Added regression assertions before implementation fixes. No tests ran for this correction. Earlier focused command `bun run --filter '@obsidian-ai-bridge/worker' test -- owner-pages.test.ts` stopped before Vitest because apps/worker/node_modules/wrangler/bin/wrangler.js was missing. The earlier root `bun run check` failed at lint with 52 errors and 2 informational diagnostics, as the branch-review report corrected. Worker preflight also failed because Wrangler was missing.
+
+For this correction, changed-file Biome checks passed for tokens.css.ts, consent.ts, owner-pages.test.ts, and consent-page.test.ts. `bun run docs:check` passed. Snapshot comparison confirmed consent HTML outside its stylesheet stayed unchanged. `git diff --check` passed. The full check, focused tests, and Worker preflight remain incomplete.
 <!-- SECTION:NOTES:END -->

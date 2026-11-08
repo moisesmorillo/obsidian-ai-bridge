@@ -56,6 +56,15 @@ describe("owner page rendering", () => {
 		expect(OWNER_CONSOLE_CSS).toContain("grid-template-columns:1fr");
 	});
 
+	it("applies surface and overlay backgrounds to the sidebar and about panel", () => {
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".owner-sidebar{flex:1 1 240px;max-width:256px;padding:24px 0 24px 24px;background:var(--surface)}",
+		);
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".about-panel{background:var(--overlay)}",
+		);
+	});
+
 	it("meets WCAG contrast targets from declared palette tokens", () => {
 		const root = OWNER_CONSOLE_CSS.match(/:root\{([^}]*)\}/)?.[1] ?? "";
 		const tokens = Object.fromEntries(

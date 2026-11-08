@@ -25,6 +25,46 @@ describe("release compatibility version sync", () => {
 		}
 	});
 
+	it("is idempotent when the release entry already matches", async () => {
+		const root = mkdtempSync(join(tmpdir(), "release-versions-repeat-"));
+		const manifestPath = join(root, "manifest.json");
+		const versionsPath = join(root, "versions.json");
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({ version: "0.1.7", minAppVersion: "1.14.0" }),
+		);
+		const original = '{"0.1.6":"1.13.0","0.1.7":"1.14.0"}';
+		writeFileSync(versionsPath, original);
+		try {
+			await syncCompatibilityVersion(manifestPath, versionsPath);
+			expect(JSON.parse(readFileSync(versionsPath, "utf8"))).toEqual(
+				JSON.parse(original),
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not replace a conflicting historical entry", async () => {
+		const root = mkdtempSync(join(tmpdir(), "release-versions-conflict-"));
+		const manifestPath = join(root, "manifest.json");
+		const versionsPath = join(root, "versions.json");
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({ version: "0.1.7", minAppVersion: "1.14.0" }),
+		);
+		const original = '{"0.1.7":"1.13.0"}';
+		writeFileSync(versionsPath, original);
+		try {
+			await expect(
+				syncCompatibilityVersion(manifestPath, versionsPath),
+			).rejects.toThrow(/conflicts/);
+			expect(readFileSync(versionsPath, "utf8")).toBe(original);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects invalid versions and malformed compatibility maps", async () => {
 		const root = mkdtempSync(join(tmpdir(), "release-versions-invalid-"));
 		const manifestPath = join(root, "manifest.json");

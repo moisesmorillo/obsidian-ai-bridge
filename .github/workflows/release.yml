@@ -33,6 +33,8 @@ jobs:
           version: 2026.10.8
       - name: Install workspace dependencies
         run: bun install --frozen-lockfile
+      - name: Write tag compatibility entry
+        run: bun apps/plugin/tools/release-versions.ts apps/plugin/manifest.json apps/plugin/versions.json
       - name: Validate release metadata
         env:
           PLUGIN_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -55,11 +57,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.8
       - name: Verify tag source
         shell: bash
         env:
@@ -92,7 +99,21 @@ jobs:
           set -euo pipefail
           tag="${RELEASE_TAG:?Missing release tag}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" apps/plugin/dist/manifest.json apps/plugin/dist/main.js
+            assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            download_dir="$(mktemp -d)"
+            trap 'rm -rf "$download_dir"' EXIT
+            for file in apps/plugin/dist/manifest.json apps/plugin/dist/main.js; do
+              name="$(basename "$file")"
+              if printf '%s\n' "$assets" | grep -Fxq "$name"; then
+                gh release download "$tag" --pattern "$name" --dir "$download_dir"
+                if ! cmp -s "$file" "$download_dir/$name"; then
+                  echo "Published asset ${name} differs from the checked release asset." >&2
+                  exit 1
+                fi
+              else
+                gh release upload "$tag" "$file"
+              fi
+            done
           else
             gh release create "$tag" \
               --verify-tag \
@@ -101,3 +122,83 @@ jobs:
               apps/plugin/dist/manifest.json \
               apps/plugin/dist/main.js
           fi
+      - name: Record published compatibility entry on main
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG:?Missing release tag}"
+          manifest="$(mktemp)"
+          trap 'rm -f "$manifest"' EXIT
+          git show "${tag}:apps/plugin/manifest.json" > "$manifest"
+          release_version="$(bun -e 'const manifest = JSON.parse(await Bun.file(process.argv[1]).text()); console.log(manifest.version)' "$manifest")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          attempt=0
+          while [ "$attempt" -lt 3 ]; do
+            git fetch origin main
+            git switch --detach FETCH_HEAD
+            bun apps/plugin/tools/release-versions.ts "$manifest" apps/plugin/versions.json
+            if git diff --quiet -- apps/plugin/versions.json; then
+              echo "Compatibility entry ${release_version} already exists on main."
+              exit 0
+            fi
+            git add apps/plugin/versions.json
+            git commit -m "chore(plugin): record compatibility for ${release_version}"
+            if git push origin HEAD:main; then exit 0; fi
+            attempt=$((attempt + 1))
+          done
+          branch="chore/plugin-compatibility-${release_version}"
+          branch_ref="refs/heads/${branch}"
+          commit_message="chore(plugin): record compatibility for ${release_version}"
+          if gh pr list --state open --head "$branch" --json url --jq '.[0].url' | grep -q .; then
+            echo "Compatibility PR already exists for ${release_version}."
+            exit 0
+          fi
+          existing_branch="$(git ls-remote --heads origin "$branch_ref")"
+          if [ -n "$existing_branch" ]; then
+            git fetch origin \
+              "refs/heads/main:refs/remotes/origin/main" \
+              "${branch_ref}:refs/remotes/origin/${branch}"
+            branch_tip="origin/${branch}"
+            merge_base="$(git merge-base origin/main "$branch_tip")"
+            branch_parent="$(git rev-parse "${branch_tip}^")"
+            changed_files="$(git diff --name-only "$merge_base" "$branch_tip")"
+            branch_commits="$(git rev-list --count "${merge_base}..${branch_tip}")"
+            branch_subject="$(git log -1 --format=%s "$branch_tip")"
+            branch_parent_map="$(mktemp)"
+            expected_branch_map="$(mktemp)"
+            branch_map="$(mktemp)"
+            current_main_map="$(mktemp)"
+            trap 'rm -f "$manifest" "$branch_parent_map" "$expected_branch_map" "$branch_map" "$current_main_map"' EXIT
+            git show "${branch_parent}:apps/plugin/versions.json" > "$branch_parent_map"
+            cp "$branch_parent_map" "$expected_branch_map"
+            bun apps/plugin/tools/release-versions.ts "$manifest" "$expected_branch_map"
+            git show "${branch_tip}:apps/plugin/versions.json" > "$branch_map"
+            git show origin/main:apps/plugin/versions.json > "$current_main_map"
+            bun apps/plugin/tools/release-versions.ts "$manifest" "$current_main_map"
+            if [ "$branch_parent" != "$merge_base" ] ||
+              [ "$changed_files" != "apps/plugin/versions.json" ] ||
+              [ "$branch_commits" != 1 ] ||
+              [ "$branch_subject" != "$commit_message" ] ||
+              ! cmp -s "$expected_branch_map" "$branch_map"; then
+              echo "Fallback branch ${branch} has changes that do not match this release entry." >&2
+              exit 1
+            fi
+            echo "Reusing the matching fallback branch ${branch}."
+          else
+            git fetch origin main
+            git switch --detach FETCH_HEAD
+            bun apps/plugin/tools/release-versions.ts "$manifest" apps/plugin/versions.json
+            if git diff --quiet -- apps/plugin/versions.json; then exit 0; fi
+            git add apps/plugin/versions.json
+            git commit -m "$commit_message"
+            git push origin "HEAD:${branch_ref}"
+          fi
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "$commit_message" \
+            --body "Record the compatibility entry for the published plugin tag ${tag}."

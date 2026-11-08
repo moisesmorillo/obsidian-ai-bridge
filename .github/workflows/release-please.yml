@@ -24,48 +24,6 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  sync-plugin-compatibility:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.pull-requests != '' && needs.release-please.outputs.pull-requests != '[]' && needs.release-please.result == 'success' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: true
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
-        with:
-          version: 2026.10.8
-      - name: Find plugin release pull request
-        id: pr
-        env:
-          RELEASE_PRS: ${{ needs.release-please.outputs.pull-requests }}
-        run: |
-          set -eu
-          branch="$(printf '%s' "${RELEASE_PRS:-[]}" | jq -r '.[] | select(.headBranchName | endswith("--components--ai-bridge")) | .headBranchName' | head -n 1)"
-          if [ -z "$branch" ]; then
-            echo "branch=" >> "$GITHUB_OUTPUT"
-          else
-            echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Update compatibility map on release PR branch
-        if: ${{ steps.pr.outputs.branch != '' }}
-        env:
-          BRANCH: ${{ steps.pr.outputs.branch }}
-        run: |
-          set -eu
-          git fetch origin "$BRANCH"
-          git switch --detach FETCH_HEAD
-          bun apps/plugin/tools/release-versions.ts apps/plugin/manifest.json apps/plugin/versions.json
-          if git diff --quiet -- apps/plugin/versions.json; then exit 0; fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/plugin/versions.json
-          git commit -m "chore(plugin): sync release compatibility version"
-          git push origin "HEAD:$BRANCH"
-
   release-plugin:
     needs: release-please
     if: ${{ needs.release-please.outputs.plugin-created == 'true' }}
@@ -74,6 +32,7 @@ jobs:
       tag: ${{ needs.release-please.outputs.plugin-tag }}
     permissions:
       contents: write
+      pull-requests: write
 
   deploy-worker:
     needs: release-please

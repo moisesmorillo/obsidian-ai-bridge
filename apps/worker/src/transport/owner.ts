@@ -36,6 +36,7 @@ import { renderClientsPage } from "@worker/transport/owner-pages/clients";
 import { renderExportsPage } from "@worker/transport/owner-pages/exports";
 import { renderGrantsPage } from "@worker/transport/owner-pages/grants";
 import { renderMeasurementsPage } from "@worker/transport/owner-pages/measurements";
+import type { OwnerServiceMetadata } from "@worker/transport/owner-pages/shell";
 import { Hono } from "hono";
 
 /** Browser cookie that binds one-use owner form state to this browser. */
@@ -138,6 +139,117 @@ function completedSnapshots(
 	);
 }
 
+/** Return the escaped service facts that the current handler can prove. */
+function ownerServiceMetadata(env: Env): OwnerServiceMetadata {
+	if (!env.SERVICE_ORIGIN) return {};
+	try {
+		return { serviceHost: new URL(env.SERVICE_ORIGIN).host };
+	} catch {
+		return {};
+	}
+}
+
+/** Find one client in at most 32 existing bounded registry pages. */
+async function findListedClient(
+	registry: ClientRegistryGateway,
+	ownerSubject: string,
+	clientId: string,
+): Promise<
+	| Awaited<ReturnType<ClientRegistryGateway["listClients"]>>["clients"][number]
+	| null
+> {
+	let cursor: string | undefined;
+	for (let pageNumber = 0; pageNumber < 32; pageNumber += 1) {
+		const page = await registry.listClients(ownerSubject, cursor);
+		const client = page.clients.find(
+			(candidate) => candidate.client_id === clientId,
+		);
+		if (client) return client;
+		if (page.next_cursor === null || page.next_cursor === cursor) return null;
+		cursor = page.next_cursor;
+	}
+	return null;
+}
+
+/** One supported Accept range and its validated quality weight. */
+interface OwnerAcceptRange {
+	type: string;
+	subtype: string;
+	quality: number;
+}
+
+/** Parse complete media ranges and ignore malformed entries without widening them. */
+function parseOwnerAccept(header: string | null): OwnerAcceptRange[] {
+	if (!header?.trim()) return [];
+	const ranges: OwnerAcceptRange[] = [];
+	for (const entry of header.toLowerCase().split(",")) {
+		const [mediaType = "", ...parameters] = entry.trim().split(";");
+		const mediaParts = mediaType.trim().split("/");
+		if (mediaParts.length !== 2) continue;
+		const [type = "", subtype = ""] = mediaParts.map((part) => part.trim());
+		const validMediaRange =
+			(type === "*" && subtype === "*") ||
+			(type !== "*" &&
+				/^[!#$%&'+.^_`|~0-9a-z-]+$/.test(type) &&
+				(subtype === "*" || /^[!#$%&'+.^_`|~0-9a-z-]+$/.test(subtype)));
+		if (!validMediaRange) continue;
+		let quality = 1;
+		let qualitySeen = false;
+		let valid = true;
+		for (const parameter of parameters) {
+			const [name = "", ...values] = parameter.trim().split("=");
+			if (name.trim() !== "q") continue;
+			const value = values.length === 1 ? values[0]?.trim() : undefined;
+			if (
+				qualitySeen ||
+				value === undefined ||
+				!/^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(value)
+			) {
+				valid = false;
+				break;
+			}
+			qualitySeen = true;
+			quality = Number(value);
+		}
+		if (valid) ranges.push({ type, subtype, quality });
+	}
+	return ranges;
+}
+
+/** Apply media specificity before comparing the quality of one representation. */
+function acceptedQuality(
+	ranges: readonly OwnerAcceptRange[],
+	candidate: "text/html" | "application/json",
+): number {
+	const [candidateType, candidateSubtype] = candidate.split("/");
+	let bestSpecificity = -1;
+	let bestQuality = 0;
+	for (const range of ranges) {
+		if (
+			(range.type !== candidateType && range.type !== "*") ||
+			(range.subtype !== candidateSubtype && range.subtype !== "*")
+		)
+			continue;
+		const specificity = range.type === "*" ? 0 : range.subtype === "*" ? 1 : 2;
+		if (specificity > bestSpecificity) {
+			bestSpecificity = specificity;
+			bestQuality = range.quality;
+		} else if (specificity === bestSpecificity) {
+			bestQuality = Math.max(bestQuality, range.quality);
+		}
+	}
+	return bestQuality;
+}
+
+/** Resolve HTML only when its Accept quality exceeds JSON quality. */
+function prefersMeasurementHtml(accept: string | null): boolean {
+	const ranges = parseOwnerAccept(accept);
+	return (
+		acceptedQuality(ranges, "text/html") >
+		acceptedQuality(ranges, "application/json")
+	);
+}
+
 /** Return a no-store response with a safely rendered finite client page. */
 export function createOwnerHandler(
 	resolveRegistry: OwnerRegistryResolver,
@@ -169,6 +281,7 @@ export function createOwnerHandler(
 			context.req.query("cursor"),
 		);
 		const html = renderClientsPage({
+			service: ownerServiceMetadata(context.env),
 			csrf: state,
 			nextCursor: page.next_cursor,
 			encodedCursor: page.next_cursor
@@ -221,6 +334,7 @@ export function createOwnerHandler(
 			const nextRun = new Date(Date.now());
 			nextRun.setUTCHours(nextRun.getUTCHours() + 1, 0, 0, 0);
 			const html = renderExportsPage({
+				service: ownerServiceMetadata(context.env),
 				csrf: state,
 				nextRun: nextRun.toISOString(),
 				lastSnapshot:
@@ -359,7 +473,7 @@ export function createOwnerHandler(
 			return new Response(
 				renderBlobGcPage({
 					csrf: state,
-					bucketName: "Unknown (R2_BUCKET binding)",
+					service: ownerServiceMetadata(context.env),
 					preview,
 					status,
 				}),
@@ -446,10 +560,16 @@ export function createOwnerHandler(
 				...response,
 				worker_isolate: readSlotCapacitySnapshot(),
 			});
-			if (context.req.query("format") === "html")
+			const format = context.req.query("format");
+			if (
+				format === "html" ||
+				(format !== "json" &&
+					prefersMeasurementHtml(context.req.header("accept") ?? null))
+			)
 				return new Response(
 					renderMeasurementsPage({
 						...parsed,
+						service: ownerServiceMetadata(context.env),
 						requests: {
 							...parsed.requests,
 							clients: parsed.requests.clients.map((client) => ({
@@ -486,15 +606,23 @@ export function createOwnerHandler(
 		const owner = await verifyOwnerAccess(context.req.raw, context.env);
 		if (!owner) return context.text("Unauthorized", 401);
 		const registry = resolveRegistry(context.env, context.req.raw);
-		const page = await listClientGrants(
-			registry,
-			owner.subject,
-			context.req.param("clientId"),
-			context.req.query("cursor"),
-		);
 		const clientId = context.req.param("clientId");
+		const [page, listedClient] = await Promise.all([
+			listClientGrants(
+				registry,
+				owner.subject,
+				clientId,
+				context.req.query("cursor"),
+			),
+			findListedClient(registry, owner.subject, clientId),
+		]);
 		const html = renderGrantsPage({
+			service: ownerServiceMetadata(context.env),
 			clientId: escapeHtml(clientId),
+			clientName: escapeHtml(listedClient?.name ?? "Unknown client"),
+			clientKind: "Unknown",
+			activeGrantCount: listedClient?.active_grant_count ?? null,
+			cleanupPendingCount: listedClient?.cleanup_pending_count ?? null,
 			encodedClientId: encodeURIComponent(clientId),
 			nextCursor: page.next_cursor,
 			encodedCursor: page.next_cursor
@@ -502,6 +630,7 @@ export function createOwnerHandler(
 				: null,
 			grants: page.grants.map((grant) => ({
 				grantId: escapeHtml(grant.grant_id),
+				createdAt: grant.created_at,
 				revoked: grant.revoked,
 				cleanupPending: grant.cleanup_pending,
 			})),

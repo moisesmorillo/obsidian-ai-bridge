@@ -356,8 +356,8 @@ describe("owner client cleanup", () => {
 		expect(form.html).toContain("/owner/clients/a-revoked/remove");
 		expect(form.html).not.toContain("/owner/clients/z-active/remove");
 		expect(form.html).not.toContain("stale-console");
-		expect(form.html.indexOf("Client: z-active")).toBeLessThan(
-			form.html.indexOf("Client: a-revoked"),
+		expect(form.html.indexOf('class="client-id">z-active')).toBeLessThan(
+			form.html.indexOf('class="client-id">a-revoked'),
 		);
 		expect(
 			(

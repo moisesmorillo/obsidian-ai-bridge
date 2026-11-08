@@ -1689,7 +1689,7 @@ describe("production OAuth entry", () => {
 			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/grants`,
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
-		expect(await grantPage.text()).toContain("provider cleanup complete");
+		expect(await grantPage.text()).toContain(">Complete</td>");
 	});
 
 	it("keeps durable denial pending when provider namespace listing fails", async () => {
@@ -1905,7 +1905,7 @@ describe("production OAuth entry", () => {
 			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/grants`,
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
-		expect(await grantPage.text()).toContain("provider cleanup pending");
+		expect(await grantPage.text()).toContain(">Pending</td>");
 		const retryCsrf = requireValue(
 			nextState.match(/name="csrf" value="([^"]+)"/)?.[1],
 			"retry csrf state",
@@ -1933,7 +1933,7 @@ describe("production OAuth entry", () => {
 			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/grants`,
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
-		expect(await stillPending.text()).toContain("provider cleanup pending");
+		expect(await stillPending.text()).toContain(">Pending</td>");
 		const refresh = await SELF.fetch("https://service.test/oauth/token", {
 			method: "POST",
 			headers: { "content-type": "application/x-www-form-urlencoded" },

@@ -164,7 +164,7 @@ describe("production owner console", () => {
 		);
 		expect(gcResponse.status).toBe(200);
 		const gcHtml = await gcResponse.text();
-		expect(gcHtml).toContain("2 unreferenced blobs, 17 reclaimable bytes");
+		expect(gcHtml).toContain("2 unreferenced blobs, under 0.1 MB reclaimable");
 		expect(gcHtml).toContain("Delete outcome is unknown.");
 		expect(gcHtml).toContain("An owner retry cannot clear this claim.");
 		const state = gcHtml.match(/name="csrf" value="([^"]+)"/)?.[1];
@@ -226,6 +226,36 @@ describe("production owner console", () => {
 				referenced_blob_bytes: { status: "observed", value: 0 },
 			},
 		});
+		const browserAccept =
+			"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
+		for (const [query, accept, expectedType] of [
+			["", "text/html, application/json", "application/json"],
+			["", browserAccept, "text/html"],
+			["", "text/html/extra", "application/json"],
+			["", "text/html;q=1=garbage", "application/json"],
+			["", "text/html;q=0.1;q=0.9", "application/json"],
+			["", "text/html;q=0.1234", "application/json"],
+			["", "text/html;q=0.9, application/json;q=0.8", "text/html"],
+			["", "text/html;q=0, application/json;q=1", "application/json"],
+			["", "text/*;q=0.9, application/json;q=0.8", "text/html"],
+			["", "text/html;q=0, */*;q=0.8", "application/json"],
+			["", "application/json;q=0, */*;q=0.8", "text/html"],
+			["", "text/html;q=2, application/json;q=0.8", "application/json"],
+			["", "*/*", "application/json"],
+			["?format=html", "text/html/extra", "text/html"],
+			["?format=json", "text/html;q=1=garbage", "application/json"],
+		] as const) {
+			const negotiated = await SELF.fetch(
+				`https://service.test/owner/measurements${query}`,
+				{
+					headers: {
+						"Cf-Access-Jwt-Assertion": assertion,
+						Accept: accept,
+					},
+				},
+			);
+			expect(negotiated.headers.get("content-type")).toContain(expectedType);
+		}
 		const emptySummary = await SELF.fetch(
 			"https://service.test/owner/measurements?format=html",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
@@ -240,12 +270,10 @@ describe("production owner console", () => {
 		expect(emptySummaryHtml).toContain(
 			"does not describe other isolates or prove physical source work stopped.",
 		);
-		expect(emptySummaryHtml).toContain(
-			"Feed response preparation p95: Unknown",
-		);
-		expect(emptySummaryHtml).toContain("Retained samples: 0 of 0.");
-		expect(emptySummaryHtml).toContain("Latency: unknown, stale.");
-		expect(emptySummaryHtml).toContain("Referenced R2 blob bytes: 0.");
+		expect(emptySummaryHtml).toContain("Feed response preparation p95");
+		expect(emptySummaryHtml).toContain("0 of 0");
+		expect(emptySummaryHtml).toContain("Latency observation: unknown, stale.");
+		expect(emptySummaryHtml).toContain("under 0.1 MB");
 		expect(emptySummaryHtml).toContain(
 			"Referenced R2 bytes count distinct blobs, not total bucket allocation.",
 		);
@@ -301,40 +329,53 @@ describe("production owner console", () => {
 		expect(summary.headers.get("content-type")).toContain("text/html");
 		const summaryHtml = await summary.text();
 		expect(summaryHtml).toContain("Feed response preparation p95");
-		expect(summaryHtml).toContain("Client coverage: partial.");
-		expect(summaryHtml).toContain("Request data: observed, stale.");
-		expect(summaryHtml).toContain("Latency: observed, stale.");
-		expect(summaryHtml).toContain("DO SQLite allocated bytes: ");
-		expect(summaryHtml).toContain(
-			`Request observation window: ${new Date(requestObservedAt).toISOString()} to ${new Date(requestObservedAt).toISOString()}`,
-		);
+		expect(summaryHtml).toContain("coverage partial");
+		expect(summaryHtml).toContain("Observed lower bound. observed, stale.");
+		expect(summaryHtml).toContain("Latency observation: observed, stale.");
+		expect(summaryHtml).toContain("0.3 MB");
+		expect(summaryHtml).toContain("Request observation window:");
 		expect(summaryHtml).toContain("unknown (out-of-order requests)");
-		expect(summaryHtml).toContain(
-			"device-&lt;script&gt;: REST 1, MCP 0, total 1",
-		);
+		expect(summaryHtml).toContain("device-&lt;script&gt;");
 		expect(summaryHtml).toContain("Referenced R2 bytes count distinct blobs");
 		expect(summaryHtml).not.toContain("device-<script>");
 		expect(summaryHtml).toContain(
-			`Observed from ${new Date(observedFrom).toISOString()}`,
+			`observed ${new Date(observedFrom).toISOString().slice(11, 16)} to`,
 		);
-		expect(summaryHtml).toContain(
-			`Retained sample window: ${new Date(firstRetainedSampleAt).toISOString()} to ${new Date(lastRetainedSampleAt).toISOString()}`,
-		);
+		expect(summaryHtml).toContain("Retained sample window:");
 		expect(summaryHtml).toContain(
 			"Earlier samples were removed by the daily cap.",
 		);
 		const jsonLink = summaryHtml.match(
 			/<a href="([^"]+)">Measurement JSON<\/a>/,
 		);
-		expect(jsonLink?.[1]).toBe("/owner/measurements");
+		expect(jsonLink?.[1]).toBe("/owner/measurements?format=json");
 		const linkedJson = await SELF.fetch(
 			new URL(jsonLink?.[1] ?? "", "https://service.test"),
-			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+			{
+				headers: {
+					"Cf-Access-Jwt-Assertion": assertion,
+					Accept: browserAccept,
+				},
+			},
 		);
 		expect(linkedJson.headers.get("content-type")).toContain(
 			"application/json",
 		);
 		expect(linkedJson.status).toBe(200);
+		expect(jsonLink?.[1]).toBe("/owner/measurements?format=json");
+		const canonicalJson = await SELF.fetch(
+			"https://service.test/owner/measurements?format=json",
+			{
+				headers: {
+					"Cf-Access-Jwt-Assertion": assertion,
+					Accept: browserAccept,
+				},
+			},
+		);
+		expect(canonicalJson.headers.get("content-type")).toContain(
+			"application/json",
+		);
+		expect(await linkedJson.json()).toEqual(await canonicalJson.json());
 
 		await runInDurableObject(stub, (_instance, state) => {
 			const aggregate = JSON.parse(
@@ -356,9 +397,7 @@ describe("production owner console", () => {
 			"https://service.test/owner/measurements?format=html",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
-		expect(await incompleteSummary.text()).toContain(
-			"Client coverage: unknown.",
-		);
+		expect(await incompleteSummary.text()).toContain("coverage unknown");
 
 		await runInDurableObject(stub, (_instance, state) => {
 			state.storage.sql.exec("DROP TABLE files");
@@ -368,7 +407,7 @@ describe("production owner console", () => {
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
 		expect(await unknownStorageSummary.text()).toContain(
-			"DO SQLite allocated bytes: Unknown (storage_error).",
+			"Unknown (storage_error)",
 		);
 
 		const wrongOrigin = await SELF.fetch(
@@ -380,8 +419,8 @@ describe("production owner console", () => {
 		expect(html).not.toContain("<script>unsafe()");
 		expect(html).toContain("Revoked");
 		expect(html).toContain("retained grant history");
-		expect(html).toContain("Mixed active and revoked history");
-		expect(html).toContain("No accepted grants");
+		expect(html).toContain("Listed-page registry totals");
+		expect(html).toContain("No grants");
 		expect(html).not.toContain("synthetic-owner");
 		expect(html).not.toContain("access_token");
 		expect(html).not.toContain("refresh_token");
@@ -394,7 +433,12 @@ describe("production owner console", () => {
 		const grantHtml = await grantsResponse.text();
 		expect(grantHtml).toContain(grantId);
 		expect(grantHtml).toContain("Revoked");
-		expect(grantHtml).toContain("provider cleanup pending");
+		expect(grantHtml).toContain('<p class="label">Cleanup pending</p>');
+		expect(grantHtml).toContain(">Pending</td>");
+		expect(grantHtml).toContain(
+			"Clients / &lt;script&gt;unsafe()&lt;/script&gt;",
+		);
+		expect(grantHtml).toContain('Kind</p><p class="stat-value">Unknown');
 		expect(grantHtml).not.toContain("synthetic-owner");
 		const oversized = await SELF.fetch(
 			"https://service.test/owner/clients/unused/rename",

@@ -1,6 +1,13 @@
 import { renderBlobGcPage } from "@worker/transport/owner-pages/blob-gc";
 import { renderClientsPage } from "@worker/transport/owner-pages/clients";
 import { renderExportsPage } from "@worker/transport/owner-pages/exports";
+import {
+	formatBytes,
+	formatCount,
+	formatDuration,
+	formatUtcDateTime,
+	formatUtcTime,
+} from "@worker/transport/owner-pages/format";
 import { renderGrantsPage } from "@worker/transport/owner-pages/grants";
 import { renderMeasurementsPage } from "@worker/transport/owner-pages/measurements";
 import { renderOwnerShell } from "@worker/transport/owner-pages/shell";
@@ -10,19 +17,19 @@ import { describe, expect, it } from "vitest";
 describe("owner page rendering", () => {
 	it("contains the approved palette and responsive phone layout", () => {
 		for (const token of [
-			"--bg: #080506",
-			"--wine-900: #1A0810",
-			"--wine-700: #4E0E1F",
-			"--wine-500: #962042",
-			"--wine-300: #F29AB4",
-			"--copper: #E08A5F",
-			"--copper-light: #F0AB8A",
-			"--copper-dark: #B86038",
-			"--text: #F2ECEA",
-			"--text-strong: #FAF4F0",
-			"--text-soft: #D2BDC1",
-			"--text-muted: #AE8F96",
-			"--danger: #FF9B9B",
+			"--bg:#080506",
+			"--wine-900:#1A0810",
+			"--wine-700:#4E0E1F",
+			"--wine-500:#962042",
+			"--wine-300:#F29AB4",
+			"--copper:#E08A5F",
+			"--copper-light:#F0AB8A",
+			"--copper-dark:#B86038",
+			"--text:#F2ECEA",
+			"--text-strong:#FAF4F0",
+			"--text-soft:#D2BDC1",
+			"--text-muted:#AE8F96",
+			"--danger:#FF9B9B",
 		])
 			expect(OWNER_CONSOLE_CSS).toContain(token);
 		expect(OWNER_CONSOLE_CSS).toContain(
@@ -31,12 +38,33 @@ describe("owner page rendering", () => {
 		expect(OWNER_CONSOLE_CSS).toContain("max-width: 390px");
 		expect(OWNER_CONSOLE_CSS).toContain("overflow-x:auto");
 		expect(OWNER_CONSOLE_CSS).toContain("padding:16px");
+		expect(OWNER_CONSOLE_CSS).toContain("height:40px;padding:0 16px");
+		expect(OWNER_CONSOLE_CSS).toContain("padding:36px 44px");
+		expect(OWNER_CONSOLE_CSS).toContain("padding:20px 22px");
+		expect(OWNER_CONSOLE_CSS).toContain("padding:14px 18px");
+		expect(OWNER_CONSOLE_CSS).toContain("grid-template-columns:1fr");
 	});
 
-	it("renders the shared owner shell", () => {
-		expect(
-			renderOwnerShell("clients", "<h1>Connected clients</h1>"),
-		).toMatchSnapshot();
+	it("renders escaped service metadata in the shared owner shell", () => {
+		const html = renderOwnerShell("clients", "<h1>Connected clients</h1>", {
+			serviceHost: "service.test&lt;&amp;",
+			vaultEpoch: "epoch-1",
+		});
+		expect(html).toContain("service.test&amp;lt;&amp;amp;");
+		expect(html).toContain('<span class="label">Worker</span> 0.3.0');
+		expect(html).toContain('<span class="label">Vault epoch</span> epoch-1');
+		expect(html).not.toContain("Service metadata unknown");
+	});
+
+	it("formats decimal megabytes, short counts, durations, and UTC values", () => {
+		expect(formatBytes(11_800_000)).toBe("11.8 MB");
+		expect(formatBytes(512)).toBe("under 0.1 MB");
+		expect(formatCount(1_200)).toBe("1.2k");
+		expect(formatDuration(156)).toBe("156 ms");
+		expect(formatUtcDateTime("2026-11-08T00:00:00.000Z")).toBe(
+			"2026-11-08 00:00 UTC",
+		);
+		expect(formatUtcTime(Date.UTC(2026, 10, 8, 0, 2))).toBe("00:02");
 	});
 
 	it("renders client states, protected actions, and empty state", () => {
@@ -66,12 +94,20 @@ describe("owner page rendering", () => {
 				clients: [],
 			}),
 		).toContain("No connected clients.");
+		expect(
+			renderClientsPage({
+				csrf: "state-3",
+				nextCursor: null,
+				encodedCursor: null,
+				clients: [],
+			}),
+		).not.toContain("Collect unreferenced blobs");
 	});
 
 	it("covers every client label and Remove form outcome", () => {
 		const cases = [
 			{
-				label: "No accepted grants",
+				state: "No grants",
 				generation: 0,
 				grantCount: 0,
 				activeGrantCount: 0,
@@ -79,7 +115,7 @@ describe("owner page rendering", () => {
 				remove: "absent",
 			},
 			{
-				label: "Revoked",
+				state: "Revoked",
 				generation: 1,
 				grantCount: 1,
 				activeGrantCount: 0,
@@ -87,7 +123,7 @@ describe("owner page rendering", () => {
 				remove: "enabled",
 			},
 			{
-				label: "Mixed active and revoked history",
+				state: "Active",
 				generation: 2,
 				grantCount: 2,
 				activeGrantCount: 1,
@@ -95,7 +131,7 @@ describe("owner page rendering", () => {
 				remove: "absent",
 			},
 			{
-				label: "Active registry grant",
+				state: "Active",
 				generation: 1,
 				grantCount: 1,
 				activeGrantCount: 1,
@@ -103,7 +139,7 @@ describe("owner page rendering", () => {
 				remove: "absent",
 			},
 			{
-				label: "Revoked",
+				state: "Revoked",
 				generation: 1,
 				grantCount: 1,
 				activeGrantCount: 0,
@@ -128,15 +164,15 @@ describe("owner page rendering", () => {
 					},
 				],
 			});
-			expect(html).toContain(`Registry state: ${row.label}`);
+			expect(html).toContain(`>${row.state}</span>`);
 			expect(html).toContain(
 				'<input type="hidden" name="csrf" value="csrf-test">',
 			);
 			expect(html).toContain(
-				'<form method="post" action="/owner/clients/client-1/rename">',
+				'<form class="rename-form" method="post" action="/owner/clients/client-1/rename">',
 			);
 			expect(html).toContain(
-				'<label>Name <input name="name" maxlength="80" value="Client"></label>',
+				'<input name="name" maxlength="80" value="Client">',
 			);
 			expect(html).toContain(
 				'<form method="post" action="/owner/clients/client-1/revoke">',
@@ -144,7 +180,7 @@ describe("owner page rendering", () => {
 			expect(html).toContain(">Rename</button>");
 			expect(html).toContain(">Revoke</button>");
 			const removeForm =
-				'<form method="post" action="/owner/clients/client-1/remove"><input type="hidden" name="csrf" value="csrf-test"><button';
+				'<form method="post" action="/owner/clients/client-1/remove"><input type="hidden" name="csrf" value="csrf-test"><button class="button-danger"';
 			if (row.remove === "absent") expect(html).not.toContain(removeForm);
 			if (row.remove === "enabled")
 				expect(html).toContain(`${removeForm}>Remove</button></form>`);
@@ -159,21 +195,42 @@ describe("owner page rendering", () => {
 	it("renders grant states, encoded pagination, and empty state", () => {
 		const grantsHtml = renderGrantsPage({
 			clientId: "id&lt;&amp;",
+			clientName: "Display name",
+			clientKind: "Unknown",
+			activeGrantCount: 1,
+			cleanupPendingCount: 1,
 			encodedClientId: "id%3C%26",
 			nextCursor: "a&b",
 			encodedCursor: "a%26b",
 			grants: [
-				{ grantId: "grant&lt;&amp;", revoked: false, cleanupPending: false },
-				{ grantId: "grant-2", revoked: true, cleanupPending: true },
+				{
+					grantId: "grant&lt;&amp;",
+					createdAt: Date.UTC(2026, 10, 8),
+					revoked: false,
+					cleanupPending: false,
+				},
+				{
+					grantId: "grant-2",
+					createdAt: null,
+					revoked: true,
+					cleanupPending: true,
+				},
 			],
 		});
 		expect(grantsHtml).toContain(
 			'<a href="/owner/clients" aria-current="location">Clients</a>',
 		);
+		expect(grantsHtml).toContain("Clients / Display name");
+		expect(grantsHtml).toContain("2026-11-08 00:00 UTC");
+		expect(grantsHtml).toContain("Unknown</td>");
 		expect(grantsHtml).toMatchSnapshot();
 		expect(
 			renderGrantsPage({
 				clientId: "empty",
+				clientName: "Empty client",
+				clientKind: "Unknown",
+				activeGrantCount: 0,
+				cleanupPendingCount: 0,
 				encodedClientId: "empty",
 				nextCursor: null,
 				encodedCursor: null,
@@ -215,14 +272,14 @@ describe("owner page rendering", () => {
 				unit: "milliseconds",
 				sample_count: 2,
 				total_sample_count: 3,
-				p95: null,
+				p95: 156,
 				first_sample_at: null,
 				last_sample_at: null,
 				stale: false,
 			},
 			storage: {
 				database_bytes: { status: "unknown", reason: "storage_error" },
-				referenced_blob_bytes: { status: "observed", value: 2048 },
+				referenced_blob_bytes: { status: "observed", value: 3_200_000 },
 			},
 			worker_isolate: {
 				isolate_id: "isolate-1",
@@ -234,7 +291,13 @@ describe("owner page rendering", () => {
 			},
 		});
 		expect(html).toContain("Unknown (storage_error)");
-		expect(html).toContain("Fresh or stale");
+		expect(html).toContain("Stale");
+		expect(html).toContain("3.2 MB");
+		expect(html).toContain("156 ms");
+		expect(html).toContain("About these numbers");
+		expect(html).toContain(
+			"UTC window 00:00 to 23:59, observed Unknown to Unknown, coverage partial",
+		);
 		expect(html).toContain("Request observation window: Unknown to Unknown.");
 		expect(html).toContain("Retained sample window: Unknown to Unknown.");
 		expect(html).toContain("<td>Unknown</td>");
@@ -250,11 +313,11 @@ describe("owner page rendering", () => {
 			nextRun: "2026-11-07T18:00:00.000Z",
 			lastSnapshot: "2026-11-07T17:00:00.000Z",
 			retainedCount: 1,
-			totalBytes: 1024,
+			totalBytes: 106_000_000,
 			snapshots: [
 				{
 					createdAt: "2026-11-07T17:00:00.000Z",
-					size: 1024,
+					size: 11_800_000,
 					downloadUrl:
 						"/owner/exports/epoch%2Fone/2026-11-07T17%3A00%3A00.000Z/download",
 				},
@@ -269,6 +332,9 @@ describe("owner page rendering", () => {
 		expect(html).toContain(
 			'href="/owner/exports/epoch%2Fone/2026-11-07T17%3A00%3A00.000Z/download"',
 		);
+		expect(html).toContain("11.8 MB");
+		expect(html).toContain("106.0 MB");
+		expect(html).toContain("2026-11-07 17:00 UTC");
 		expect(html).toContain("No failed exports.");
 		const failed = renderExportsPage({
 			csrf: "failed-csrf",
@@ -292,7 +358,6 @@ describe("owner page rendering", () => {
 	it("renders blob cleanup safety, current phase, form, and unavailable inventory", () => {
 		const html = renderBlobGcPage({
 			csrf: "gc-csrf",
-			bucketName: "Unknown (R2_BUCKET binding)",
 			preview: null,
 			status: {
 				phase: "deleting",
@@ -304,9 +369,11 @@ describe("owner page rendering", () => {
 		});
 		expect(html).toContain("unavailable");
 		expect(html).toContain("Dry run unavailable.");
-		expect(html).toContain("Bucket: Unknown (R2_BUCKET binding).");
+		expect(html).not.toContain("Bucket:");
+		expect(html).not.toContain("Inventory pages scanned:");
 		expect(html).toContain("Backups are excluded");
 		expect(html).toContain("mark fence protects published blobs");
+		expect(html).toContain("under 0.1 MB");
 		expect(html).toContain('<form method="post" action="/owner/blob-gc">');
 		expect(html).toContain('<input type="hidden" name="csrf" value="gc-csrf">');
 		expect(html).toMatchSnapshot();
@@ -319,7 +386,6 @@ describe("owner page rendering", () => {
 	] as const)("highlights %s blob cleanup phase", (phase, step) => {
 		const html = renderBlobGcPage({
 			csrf: "phase-csrf",
-			bucketName: "Unknown (R2_BUCKET binding)",
 			preview: null,
 			status: {
 				phase,

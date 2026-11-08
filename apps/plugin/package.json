@@ -16,5 +16,5 @@
 		"obsidian": "1.14.4",
 		"@obsidian-ai-bridge/tooling": "workspace:*"
 	},
-	"version": "0.2.0"
+	"version": "0.2.1"
 }

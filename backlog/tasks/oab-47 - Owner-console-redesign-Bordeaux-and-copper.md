@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-07T22:26:00Z'
+updated_date: '2026-11-08T00:49:00Z'
 labels:
   - worker
   - ui
@@ -108,6 +108,43 @@ Preserve measurement coverage, windows, latency boundary, retained samples, and 
 - [ ] Record revision, documentation scope, structural candidates, actual checks, limits, and finding closures through the CLI. Keep the parent task In Progress.
 - [ ] Push and open one PR against main. First body line: OAB-47 phase 2: visual only, no behavior change.
 - [ ] Remove the worktree, report the PR URL, and stop.
+
+## Phase 4: Console polish implementation plan
+Goal: Correct controls, spacing, tables, metadata, and readable measurements after the live review.
+Architecture: Keep pure escaped view models and the shared shell. Keep all state policy in existing handlers and gateways.
+Tech stack: TypeScript, CSS string modules, Vitest, existing build-time JSON imports. No dependency.
+Spec: S14-console-polish.md, S10-console-foundation.md, COMMON-NIGHT.md, docs/spec.md, and docs/api/f2.md.
+
+### Owner decisions
+The owner skips Plannotator and authorizes this phase through one PR against main. No live calls, vault access, external requests, deployment, or Cloudflare changes. Keep OAB-47 In Progress.
+Default: Use shared decimal MB, count, duration, UTC date-time, and UTC time formatters. Keep unknown data explicit except absent service and blob metadata lines, which disappear.
+Default: Use existing registry metadata only. Show an unknown kind or missing grant time honestly if current contracts lack those values. Do not create new protocol shapes.
+Default: Summary counts describe the listed page when pagination prevents a registry-wide total. Keep all existing mutation forms and remove safety rules.
+Default: HTML wins only when its Accept preference exceeds JSON. Missing Accept, wildcards, equal preference, or invalid ranges select JSON. Explicit format overrides Accept.
+Default: Import the Worker package version through a small owner-pages module. No runtime file read.
+
+### Task 1: Implement the complete phase 4 polish
+Files: apps/worker/src/transport/owner-pages/, transport/owner.ts, related tests and snapshots, and this task through the CLI.
+- [ ] Read current page bodies, handler mappings, canonical registry types, and tests. Run the focused baseline.
+- [ ] Add failing tests for Accept negotiation, numeric and UTC formatters, service metadata, table and card contracts, missing blob metadata, responsive CSS, and preserved form semantics.
+- [ ] Run these tests before product edits. Record actual failure evidence.
+- [ ] Update shared CSS to the exact S14 dimensions, approved palette, 390px chip bar, one-column cards, and table overflow.
+- [ ] Add documented pure formatters and build-time version module. Extend the shell with escaped service host and optional epoch. Rename nav labels.
+- [ ] Replace client prose cards with summary cards and the designed table. Use a native disclosure for inline Rename. Preserve form actions, fields, CSRF, names, limits, and remove eligibility.
+- [ ] Add grant identity cards, display-name breadcrumb, formatted optional grant time, and state chips. Preserve existing removal behavior.
+- [ ] Polish measurements, backups, and blob cleanup exactly as S14. Preserve limitations in one About these numbers panel. Keep JSON shape unchanged.
+- [ ] Add content negotiation only to measurements GET. Cover q values, explicit formats, absent headers, wildcards, exclusions, and JSON equality.
+- [ ] Update snapshots deliberately, including consent snapshots if shared CSS changes them. Run focused suites, docs:check, bun run check, and Worker preflight. Commit.
+
+### Review focus
+Check escaping of service host, client names, ids, and unknown reasons. Check Accept specificity and q=0. Check UTC boundaries and decimal units. Check all mutation form contracts and page-local summary labels. Check absent metadata does not imply zero or health.
+
+### Publication
+- [ ] Independent task review with code-review and TypeScript profile. Resolve each finding with direct evidence.
+- [ ] Rebase on origin/main. Complete separate whole-branch review on the session model. No Plannotator.
+- [ ] Record reviewed revision, documentation scope, structural candidates, validation, limits, and finding closures through the CLI.
+- [ ] Push the branch. Open one PR with a feat(worker) title. First body line: OAB-47 phase 4: console polish after the live review.
+- [ ] Remove the worktree, report the PR URL, and stop.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -152,4 +189,14 @@ Phase 2 final review: code-review task review examined ec06881. Whole-branch rev
 Rebase integration after be8cd0c: the consent renderer still embeds OWNER_CONSOLE_CSS. The focused consent test reproduced one snapshot mismatch. Snapshot comparison confirms identical markup outside style and identical consent-specific CSS. Only the shared OWNER_CONSOLE_CSS portion changed. Updated only consent-page.test.ts.snap for the shared phase 2 stylesheet. No product source, consent test, token, OAuth, or other snapshot files changed. The parent range-diff confirms both product commits remain unchanged. OAB-47 remains In Progress. Focused consent and owner-page suites passed 14 tests. bun run check passed, including 767 Worker tests, 142 F2 tests, 132 HTTP tests, 838 plugin tests with 1 skipped, 314 protocol tests, 101 tooling tests, lint, type checks, documentation checks, and dry-run builds. Worker preflight passed with exit 0. Snapshot delta validation passed. No external requests occurred.
 
 Scoped integration review approved 5bacd50ea1d88b5eff1cf76599497ed5148d0c79. Only the consent snapshot and task notes changed. Consent markup and consent-specific CSS remain identical. Shared CSS matches the reviewed phase 2 additions. Product commits remain unchanged after rebase. No new finding remains. Focused consent and owner page tests passed 14 tests. The worker ran bun run check and Worker preflight successfully after the snapshot fix. Phase 3 merged through PR 115. OAB-47 stays In Progress under the explicit owner order.
+
+Phase 4 scope follows the owner brief S14. Orca created the isolated checkout from updated main 79cf6ae. The branch uses feature/owner-console-polish. Orca setup changed only bun.lock. A named Git stash preserves that unrelated metadata outside the branch.
+
+Phase 4 implementation complete on the working tree. Added decimal MB, compact count, duration, and UTC formatters plus a build-time Worker version module. Updated shared spacing and controls, service metadata, navigation labels, client and grant tables/cards, measurement summaries, export size/date values, and blob cleanup display. Added Accept negotiation for measurements only. Explicit format wins. HTML wins only when its quality exceeds JSON after media specificity. Existing mutation forms, CSRF fields, actions, routes, JSON shape, and removal eligibility remain unchanged. Unknown client kind and absent grant time stay explicit. Client and grant summaries identify page-local totals.
+
+TDD: focused page and owner integration tests were added before implementation and first failed on missing new renderer/formatter modules. Later integration failures showed stale assertions for renamed client/grant markup; tests now assert the current table semantics. Focused GREEN: owner page suite 12/12; owner, owner-cleanup, and OAuth F2 suites 42/42.
+
+Validation: `bun run docs:check` passed. `bun run check` passed after lint, docs, type checks, all tests, and dry-run builds. Totals: Worker unit 768/768, Worker HTTP 132/132, Worker F2 142/142, protocol 314/314, tooling 100/100, plugin 844 passed and 1 skipped. Worker preflight passed. `git diff --check` passed. Worker tests printed expected injected failure and disconnect diagnostics.
+
+Self-review used the code-review skill and TypeScript profile on the full phase 4 working-tree diff against base 79cf6ae. No actionable finding remains. Candidates: owner.ts stays mixed but low risk in this presentation scope; route policy, CSRF, and mutation eligibility remain in existing owners. Formatters, renderers, shell, and stylesheet remain cohesive. Limits: no browser visual check, contrast measurement, live request, vault access, deployment, Cloudflare change, or external request occurred. OAB-47 remains In Progress for remaining phases.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-08T02:45:00Z'
-updated_date: '2026-11-08T03:09:00Z'
+updated_date: '2026-11-08T03:16:00Z'
 labels:
   - worker
   - design
@@ -82,4 +82,8 @@ Lint: First `bun run lint` found one useOptionalChain warning and formatter chan
 Checks: `bun run docs:check` passed. `bun run check` passed. It reported tooling 9 files/100 tests, protocol 19/314, plugin 30/844 passed and 1 skipped, Worker main 54/772, Worker HTTP 9/132, Worker F2 10/142. Worker dry-run builds passed. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed. No live service call or deployment was run.
 
 Historical review closure: consent snapshot, Deny interaction paint, sidebar/about backgrounds, and gold/foam/iris token documentation findings remain fixed. The previously open semantic selector finding is fixed by this authorization. Validation blockers from missing Wrangler and root lint diagnostics are superseded: dependencies are installed and current checks pass. OAB-49 remains In Progress as instructed.
+
+Corrective review closure for the agent-kind cascade finding: `.kind-agent` had equal specificity to the later `.stat-value` rule. Added regression assertion `protects iris agent text from the later stat-value color rule` for the bounded `.stat-value.kind-agent{color:var(--iris)}` selector. Before the CSS fix, `bun run --filter '@obsidian-ai-bridge/worker' test -- owner-pages.test.ts` failed that assertion as expected. Vitest reported 1 failed and 772 passed tests in its main suite. Changed only the selector specificity. The renderer markup remains unchanged. Updated five owner-page snapshots for the stylesheet change. The focused direct Vitest run passed 2 files and 20 tests.
+
+Final code validation after the selector fix: `bun run lint` passed across 320 files. `bun run docs:check` passed. `bun run check` passed typecheck, all tests, and dry-run builds. Test counts: tooling 9 files/100 tests; protocol 19/314; plugin 30/844 passed and 1 skipped; Worker main 54/773; Worker HTTP 9/132; Worker F2 10/142. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed. No markup, route, form, CSRF, header, copy, or behavior changed. This closes the cascade finding from the branch review. OAB-49 remains In Progress for parent review. No publication or task closure was performed.
 <!-- SECTION:NOTES:END -->

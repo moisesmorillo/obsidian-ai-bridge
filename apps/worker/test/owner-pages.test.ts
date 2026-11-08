@@ -63,7 +63,12 @@ describe("owner page rendering", () => {
 		expect(OWNER_CONSOLE_CSS).toContain(
 			".chip-fresh{color:var(--foam);border-color:var(--foam)}",
 		);
-		expect(OWNER_CONSOLE_CSS).toContain(".kind-agent{color:var(--iris)}");
+	});
+
+	it("protects iris agent text from the later stat-value color rule", () => {
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".stat-value.kind-agent{color:var(--iris)}",
+		);
 	});
 
 	it("applies surface and overlay backgrounds to the sidebar and about panel", () => {

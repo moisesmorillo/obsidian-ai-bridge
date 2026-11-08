@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-08T01:06:00Z'
+updated_date: '2026-11-08T01:08:00Z'
 labels:
   - worker
   - ui
@@ -211,4 +211,9 @@ Corrective review finding OAB47-P4-02: Fixed. The Measurement JSON link now targ
 RED: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` failed with exit 1 because the old link returned `text/html; charset=utf-8` with the browser Accept header. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/owner-pages.test.ts` passed 12/12 and updated one snapshot. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` passed 4/4. The response body matched the independent canonical response in full.
 
 Follow-up validation passed: `bun run docs:check`, `bun run check`, `bun run --filter '@obsidian-ai-bridge/worker' preflight`, and `git diff --check`. Full check totals: Worker unit 768, HTTP 132, F2 142, protocol 314, tooling 100, plugin 844 passed and 1 skipped. Lint, docs, type checks, and dry-run builds passed. Worker tests printed expected disconnect and injected SQLite failure diagnostics. Parent scoped re-review is pending. OAB-47 remains In Progress.
+
+Phase 4 final review closure: Task review examined 5c58809. Whole-branch review examined 9afff3670c20f7e20d96252489359a416606212e against main 79cf6ae. OAB47-P4-01 fixed at 9afff36: strict complete media-range and quality validation rejects malformed Accept entries. RED reproduced text/html/extra returning HTML. Scoped review approved the parser correction and metadata comments. OAB47-P4-02 fixed at 36e9b3291882f122a9a321755e799aef2439f45e: Measurement JSON now uses format=json. RED reproduced browser Accept returning HTML from the old link. The route test follows the rendered link with browser Accept and compares the full JSON body, including worker_isolate, against an independent canonical request. Final scoped review approved this fix. No actionable finding remains.
+Documentation scope: changed page view models, format units, UTC formatting, shell metadata authority and escaping, build-time version, negotiation helpers, and internal handler metadata lookup. Structural candidates: owner.ts remains mixed but low-risk. Existing application and SQLite owners retain state and mutation policy. Renderers, shell, CSS, version module, and formatters keep presentation ownership. Bounded metadata lookup examines at most 32 client pages. Missing metadata stays Unknown.
+Final source validation at 36e9b32: page tests 12/12 and owner tests 4/4 passed. bun run docs:check, bun run check, Worker preflight, and diff check passed. Full suites: Worker unit 768, HTTP 132, F2 142, protocol 314, tooling 100, plugin 844 passed and 1 skipped. Total 2300 passed, 1 skipped, 0 failed. Lint, type checks, documentation checks, and dry-run builds passed. Parent inspected raw worker output. Rebase on unchanged origin/main changed nothing. Reviewer checks did not repeat worker suites.
+Limits: No browser visual test, contrast measurement, live call, vault access, deployment, Cloudflare change, or external page request occurred. Client kind remains Unknown because canonical registry types lack that fact. No current handler has an authoritative current vault epoch, so the shell omits it. Summary cards label listed-page scope. Historical export epochs do not claim the current epoch. Keep OAB-47 In Progress under the owner order. Publication follows these reviews.
 <!-- SECTION:NOTES:END -->

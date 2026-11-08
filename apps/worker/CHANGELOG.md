@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/worker-v0.3.0...worker-v0.4.0) (2026-11-08)
+
+
+### Features
+
+* **worker:** polish owner console after live review ([#121](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/121)) ([4f5609c](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4f5609c1bb685511d58380b3215a79c25eaf9e79))
+
 ## [0.3.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/worker-v0.2.0...worker-v0.3.0) (2026-11-08)
 
 

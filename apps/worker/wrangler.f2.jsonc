@@ -13,6 +13,7 @@
 	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "vaultwire-f2-local-kv" }],
 	"vars": {
 		"SERVICE_ORIGIN": "https://service.test",
+		"VAULT_OBJECT_NAME": "vaultwire-f2-tests",
 		"ACCESS_TEAM_DOMAIN": "https://team.test",
 		"ACCESS_AUDIENCE": "synthetic-access-app",
 		"OWNER_SUBJECT": "synthetic-owner"

@@ -388,7 +388,9 @@ describe("production MCP transport", () => {
 				);
 				actualBodies.push(expected);
 			}
-			const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+			const vault = env.VAULTS.get(
+				env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!),
+			);
 			const stored = await runInDurableObject(vault, (_instance, state) =>
 				state.storage.sql
 					.exec(
@@ -1203,7 +1205,7 @@ describe("production MCP transport", () => {
 		});
 		expect(afterCancel.status).toBe(200);
 		await afterCancel.text();
-		const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+		const vault = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 		await vault.revokeClient("synthetic-owner", clientId);
 		for (const message of [
 			{ jsonrpc: "2.0", id: 21, method: "tools/list" },

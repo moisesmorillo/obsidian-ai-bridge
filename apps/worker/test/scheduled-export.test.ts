@@ -18,10 +18,12 @@ describe("scheduled packed exports", () => {
 	it("targets the canonical service vault and records a busy skip", async () => {
 		const calls: Array<{ host: string; createdAt: string }> = [];
 		const targetHost = "vault.example.test";
+		const objectName = "stable-vault-object";
 		const scheduledAt = Date.parse("2026-11-07T04:00:00.000Z");
 		const bindings = {
 			...env,
 			SERVICE_ORIGIN: `https://${targetHost}`,
+			VAULT_OBJECT_NAME: objectName,
 			VAULTS: {
 				idFromName: (name: string) => name,
 				get: (id: string) => ({
@@ -44,7 +46,7 @@ describe("scheduled packed exports", () => {
 		);
 
 		expect(calls).toEqual([
-			{ host: targetHost, createdAt: "2026-11-07T04:00:00.000Z" },
+			{ host: objectName, createdAt: "2026-11-07T04:00:00.000Z" },
 		]);
 		expect(log).toHaveBeenCalledWith(
 			JSON.stringify({
@@ -53,6 +55,30 @@ describe("scheduled packed exports", () => {
 				created_at: "2026-11-07T04:00:00.000Z",
 			}),
 		);
+	});
+
+	it("does not select a vault when the object name is missing", async () => {
+		const idFromName = vi.fn();
+		const bindings = {
+			...env,
+			SERVICE_ORIGIN: "https://service.example",
+			VAULT_OBJECT_NAME: undefined,
+			VAULTS: { idFromName } as unknown as Env["VAULTS"],
+		} as Env;
+		const handler = (worker as ScheduledWorker).scheduled;
+		expect(handler).toBeTypeOf("function");
+		if (!handler) return;
+
+		await handler(
+			{
+				scheduledTime: Date.parse("2026-11-07T04:00:00.000Z"),
+				cron: "0 * * * *",
+			},
+			bindings,
+			{} as ExecutionContext,
+		);
+
+		expect(idFromName).not.toHaveBeenCalled();
 	});
 
 	it("does not select a vault when the service origin is missing", async () => {

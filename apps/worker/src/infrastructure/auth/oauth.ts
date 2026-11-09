@@ -73,7 +73,13 @@ export function createOAuthOptions(
 	});
 	if (!config.success) return null;
 	const origin = config.data.SERVICE_ORIGIN;
-	if (!origin || !config.data.OWNER_SUBJECT || !env.OAUTH_KV) return null;
+	if (
+		!origin ||
+		!config.data.OWNER_SUBJECT ||
+		!env.OAUTH_KV ||
+		!env.VAULT_OBJECT_NAME
+	)
+		return null;
 	let serviceOrigin: string;
 	try {
 		const parsed = new URL(origin);
@@ -160,8 +166,11 @@ export function createOAuthOptions(
 					description: "Client consent is no longer current",
 				});
 			const ownerSubject = callbackConfig.data.OWNER_SUBJECT;
+			const objectName = callbackEnv.VAULT_OBJECT_NAME;
 			if (
 				!ownerSubject ||
+				!objectName ||
+				objectName !== env.VAULT_OBJECT_NAME ||
 				callbackConfig.data.SERVICE_ORIGIN !== serviceOrigin ||
 				ownerSubject !== config.data.OWNER_SUBJECT
 			)
@@ -179,7 +188,7 @@ export function createOAuthOptions(
 			const generation = props?.generation;
 			const consentId = props?.consent_id;
 			const registry = callbackEnv.VAULTS.get(
-				callbackEnv.VAULTS.idFromName(new URL(serviceOrigin).host),
+				callbackEnv.VAULTS.idFromName(objectName),
 			);
 			const accepted = await registry.registerClientGrant({
 				owner_subject: ownerSubject,
@@ -211,7 +220,12 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 	const app = new Hono<{ Bindings: Env }>();
 	app.get("/authorize", async (context) => {
 		const owner = await verifyOwnerAccess(context.req.raw, context.env);
-		if (!owner || !context.env.SERVICE_ORIGIN || !context.env.OAUTH_KV) {
+		if (
+			!owner ||
+			!context.env.SERVICE_ORIGIN ||
+			!context.env.OAUTH_KV ||
+			!context.env.VAULT_OBJECT_NAME
+		) {
 			return context.text("Unauthorized", 401);
 		}
 		const options = createOAuthOptions(
@@ -255,7 +269,12 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 	});
 	app.post("/authorize/consent", async (context) => {
 		const owner = await verifyOwnerAccess(context.req.raw, context.env);
-		if (!owner || !context.env.SERVICE_ORIGIN || !context.env.OAUTH_KV) {
+		if (
+			!owner ||
+			!context.env.SERVICE_ORIGIN ||
+			!context.env.OAUTH_KV ||
+			!context.env.VAULT_OBJECT_NAME
+		) {
 			return context.text("Unauthorized", 401);
 		}
 		const options = createOAuthOptions(
@@ -292,7 +311,7 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				.trim()
 				.slice(0, 80);
 			const registry = context.env.VAULTS.get(
-				context.env.VAULTS.idFromName(new URL(context.env.SERVICE_ORIGIN).host),
+				context.env.VAULTS.idFromName(context.env.VAULT_OBJECT_NAME),
 			);
 			const fence = await registry.beginClientConsent(
 				owner.subject,

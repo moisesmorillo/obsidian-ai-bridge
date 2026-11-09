@@ -203,10 +203,18 @@ async function main(): Promise<void> {
 			),
 		) as {
 			account_id?: string;
-			vars: { SERVICE_ORIGIN: string; OWNER_SUBJECT: string };
+			vars: {
+				SERVICE_ORIGIN: string;
+				VAULT_OBJECT_NAME: string;
+				OWNER_SUBJECT: string;
+			};
 		};
 		assert.equal(localConfig.account_id, undefined);
 		assert.equal(localConfig.vars.SERVICE_ORIGIN, `https://127.0.0.1:${port}`);
+		assert.equal(
+			localConfig.vars.VAULT_OBJECT_NAME,
+			"vaultwire-preflight-test",
+		);
 		assert.deepEqual((await readdir(localConfigDirectory)).sort(), [
 			".env",
 			"wrangler.local.jsonc",

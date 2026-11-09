@@ -4,7 +4,7 @@ title: Prepare the Worker for the vaultwire script
 status: In Progress
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T15:49:00Z'
+updated_date: '2026-11-09T15:54:00Z'
 labels:
   - rename
   - worker
@@ -23,8 +23,8 @@ Repository obsidian-ai-bridge, apps/worker wrangler configs, deploy workflow and
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A development rehearsal transfers a Durable Object with synthetic journal data between two scripts and reads the same cursor and files after the transfer.
-- [ ] #2 Deployment config tests pin the new script name, origin, bindings and migration.
-- [ ] #3 bun run check and Worker preflight pass. No production deploy happens in this task.
+- [x] #2 Deployment config tests pin the new script name, origin, bindings and migration.
+- [x] #3 bun run check and Worker preflight pass. No production deploy happens in this task.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,4 +66,6 @@ Validation: Focused config test RED before implementation: 2 failed and 3 passed
 Development rehearsal blocker: Wrangler whoami exited 1. Its private output produced only the safe failure label unknown_wrangler_failure. No development scripts or Cloudflare resources were created. No production deploy or vault access occurred. The synthetic remote transfer rehearsal remains incomplete because this worktree has no usable Wrangler authentication.
 
 Production cutover blocker: apps/worker/src/index.ts derives the Vault object key from the request host, while scheduled and OAuth paths use SERVICE_ORIGIN. Namespace transfer alone does not preserve the object selected by the new hostname. OAB-50.6 must resolve object identity before production deployment. No Worker runtime source changed.
+
+Review closure: task review and final whole-branch review both returned APPROVE WITH NOTES for blocked-draft publication only. Both reviewed 4077c8bc76ca06e4f8f714425e838157cd746dad against 7ed19cca1e566e9a6975c19c4c576213f4bb79ab. Scope covered all eight changed files, TypeScript declaration documentation, preflight lifecycle cohesion, transfer configuration, deploy guards, local isolation, and relevant identity callers. Neither review found an actionable code defect. The missing rehearsal remains open and blocks AC1. The hostname-derived identity mismatch remains open and blocks production cutover. S17 placeholders remain open and block deployment. Config tests and local checks prove AC2 and AC3 only. Hosted CI and actual remote data continuity remain unverified. Parent LSP probe found no new TypeScript errors. Auxiliary findings apply to existing caught errors, loopback TLS, and private temporary-file handling. Keep this task In Progress and publish a draft PR under the owner blocker rule.
 <!-- SECTION:NOTES:END -->

@@ -1,6 +1,7 @@
 import type { MeasurementResponse } from "@vaultwire/protocol";
 import {
 	type AdmissionByteReservation,
+	LOCAL_ADMISSION_RETRY_SECONDS,
 	REST_READ_BYTE_ALLOWANCE,
 	tryReserveAdmissionBytes,
 } from "@worker/application/admission-budget";
@@ -114,6 +115,29 @@ export function readSlotCapacitySnapshot(): ReadSlotCapacitySnapshot {
 		expired_count: expiredReadSlots,
 		deadline_ms: READ_SLOT_HOLD_DEADLINE_MS,
 	};
+}
+
+/**
+ * Return the earliest expiry of a full logical pool, rounded and clamped in seconds.
+ * Other refusals use the local fallback because physical completion has no estimate.
+ */
+export function readSlotRetryAfterSeconds(leaseClass: ReadSlotClass): number {
+	const now = Date.now();
+	sweepExpiredReadSlots(now);
+	const leases = [...activeLeases.values()].filter(
+		(lease) => lease.leaseClass === leaseClass && !lease.released,
+	);
+	const limit =
+		leaseClass === "mcp" ? MCP_READ_SLOT_LIMIT : REST_READ_SLOT_LIMIT;
+	if (leases.length < limit) return LOCAL_ADMISSION_RETRY_SECONDS;
+	const expiresAt = Math.min(...leases.map((lease) => lease.expiresAt));
+	return Math.max(
+		LOCAL_ADMISSION_RETRY_SECONDS,
+		Math.min(
+			READ_SLOT_HOLD_DEADLINE_MS / 1_000,
+			Math.ceil((expiresAt - now) / 1_000),
+		),
+	);
 }
 
 /** Reserve a REST or MCP read slot without queueing. */

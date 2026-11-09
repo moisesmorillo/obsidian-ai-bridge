@@ -1,7 +1,9 @@
 import { admissionByteSnapshot } from "@worker/application/admission-budget";
 import {
+	type ReadSlotClass,
 	type ReadSlotLease,
 	readSlotCapacitySnapshot,
+	readSlotRetryAfterSeconds,
 	tryAcquireReadSlot,
 } from "@worker/application/read-budget";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,10 +11,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 /** Retain fixture leases only until each case ends. */
 const leases: ReadSlotLease[] = [];
 
-/** Reserve a real REST lease and keep complete physical cleanup under fixture ownership. */
-function acquire() {
-	const lease = tryAcquireReadSlot();
-	if (!lease) throw new Error("Expected a REST lease");
+/** Reserve a real lease and keep complete physical cleanup under fixture ownership. */
+function acquire(leaseClass: ReadSlotClass = "rest") {
+	const lease = tryAcquireReadSlot(leaseClass);
+	if (!lease) throw new Error("Expected an available read lease");
 	leases.push(lease);
 	return lease;
 }
@@ -27,10 +29,35 @@ afterEach(() => {
 });
 
 describe("absolute read lease ownership", () => {
+	it("uses the local retry fallback when physical completion has no estimate", () => {
+		vi.useFakeTimers();
+		Array.from({ length: 4 }, () => acquire());
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(readSlotRetryAfterSeconds("rest")).toBe(2);
+		expect(readSlotRetryAfterSeconds("mcp")).toBe(2);
+		expect(tryAcquireReadSlot()).toBeUndefined();
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(18_000_000);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("excludes released and completed leases from retry estimates", () => {
+		vi.useFakeTimers();
+		const released = acquire("mcp");
+		released();
+		vi.setSystemTime(Date.now() + 10_000);
+		acquire("mcp").complete();
+		vi.setSystemTime(Date.now() + 10_000);
+		const current = Array.from({ length: 8 }, () => acquire("mcp"));
+		expect(readSlotRetryAfterSeconds("mcp")).toBe(60);
+		current[0]?.();
+		expect(readSlotRetryAfterSeconds("mcp")).toBe(2);
+	});
+
 	it("recovers measurement capacity at exactly 60000 ms without timer delivery", () => {
 		vi.useFakeTimers();
 		const before = readSlotCapacitySnapshot().expired_count;
-		Array.from({ length: 4 }, acquire);
+		Array.from({ length: 4 }, () => acquire());
 		vi.setSystemTime(Date.now() + 59_999);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(4);
 		vi.setSystemTime(Date.now() + 1);
@@ -65,7 +92,7 @@ describe("absolute read lease ownership", () => {
 		const obsolete = acquire();
 		obsolete();
 		obsolete.complete();
-		Array.from({ length: 4 }, acquire);
+		Array.from({ length: 4 }, () => acquire());
 		obsolete();
 		obsolete.complete();
 		expect(readSlotCapacitySnapshot().active_slots).toBe(4);

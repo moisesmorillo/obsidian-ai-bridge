@@ -17,7 +17,6 @@ import {
 } from "@vaultwire/protocol";
 import {
 	acquireMcpAdmission,
-	LOCAL_ADMISSION_RETRY_SECONDS,
 	MCP_ENVELOPE_BYTE_LIMIT,
 	mcpAdmissionBytes,
 } from "@worker/application/admission-budget";
@@ -29,6 +28,7 @@ import type {
 import { currentMcpEpoch } from "@worker/application/mcp-notes";
 import {
 	type ReadSlotLease,
+	readSlotRetryAfterSeconds,
 	sweepExpiredReadSlots,
 	tryAcquireReadSlot,
 	waitForReadSlotWork,
@@ -473,7 +473,7 @@ export async function handleMcpHttp(
 				admissionReservation.release();
 				return new Response(null, {
 					status: 429,
-					headers: { "retry-after": String(LOCAL_ADMISSION_RETRY_SECONDS) },
+					headers: { "retry-after": String(readSlotRetryAfterSeconds("mcp")) },
 				});
 			}
 		}

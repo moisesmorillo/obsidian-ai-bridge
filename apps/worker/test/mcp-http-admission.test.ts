@@ -1,5 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { admissionByteSnapshot } from "@worker/application/admission-budget";
+import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
@@ -89,6 +90,66 @@ afterEach(() => {
 });
 
 describe("MCP HTTP admission ownership", () => {
+	it.each([
+		[-1, 60],
+		[0, 60],
+		[999, 60],
+		[1_000, 59],
+		[1_001, 59],
+		[30_001, 30],
+		[58_001, 2],
+		[59_999, 2],
+		[60_000, null],
+	] as const)(
+		"uses absolute MCP read deadlines after %i ms",
+		async (elapsed, retry) => {
+			const worker = await fixture();
+			vi.useFakeTimers();
+			const started = Date.now();
+			const held = [tryAcquireReadSlot()];
+			try {
+				vi.setSystemTime(started + 10_000);
+				held.push(tryAcquireReadSlot("mcp"));
+				vi.setSystemTime(started + 20_000);
+				held.push(
+					...Array.from({ length: 7 }, () => tryAcquireReadSlot("mcp")),
+				);
+				expect(held.every((lease) => lease !== undefined)).toBe(true);
+				vi.setSystemTime(started + 10_000 + elapsed);
+				const body = JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "tools/call",
+					params: { name: "list_notes", arguments: {} },
+				});
+				const response = await worker.fetch(
+					new Request("https://mcp-admission.invalid/mcp", {
+						method: "POST",
+						headers: {
+							"content-type": "application/json",
+							accept: "application/json, text/event-stream",
+							"content-length": String(body.length),
+						},
+						body,
+					}),
+					env,
+				);
+				expect(response.status).toBe(retry === null ? 200 : 429);
+				expect(response.headers.get("retry-after")).toBe(
+					retry === null ? null : String(retry),
+				);
+				await response.text();
+				expect(admissionByteSnapshot().shared_bytes).toBe(0);
+			} finally {
+				for (const lease of held) {
+					lease?.();
+					lease?.complete();
+				}
+			}
+			expect(vi.getTimerCount()).toBe(0);
+		},
+	);
+
 	it("recovers expired MCP response capacity before envelope admission when timers stop", async () => {
 		const worker = await fixture();
 		const first = await worker.fetch(

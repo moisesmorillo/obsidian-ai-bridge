@@ -157,7 +157,8 @@ export function ownedReadResponse(
 			reason,
 		).finally(() => {
 			release();
-			completeDeadline();
+			// The fixed pump owns lease completion after writer shutdown.
+			if (!fixedWriter) completeDeadline();
 		});
 	}
 	/** Start one fixed-writer shutdown and retain its promise for release coordination. */

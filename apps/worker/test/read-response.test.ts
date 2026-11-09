@@ -44,6 +44,7 @@ describe("owned read response", () => {
 		}
 		testReadLeases.clear();
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	it.each(["generic", "fixed-length", "zero-byte"] as const)(
@@ -182,6 +183,89 @@ describe("owned read response", () => {
 		} finally {
 			available?.();
 			release();
+		}
+	});
+
+	it("retains expired fixed-response bytes until writer abort settles", async () => {
+		vi.useFakeTimers();
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected an available read slot");
+		const sourceStarted = barrier<void>();
+		const work = barrier<IteratorResult<Uint8Array>>();
+		const sourceCancelled = barrier<void>();
+		const durableFinished = barrier<void>();
+		const shutdownStarted = barrier<void>();
+		const shutdown = barrier<void>();
+		const completed = barrier<void>();
+		const complete = lease.complete;
+		const completeSpy = vi.spyOn(lease, "complete").mockImplementation(() => {
+			complete();
+			completed.resolve();
+		});
+		const getWriter = WritableStream.prototype.getWriter;
+		vi.spyOn(WritableStream.prototype, "getWriter").mockImplementation(
+			function (this: WritableStream) {
+				const writer = getWriter.call(this);
+				const abort = writer.abort.bind(writer);
+				vi.spyOn(writer, "abort").mockImplementation(async (reason) => {
+					shutdownStarted.resolve();
+					await shutdown.promise;
+					await abort(reason);
+				});
+				return writer;
+			},
+		);
+		const finished: AdmissionCompletion[] = [];
+		let demands = 0;
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					if (demands++ === 0)
+						return Promise.resolve({
+							done: false,
+							value: new Uint8Array(65_536),
+						});
+					sourceStarted.resolve();
+					return work.promise;
+				},
+				cancel: async () => {
+					sourceCancelled.resolve();
+				},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					durableFinished.resolve();
+					return { ok: true };
+				},
+			},
+			lease,
+			undefined,
+			undefined,
+			65_536,
+		);
+		const reading = response.arrayBuffer().catch((error: unknown) => error);
+		try {
+			await sourceStarted.promise;
+			await vi.advanceTimersByTimeAsync(60_000);
+			await Promise.all([shutdownStarted.promise, sourceCancelled.promise]);
+			work.resolve({ done: true, value: undefined });
+			await durableFinished.promise;
+			await vi.advanceTimersByTimeAsync(0);
+			expect(finished).toEqual(["uncertain"]);
+			expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+			expect(admissionByteSnapshot().rest_read_bytes).toBe(4_500_000);
+			expect(completeSpy).not.toHaveBeenCalled();
+			shutdown.resolve();
+			await completed.promise;
+			expect(await reading).toBeInstanceOf(Error);
+			expect(admissionByteSnapshot().rest_read_bytes).toBe(0);
+			expect(completeSpy).toHaveBeenCalledOnce();
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			work.resolve({ done: true, value: undefined });
+			shutdown.resolve();
+			await reading;
 		}
 	});
 

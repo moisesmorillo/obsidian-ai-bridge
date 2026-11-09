@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-09T21:55:00Z'
-updated_date: '2026-11-09T23:39:00Z'
+updated_date: '2026-11-09T23:56:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -52,4 +52,10 @@ Implemented absolute read lease deadlines with admission and measurement sweeps,
 Completed the remaining approved implementation after partial commit 8f83d1f. Weighted admission now enforces 64 MB shared MCP/body bytes and 18 MB separate REST read bytes. Logical read expiry frees counts. Physical bytes remain held through started work, cancellation, response cleanup, and writer shutdown. Late successful reads cannot publish and keep durable outcomes uncertain. Eligible FIFO waiting has a 2000 ms bound, 30 queued requests, and no queued body demand. New regressions cover suppressed timers, stale releases, cancellation, fairness, maximum envelopes, strict prototype keys, and idle timer cleanup. The real-router waves30 and spike300 fixtures each complete 300 mixed operations with concurrent device reads and no duplicate appends. Fixture retries accept only explicit admission refusals. Production mutation retries remain unchanged. Semantic self-review corrected early REST byte release and the hardcoded four-slot owner card. Full bun run check passes: 2381 tests pass, one test skips, and no tests fail. Formatting and docs:check also pass. OAB-53 keeps the approved heap/native profiling limit. OAB-52 stays In Progress for parent task review, branch review, rebase, owner review, and publication.
 
 Coverage exception: maximum-envelope and lease-unit tests passed when first added. Kept the existing implementation and added these coverage tests. Separate RED runs reproduced late EOF, suppressed entry timers, native cancellation release, strict prototype-key validation, owner count display, and early fixed-writer byte release before their corrections.
+
+Task review round 1 corrections: the fixed pump now owns physical lease completion after expiry. Source and durable cleanup cannot bypass pending writer abort.
+
+MCP read refusal now uses the earliest active MCP lease deadline. The estimate uses whole seconds rounded upward, with a 2..60-second bound. Unknown physical completion keeps the two-second fallback.
+
+RED reproduced early byte release and fixed retry values. Sixty focused tests and the full check pass with 2393 passed, zero failed, and one skipped. OAB-52 stays In Progress for parent re-review.
 <!-- SECTION:NOTES:END -->

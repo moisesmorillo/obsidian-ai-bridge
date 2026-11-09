@@ -1,10 +1,10 @@
 ---
 id: OAB-50.4
 title: Prepare the Worker for the vaultwire script
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:49:00Z'
+updated_date: '2026-11-09T16:52:00Z'
 labels:
   - rename
   - worker
@@ -93,10 +93,12 @@ Validation for this bounded test-only change: `cd apps/worker && bunx vitest run
 Final review closure: whole-branch review covered 383ff04 against origin/main 7ed19cc and approved with one bounded test gap. Corrective review covered 383ff04..8f8d0f7 and returned APPROVE. Both callback drift and outer-fetch missing/empty-name cases are ADDRESSED with exact failure and zero-namespace-selection assertions. No actionable finding remains. Parent inspected synthetic before/after snapshots and confirmed successful deletion messages for both rehearsal scripts. The parent also confirmed a clean worktree, unchanged origin/main and git diff --check. All acceptance criteria are checked. Hosted CI remains separate evidence. This task is complete within the supervisor scope. S17 placeholders and the production deploy guard stay in place.
 
 S17 output continuation: replaced OAUTH_KV with applied production KV id f1332596a3e84e4691d5ce71f1131510 and ACCESS_AUDIENCE with applied production audience 1ccdb36c95194c63eeb487eb666285ab5832e35cd0e10eb74a4cdd3141a3ed95. Updated deploy preflight selector to @vaultwire/worker after PR 132 integration. RED: bunx vitest run tooling/test/deployment-config.test.ts failed 3 assertions against the old worker selector and S17 placeholders. GREEN: the same focused test passed 7 tests. bun run docs:check passed. bun run --filter @vaultwire/worker preflight passed. bun run check passed after formatting the assertion file. Lint reported 15 pre-existing noNonNullAssertion warnings in unrelated Worker tests, with no errors. Build used Wrangler 4.45.0 dry-run. No runtime source, production deployment, remote command, token read, or Cloudflare resource change occurred. Stable object name, transfer migration, buckets, production cutover guard, and placeholder rejection guard remain unchanged.
+
+S17 continuation closure: task review approved 4f83fa6 against 923da77. Whole-branch review approved with notes at 4f83fa6 against origin/main 55ac8d9. It found no blocking code, config, safety or structural defect. Its one MINOR finding concerned the stale final summary. This update replaces that summary with the current applied S17 status and retains earlier notes as history. Parent fresh verification ran bun run check and bun run --filter @vaultwire/worker preflight. Both commands exited 0, with summary pass=2 fail=0 exit=0. The production cutover guard stays. No production deploy or resource change occurred. All acceptance criteria remain checked. Published branch ancestry remains intact, so push needs no force option.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Prepared the vaultwire Worker, bindings and Vault namespace transfer. Added VAULT_OBJECT_NAME at all nine selection sites, with the legacy production key and fail-closed guards. Local checks and synthetic development transfer passed. Wrangler confirmed deletion of both authorized rehearsal scripts. Independent reviews closed all findings. S17 placeholders and production deployment guards remain by owner decision. No production deploy or personal vault access occurred. Remote rehearsal used a temporary SQLite fixture and Wrangler 4.156.2 rather than pinned 4.45.0. PR 130 is the delivery record.
+Prepared vaultwire config, bindings and Vault namespace transfer. All nine runtime selections use VAULT_OBJECT_NAME with the legacy production key and fail-closed guards. Applied the supervisor-confirmed S17 OAuth KV ID and Access audience. Deployment and tests now use @vaultwire/worker after PR 132. Config tests, docs checks, full checks and Worker preflight passed. The synthetic transfer preserved object identity, cursor and files. Wrangler confirmed deletion of both rehearsal scripts. Task, branch and corrective reviews closed the runtime/test findings. The S17 branch review found only a stale summary, which this update fixes. Production authorization remains with OAB-50.6 and the workflow guard stays active. No production deploy or personal vault access occurred. Remote rehearsal used a temporary SQLite fixture and Wrangler 4.156.2, not pinned 4.45.0. PR 130 is the delivery record.
 <!-- SECTION:FINAL_SUMMARY:END -->

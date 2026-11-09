@@ -4,6 +4,7 @@ title: Rename the product to Vaultwire
 status: To Do
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
+updated_date: '2026-11-09T21:36:00Z'
 labels:
   - rename
 dependencies: []
@@ -24,3 +25,9 @@ Owner decision 2026-11-09: the product name becomes Vaultwire. The old name "AI 
 - [ ] #2 No current product surface, package, configuration, Cloudflare resource or repository name uses ai-bridge, obsidian-ai-bridge, AI Bridge or oab. Historical records are the only exception.
 - [ ] #3 The real vault on Mac, iPhone and iPad and the ChatGPT connection work against vaultwire.mmorillo.dev with the same content as before the cutover.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Status 2026-11-09: subtasks 50.1 to 50.7 are Done. Criterion 2 is still open. The OAuth device callback obsidian://ai-bridge/callback keeps the old name. The Durable Object key VAULT_OBJECT_NAME keeps obsidian-bridge.mmorillo.dev because a change would select an empty object. The deploy guard secret VAULTWIRE_CUTOVER_AUTHORIZED is no longer needed.
+<!-- SECTION:NOTES:END -->

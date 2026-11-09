@@ -1,10 +1,10 @@
 ---
 id: OAB-50.4
 title: Prepare the Worker for the vaultwire script
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:29:00Z'
+updated_date: '2026-11-09T16:41:00Z'
 labels:
   - rename
   - worker
@@ -50,6 +50,9 @@ The supervisor extended source scope to index.ts and infrastructure/auth/oauth.t
 
 ## Evidence limits
 The remote rehearsal used a temporary SQLite fixture and Wrangler 4.156.2, not repository-pinned 4.45.0. It proves synthetic namespace and object continuity only. It does not qualify the production Worker, production schema, alarms, OAuth state or R2 content. S17 output replacement and production cutover remain separate work. Earlier blocked-draft notes describe superseded task states.
+
+## Applied S17 outputs
+The supervisor confirms applied infrastructure. Replace production OAUTH_KV id with f1332596a3e84e4691d5ce71f1131510 and ACCESS_AUDIENCE with 1ccdb36c95194c63eeb487eb666285ab5832e35cd0e10eb74a4cdd3141a3ed95. Update deployment-config expectations first and verify RED, then config and GREEN. Keep the cutover guard, stable object name, bucket names and transfer unchanged. Run docs:check, full check, and Worker preflight. Review this bounded change, update PR 130 and return it ready. No remote resource changes or production deploy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

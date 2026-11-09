@@ -1,4 +1,3 @@
-import type { VaultReadResult } from "@obsidian-ai-bridge/protocol";
 import type { DeviceSession } from "@plugin/auth/device-session";
 import { SyncTransport } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
@@ -12,6 +11,7 @@ import { PublicationController } from "@plugin/sync/publication";
 import { ReconciliationController } from "@plugin/sync/reconciliation";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 import { TextApplyEngine } from "@plugin/sync/text-apply";
+import type { VaultReadResult } from "@vaultwire/protocol";
 import type { Vault } from "obsidian";
 
 /** Explicit startup and event registration choices for text publication composition. */

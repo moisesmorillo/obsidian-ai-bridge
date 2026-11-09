@@ -1,13 +1,10 @@
-import type {
-	ExportFailure,
-	ExportOperationResult,
-} from "@obsidian-ai-bridge/protocol";
+import type { ExportFailure, ExportOperationResult } from "@vaultwire/protocol";
 import {
 	ExportOperationResultSchema,
 	MAX_EXPORT_FILE_COUNT,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 
-export { MAX_EXPORT_FILE_COUNT } from "@obsidian-ai-bridge/protocol";
+export { MAX_EXPORT_FILE_COUNT } from "@vaultwire/protocol";
 
 import {
 	advanceZip32,

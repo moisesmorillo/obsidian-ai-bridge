@@ -1,8 +1,3 @@
-import type {
-	CoexistenceConfirmation,
-	DeviceState,
-	PendingOperation,
-} from "@obsidian-ai-bridge/protocol";
 import type { CoexistenceEffectFence } from "@plugin/sync/coexistence-effect-fence";
 import type { PluginOriginProof } from "@plugin/sync/desktop-sync";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
@@ -12,6 +7,11 @@ import {
 	type SettingsSyncPolicy,
 } from "@plugin/sync/enrollment-scope";
 import type { PublicationEvent } from "@plugin/sync/publication";
+import type {
+	CoexistenceConfirmation,
+	DeviceState,
+	PendingOperation,
+} from "@vaultwire/protocol";
 
 /** Frozen event-time authority and affected paths used if destructive proof is uncertain. */
 type FrozenCoexistenceCapture =

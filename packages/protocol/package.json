@@ -1,5 +1,5 @@
 {
-	"name": "@obsidian-ai-bridge/protocol",
+	"name": "@vaultwire/protocol",
 	"version": "0.0.0",
 	"type": "module",
 	"exports": {
@@ -14,6 +14,6 @@
 		"zod": "4.1.5"
 	},
 	"devDependencies": {
-		"@obsidian-ai-bridge/tooling": "workspace:*"
+		"@vaultwire/tooling": "workspace:*"
 	}
 }

@@ -1,4 +1,4 @@
-import type { DeviceState } from "@obsidian-ai-bridge/protocol";
+import type { DeviceState } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 import { projectSyncStatus } from "../src/sync/sync-status";
 

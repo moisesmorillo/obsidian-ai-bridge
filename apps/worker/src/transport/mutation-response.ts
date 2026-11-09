@@ -2,7 +2,7 @@ import {
 	encodeFileFailure,
 	encodeFileFailureBodyChunks,
 	type FileHttpFailureInput,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 
 /** Maximum bytes requested or queued by the owned response reader. */
 const RESPONSE_CHUNK_BYTES = 65_536;

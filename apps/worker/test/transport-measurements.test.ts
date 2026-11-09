@@ -1,7 +1,7 @@
 import type {
 	AuthorizationContext,
 	MeasurementAggregate,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import {

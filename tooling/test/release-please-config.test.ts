@@ -19,6 +19,64 @@ function expectVersionAlignment(
 	expect(releaseManifest["apps/worker"]).toBe(workerPackage.version);
 }
 
+/** Checks component settings, tags, and version links against supplied release metadata. */
+function expectReleaseConfigurationMatchesMetadata(
+	config: {
+		"separate-pull-requests": boolean;
+		packages: {
+			"apps/plugin": {
+				component: string;
+				"release-type": string;
+				"include-component-in-tag": boolean;
+				"tag-separator": string;
+				"extra-files": { type: string; path: string; jsonpath: string }[];
+			};
+			"apps/worker": {
+				component: string;
+				"release-type": string;
+				"include-component-in-tag": boolean;
+				"tag-separator": string;
+			};
+		};
+	},
+	releaseManifest: { "apps/plugin": string; "apps/worker": string },
+	pluginManifest: { version: string },
+	workerPackage: { version: string },
+): void {
+	const pluginConfig = config.packages["apps/plugin"];
+	const workerConfig = config.packages["apps/worker"];
+	const pluginTag = `${pluginConfig.component}${pluginConfig["tag-separator"]}v${releaseManifest["apps/plugin"]}`;
+	const workerTag = `${workerConfig.component}${workerConfig["tag-separator"]}v${releaseManifest["apps/worker"]}`;
+
+	expectVersionAlignment(releaseManifest, pluginManifest, workerPackage);
+	expect(Object.keys(releaseManifest).sort()).toEqual([
+		"apps/plugin",
+		"apps/worker",
+	]);
+	expect(config["separate-pull-requests"]).toBe(true);
+	expect(pluginConfig).toMatchObject({
+		component: "vaultwire",
+		"release-type": "node",
+		"include-component-in-tag": true,
+		"tag-separator": "-",
+	});
+	expect(workerConfig).toMatchObject({
+		component: "worker",
+		"release-type": "node",
+		"include-component-in-tag": true,
+		"tag-separator": "-",
+	});
+	expect(pluginTag).toMatch(/^vaultwire-v\d+\.\d+\.\d+$/);
+	expect(workerTag).toMatch(/^worker-v\d+\.\d+\.\d+$/);
+	expect(pluginTag).toBe(`vaultwire-v${pluginManifest.version}`);
+	expect(workerTag).toBe(`worker-v${workerPackage.version}`);
+	expect(pluginConfig["extra-files"]).toContainEqual({
+		type: "json",
+		path: "manifest.json",
+		jsonpath: "$.version",
+	});
+}
+
 /** Increments a metadata version's patch part to form a future-release fixture. */
 function nextPatchVersion(version: string): string {
 	return version.replace(/\d+$/, (patch) => String(Number(patch) + 1));
@@ -53,31 +111,79 @@ describe("Release Please configuration", () => {
 		expect(config["bootstrap-sha"]).toBe(
 			"eec41e68778e0d9e674d8e40c80b7c28e9ef80ed",
 		);
-		expect(config["separate-pull-requests"]).toBe(true);
-		expectVersionAlignment(releaseManifest, pluginManifest, workerPackage);
-		expect(config.packages["apps/plugin"]).toMatchObject({
-			component: "ai-bridge",
-			"release-type": "node",
-			"include-component-in-tag": true,
-			"tag-separator": "-",
-		});
-		expect(config.packages["apps/worker"]).toMatchObject({
-			component: "worker",
-			"release-type": "node",
-			"include-component-in-tag": true,
-			"tag-separator": "-",
-		});
-		// Release Please resolves extra-file paths relative to the package path.
-		expect(config.packages["apps/plugin"]["extra-files"]).toContainEqual({
-			type: "json",
-			path: "manifest.json",
-			jsonpath: "$.version",
-		});
+		expect(config["last-release-sha"]).toBe(
+			"7ed19cca1e566e9a6975c19c4c576213f4bb79ab",
+		);
+		expectReleaseConfigurationMatchesMetadata(
+			config,
+			releaseManifest,
+			pluginManifest,
+			workerPackage,
+		);
+	});
+
+	it("keeps the shared release pin through a Worker-first release", () => {
+		const config = JSON.parse(
+			readFileSync(
+				new URL("../../release-please-config.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const pluginManifest = JSON.parse(
+			readFileSync(
+				new URL("../../apps/plugin/manifest.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const workerPackage = JSON.parse(
+			readFileSync(
+				new URL("../../apps/worker/package.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const pluginConfig = config.packages["apps/plugin"];
+		const pluginTagPrefix = `${pluginConfig.component}${pluginConfig["tag-separator"]}v`;
+		const workerConfig = config.packages["apps/worker"];
+		/** Historical tag used to model the plugin's pre-rename release history. */
+		const legacyPluginTag = "ai-bridge-v0.2.1";
+		const workerFirstTag = `${workerConfig.component}${workerConfig["tag-separator"]}v${nextPatchVersion(workerPackage.version)}`;
+		const workerFirstTags = [legacyPluginTag, workerFirstTag];
+		/** Matches the configured plugin tag family. Legacy tags do not end the pin hold. */
+		const hasVaultwirePluginRelease = (tags: string[]): boolean =>
+			tags.some((tag) => tag.startsWith(pluginTagPrefix));
+		const tagsAfterPluginRelease = [
+			...workerFirstTags,
+			`${pluginTagPrefix}${nextPatchVersion(pluginManifest.version)}`,
+		];
+		const releaseDocs = readFileSync(
+			new URL("../../docs/plugin-release.md", import.meta.url),
+			"utf8",
+		);
+
+		expect(workerFirstTags).toContain(legacyPluginTag);
+		expect(workerFirstTag).toMatch(/^worker-v\d+\.\d+\.\d+$/);
+		expect(hasVaultwirePluginRelease(workerFirstTags)).toBe(false);
+		expect(config["last-release-sha"]).toBe(
+			"7ed19cca1e566e9a6975c19c4c576213f4bb79ab",
+		);
+		expect(hasVaultwirePluginRelease(tagsAfterPluginRelease)).toBe(true);
+		expect(releaseDocs).toContain(
+			"Remove the shared pin only after the first `vaultwire-v*` plugin release is published.",
+		);
+		expect(releaseDocs).toContain(
+			"A Worker-only release PR does not meet this condition.",
+		);
 	});
 
 	it.each(["plugin-only", "worker-only", "both"] as const)(
 		"accepts future %s version bumps when component metadata matches",
 		(change) => {
+			const config = JSON.parse(
+				readFileSync(
+					new URL("../../release-please-config.json", import.meta.url),
+					"utf8",
+				),
+			);
 			const releaseManifest = JSON.parse(
 				readFileSync(
 					new URL("../../.release-please-manifest.json", import.meta.url),
@@ -111,7 +217,8 @@ describe("Release Please configuration", () => {
 				nextWorkerPackage.version = workerVersion;
 			}
 
-			expectVersionAlignment(
+			expectReleaseConfigurationMatchesMetadata(
+				config,
 				nextReleaseManifest,
 				nextPluginManifest,
 				nextWorkerPackage,
@@ -168,6 +275,7 @@ describe("Release Please configuration", () => {
 		);
 		expect(workflow).toContain("uses: ./.github/workflows/release.yml");
 		expect(workflow).toContain("uses: ./.github/workflows/deploy.yml");
+		expect(workflowText("release.yml")).toContain("'vaultwire-v*'");
 		expect(workflow).not.toContain("sync-plugin-compatibility:");
 		expect(workflow).not.toContain("release-versions.ts");
 	});

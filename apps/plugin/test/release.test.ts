@@ -130,9 +130,9 @@ function runPublicationShell(options: {
 	const remoteCommit = options.remoteTag ?? "checked-commit";
 	const remoteTagLines =
 		options.tagRefKind === "lightweight"
-			? `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' "${remoteCommit}"`
-			: `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' tag-object; printf '%s\\trefs/tags/ai-bridge-v0.1.0^{}\\n' "${remoteCommit}"`;
-	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/ai-bridge-v0.1.0^{} refs/tags/ai-bridge-v0.1.0") ${remoteTagLines} ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
+			? `printf '%s\\trefs/tags/vaultwire-v0.1.0\\n' "${remoteCommit}"`
+			: `printf '%s\\trefs/tags/vaultwire-v0.1.0\\n' tag-object; printf '%s\\trefs/tags/vaultwire-v0.1.0^{}\\n' "${remoteCommit}"`;
+	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/vaultwire-v0.1.0^{} refs/tags/vaultwire-v0.1.0") ${remoteTagLines} ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
 	const existingNames = Object.entries(options.existingAssets ?? {})
 		.filter(([, asset]) => asset !== undefined)
 		.map(([name]) => (name === "manifest" ? "manifest.json" : "main.js"))
@@ -176,8 +176,8 @@ exit 2
 	const env = {
 		...process.env,
 		PATH: `${bin}:${process.env.PATH}`,
-		GITHUB_REF_NAME: "ai-bridge-v0.1.0",
-		RELEASE_TAG: "ai-bridge-v0.1.0",
+		GITHUB_REF_NAME: "vaultwire-v0.1.0",
+		RELEASE_TAG: "vaultwire-v0.1.0",
 		GITHUB_SHA:
 			options.eventCommit ?? options.checkedCommit ?? "checked-commit",
 		GH_LOG: log,
@@ -224,9 +224,9 @@ describe("plugin release metadata validation", () => {
 				{ cwd: root, encoding: "utf8" },
 			);
 			expect(result.status, result.stderr).toBe(0);
-			const validation = runValidator(root, "ai-bridge-v0.1.0");
+			const validation = runValidator(root, "vaultwire-v0.1.0");
 			expect(validation.status, String(validation.stderr)).toBe(0);
-			expect(String(validation.stdout).trim()).toBe("ai-bridge-v0.1.0");
+			expect(String(validation.stdout).trim()).toBe("vaultwire-v0.1.0");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -234,21 +234,22 @@ describe("plugin release metadata validation", () => {
 
 	it.each([
 		["wrong prefix", "release-v0.1.0", manifest, versions],
-		["malformed tag version", "ai-bridge-v01.0.0", manifest, versions],
-		["manifest version mismatch", "ai-bridge-v0.2.0", manifest, versions],
-		["missing compatibility entry", "ai-bridge-v0.1.0", manifest, {}],
+		["old component prefix", "ai-bridge-v0.1.0", manifest, versions],
+		["malformed tag version", "vaultwire-v01.0.0", manifest, versions],
+		["manifest version mismatch", "vaultwire-v0.2.0", manifest, versions],
+		["missing compatibility entry", "vaultwire-v0.1.0", manifest, {}],
 		[
 			"compatibility version mismatch",
-			"ai-bridge-v0.1.0",
+			"vaultwire-v0.1.0",
 			manifest,
 			{ "0.1.0": "1.14.0" },
 		],
-		["null manifest", "ai-bridge-v0.1.0", null, versions],
-		["malformed manifest fields", "ai-bridge-v0.1.0", { version: 1 }, versions],
-		["null compatibility map", "ai-bridge-v0.1.0", manifest, null],
+		["null manifest", "vaultwire-v0.1.0", null, versions],
+		["malformed manifest fields", "vaultwire-v0.1.0", { version: 1 }, versions],
+		["null compatibility map", "vaultwire-v0.1.0", manifest, null],
 		[
 			"desktop-only manifest",
-			"ai-bridge-v0.1.0",
+			"vaultwire-v0.1.0",
 			{ ...manifest, isDesktopOnly: true },
 			versions,
 		],
@@ -269,10 +270,10 @@ describe("plugin release metadata validation", () => {
 		const pluginDirectory = join(root, "apps", "plugin");
 		mkdirSync(pluginDirectory, { recursive: true });
 		try {
-			expect(runValidator(root, "ai-bridge-v0.1.0").status).not.toBe(0);
+			expect(runValidator(root, "vaultwire-v0.1.0").status).not.toBe(0);
 			writeFileSync(join(pluginDirectory, "manifest.json"), "{");
 			writeFileSync(join(pluginDirectory, "versions.json"), "{}");
-			expect(runValidator(root, "ai-bridge-v0.1.0").status).not.toBe(0);
+			expect(runValidator(root, "vaultwire-v0.1.0").status).not.toBe(0);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -385,7 +386,7 @@ exit 23
 		);
 		runGit(seed, "add", ".");
 		runGit(seed, "commit", "-m", "tag source");
-		runGit(seed, "tag", "ai-bridge-v0.1.0");
+		runGit(seed, "tag", "vaultwire-v0.1.0");
 		writeFileSync(
 			join(seed, "apps/plugin/manifest.json"),
 			JSON.stringify({ version: "0.2.0", minAppVersion: "1.14.0" }),
@@ -399,7 +400,7 @@ exit 23
 		runGit(seed, "remote", "add", "origin", remote);
 		runGit(seed, "push", "origin", "main", "--tags");
 		spawnSync("git", ["clone", remote, checkout], { encoding: "utf8" });
-		runGit(checkout, "checkout", "ai-bridge-v0.1.0");
+		runGit(checkout, "checkout", "vaultwire-v0.1.0");
 		const bin = join(root, "bin");
 		const assets = join(root, "assets");
 		const ghLog = join(root, "gh.log");
@@ -454,7 +455,7 @@ exit 2
 					env: {
 						...process.env,
 						PATH: `${bin}:${process.env.PATH}`,
-						RELEASE_TAG: "ai-bridge-v0.1.0",
+						RELEASE_TAG: "vaultwire-v0.1.0",
 						GH_LOG: ghLog,
 						GH_ASSET_DIR: assets,
 					},
@@ -462,7 +463,7 @@ exit 2
 			);
 			expect(publication.status, String(publication.stderr)).toBe(0);
 			expect(readFileSync(ghLog, "utf8")).toContain(
-				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+				"release download vaultwire-v0.1.0 --pattern manifest.json",
 			);
 			const result = spawnSync(
 				"bash",
@@ -472,7 +473,7 @@ exit 2
 					encoding: "utf8",
 					env: {
 						...process.env,
-						RELEASE_TAG: "ai-bridge-v0.1.0",
+						RELEASE_TAG: "vaultwire-v0.1.0",
 						GH_TOKEN: "fake-token",
 					},
 				},
@@ -497,7 +498,7 @@ exit 2
 					encoding: "utf8",
 					env: {
 						...process.env,
-						RELEASE_TAG: "ai-bridge-v0.1.0",
+						RELEASE_TAG: "vaultwire-v0.1.0",
 						GH_TOKEN: "fake-token",
 					},
 				},
@@ -534,7 +535,7 @@ exit 2
 		writeFileSync(join(seed, "apps/plugin/versions.json"), "{}\n");
 		runGit(seed, "add", ".");
 		runGit(seed, "commit", "-m", "tag source");
-		runGit(seed, "tag", "ai-bridge-v0.1.0");
+		runGit(seed, "tag", "vaultwire-v0.1.0");
 		runGit(seed, "remote", "add", "origin", remote);
 		runGit(seed, "push", "origin", "main", "--tags");
 		const protectedMainHook = `#!/bin/sh
@@ -546,7 +547,7 @@ done
 			mode: 0o755,
 		});
 		spawnSync("git", ["clone", remote, checkout], { encoding: "utf8" });
-		runGit(checkout, "checkout", "ai-bridge-v0.1.0");
+		runGit(checkout, "checkout", "vaultwire-v0.1.0");
 		const bin = join(root, "bin");
 		const ghLog = join(root, "gh.log");
 		mkdirSync(bin);
@@ -569,7 +570,7 @@ exit 2
 		const recordEnvironment = {
 			...process.env,
 			PATH: `${bin}:${process.env.PATH}`,
-			RELEASE_TAG: "ai-bridge-v0.1.0",
+			RELEASE_TAG: "vaultwire-v0.1.0",
 			GH_TOKEN: "fake-token",
 			GH_LOG: ghLog,
 			GH_FAILURE_MARKER: failureMarker,
@@ -708,13 +709,13 @@ exit 2
 		try {
 			expect(result.status, result.stderr).toBe(0);
 			const calls = readFileSync(result.log, "utf8");
-			expect(calls).toContain("release view ai-bridge-v0.1.0");
-			expect(calls).toContain("release create ai-bridge-v0.1.0");
+			expect(calls).toContain("release view vaultwire-v0.1.0");
+			expect(calls).toContain("release create vaultwire-v0.1.0");
 			expect(calls).toContain("--verify-tag");
 			expect(calls).toContain("apps/plugin/dist/manifest.json");
 			expect(calls).toContain("apps/plugin/dist/main.js");
 			expect(calls.split("\n")).toContain(
-				"release create ai-bridge-v0.1.0 --verify-tag --title ai-bridge-v0.1.0 --notes Plugin release ai-bridge-v0.1.0. apps/plugin/dist/manifest.json apps/plugin/dist/main.js",
+				"release create vaultwire-v0.1.0 --verify-tag --title vaultwire-v0.1.0 --notes Plugin release vaultwire-v0.1.0. apps/plugin/dist/manifest.json apps/plugin/dist/main.js",
 			);
 			expect(calls).not.toContain("styles.css");
 			expect(calls).not.toContain("--clobber");
@@ -728,7 +729,7 @@ exit 2
 		try {
 			expect(result.status, result.stderr).toBe(0);
 			expect(readFileSync(result.log, "utf8")).toContain(
-				"release create ai-bridge-v0.1.0",
+				"release create vaultwire-v0.1.0",
 			);
 		} finally {
 			rmSync(result.root, { recursive: true, force: true });
@@ -744,10 +745,10 @@ exit 2
 			expect(result.status, result.stderr).toBe(0);
 			const calls = readFileSync(result.log, "utf8");
 			expect(calls).toContain(
-				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+				"release download vaultwire-v0.1.0 --pattern manifest.json",
 			);
 			expect(calls).toContain(
-				"release download ai-bridge-v0.1.0 --pattern main.js",
+				"release download vaultwire-v0.1.0 --pattern main.js",
 			);
 			expect(calls).not.toContain("release upload");
 			expect(calls).not.toContain("release create");
@@ -766,7 +767,7 @@ exit 2
 			expect(result.status).not.toBe(0);
 			const calls = readFileSync(result.log, "utf8");
 			expect(calls).toContain(
-				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+				"release download vaultwire-v0.1.0 --pattern manifest.json",
 			);
 			expect(calls).not.toContain("release upload");
 		} finally {
@@ -783,10 +784,10 @@ exit 2
 			expect(result.status, result.stderr).toBe(0);
 			const calls = readFileSync(result.log, "utf8");
 			expect(calls).toContain(
-				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+				"release download vaultwire-v0.1.0 --pattern manifest.json",
 			);
 			expect(calls).toContain(
-				"release upload ai-bridge-v0.1.0 apps/plugin/dist/main.js",
+				"release upload vaultwire-v0.1.0 apps/plugin/dist/main.js",
 			);
 			expect(calls).not.toContain("--clobber");
 		} finally {

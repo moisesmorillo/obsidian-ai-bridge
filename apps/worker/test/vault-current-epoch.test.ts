@@ -1,4 +1,4 @@
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
 import { withTextStore } from "@worker/test-fixtures/text-files";
 import { describe, expect, it } from "vitest";
 

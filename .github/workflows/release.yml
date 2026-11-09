@@ -3,7 +3,7 @@ name: Plugin release
 on:
   push:
     tags:
-      - 'ai-bridge-v*'
+      - 'vaultwire-v*'
   workflow_call:
     inputs:
       tag:

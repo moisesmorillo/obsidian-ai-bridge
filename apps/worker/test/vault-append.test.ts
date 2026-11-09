@@ -7,7 +7,7 @@ import {
 	OperationIntentSchema,
 	RenameReservationSchema,
 	TextMutationIntentSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { executeFileCommand } from "@worker/application/history";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import type { TextStoreFixture } from "@worker/test-fixtures/text-files";

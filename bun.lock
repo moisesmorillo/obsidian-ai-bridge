@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "obsidian-ai-bridge",
+      "name": "vaultwire",
       "devDependencies": {
         "@ast-grep/napi": "0.51.0",
         "@biomejs/biome": "2.5.15",
@@ -14,23 +14,23 @@
       },
     },
     "apps/plugin": {
-      "name": "@obsidian-ai-bridge/plugin",
+      "name": "@vaultwire/plugin",
       "dependencies": {
-        "@obsidian-ai-bridge/protocol": "workspace:*",
+        "@vaultwire/protocol": "workspace:*",
       },
       "devDependencies": {
         "@codemirror/view": "6.43.13",
-        "@obsidian-ai-bridge/tooling": "workspace:*",
+        "@vaultwire/tooling": "workspace:*",
         "esbuild": "0.28.2",
         "obsidian": "1.14.4",
       },
     },
     "apps/worker": {
-      "name": "@obsidian-ai-bridge/worker",
+      "name": "@vaultwire/worker",
       "dependencies": {
         "@cloudflare/workers-oauth-provider": "1.2.4",
         "@modelcontextprotocol/server": "2.4.0",
-        "@obsidian-ai-bridge/protocol": "workspace:*",
+        "@vaultwire/protocol": "workspace:*",
         "drizzle-orm": "0.45.4",
         "hono": "4.9.6",
         "jose": "6.2.13",
@@ -38,26 +38,26 @@
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.0",
         "@cloudflare/workers-types": "4.20251014.0",
-        "@obsidian-ai-bridge/tooling": "workspace:*",
+        "@vaultwire/tooling": "workspace:*",
         "drizzle-kit": "0.31.11",
         "fflate": "0.8.2",
         "wrangler": "4.45.0",
       },
     },
     "packages/protocol": {
-      "name": "@obsidian-ai-bridge/protocol",
+      "name": "@vaultwire/protocol",
       "version": "0.0.0",
       "dependencies": {
         "zod": "4.1.5",
       },
       "devDependencies": {
-        "@obsidian-ai-bridge/tooling": "workspace:*",
+        "@vaultwire/tooling": "workspace:*",
       },
     },
     "tooling": {
-      "name": "@obsidian-ai-bridge/tooling",
+      "name": "@vaultwire/tooling",
       "dependencies": {
-        "@obsidian-ai-bridge/protocol": "workspace:*",
+        "@vaultwire/protocol": "workspace:*",
       },
     },
   },
@@ -256,14 +256,6 @@
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
 
-    "@obsidian-ai-bridge/plugin": ["@obsidian-ai-bridge/plugin@workspace:apps/plugin"],
-
-    "@obsidian-ai-bridge/protocol": ["@obsidian-ai-bridge/protocol@workspace:packages/protocol"],
-
-    "@obsidian-ai-bridge/tooling": ["@obsidian-ai-bridge/tooling@workspace:tooling"],
-
-    "@obsidian-ai-bridge/worker": ["@obsidian-ai-bridge/worker@workspace:apps/worker"],
-
     "@poppinss/colors": ["@poppinss/colors@4.1.6", "", { "dependencies": { "kleur": "^4.1.5" } }, "sha512-H9xkIdFswbS8n1d6vmRd8+c10t2Qe+rZITbbDHHkQixH5+2x1FDGmi/0K+WgWiqQFKPSlIYB7jlH6Kpfn6Fleg=="],
 
     "@poppinss/dumper": ["@poppinss/dumper@0.6.5", "", { "dependencies": { "@poppinss/colors": "^4.1.5", "@sindresorhus/is": "^7.0.2", "supports-color": "^10.0.0" } }, "sha512-NBdYIb90J7LfOI32dOewKI1r7wnkiH6m920puQ3qHUeZkxNkQiFnXVWoE6YtFSv6QOiPPf7ys6i+HWWecDz7sw=="],
@@ -377,6 +369,14 @@
     "@typescript/typescript-win32-arm64": ["@typescript/typescript-win32-arm64@7.0.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-Gyl1Vy6OsWesLzmq+EP0Fb7b4Nid5232AvcA2SFcdYreldpNtYFFofPjnt62y9hQy7VTaZp65ICJjuAQRaVcIQ=="],
 
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "", { "os": "win32", "cpu": "x64" }, "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g=="],
+
+    "@vaultwire/plugin": ["@vaultwire/plugin@workspace:apps/plugin"],
+
+    "@vaultwire/protocol": ["@vaultwire/protocol@workspace:packages/protocol"],
+
+    "@vaultwire/tooling": ["@vaultwire/tooling@workspace:tooling"],
+
+    "@vaultwire/worker": ["@vaultwire/worker@workspace:apps/worker"],
 
     "@vitest/mocker": ["@vitest/mocker@5.0.4", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.31", "@vitest/spy": "5.0.4", "estree-walker": "^3.0.3", "magic-string": "^1.4.3" }, "peerDependencies": { "msw": "^2.4.9 || ^3.0.0", "vite": "^6.0.0 || ^7.0.0 || ^8.0.0" }, "optionalPeers": ["msw", "vite"] }, "sha512-tqAlrYWce4iUxhr3ncNohejtCTOcHeE8XWrSNZY3OhPoDn01yeGv+gnaBy64ATp7o6pb03eIbBAjzmibpc9vIQ=="],
 

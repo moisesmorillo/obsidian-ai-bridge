@@ -1,7 +1,4 @@
-import type {
-	DevicePrecondition,
-	PendingOperation,
-} from "@obsidian-ai-bridge/protocol";
+import type { DevicePrecondition, PendingOperation } from "@vaultwire/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";

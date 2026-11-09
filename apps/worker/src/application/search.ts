@@ -4,11 +4,8 @@ import type {
 	SearchRequest,
 	SearchResponse,
 	SearchResult,
-} from "@obsidian-ai-bridge/protocol";
-import {
-	EMPTY_PAYLOAD_HASH,
-	SearchRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
+import { EMPTY_PAYLOAD_HASH, SearchRequestSchema } from "@vaultwire/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";

@@ -3,14 +3,14 @@ import type {
 	MeasurementAggregate,
 	MeasurementResponse,
 	RequestObservation,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	FeedPreparationObservationSchema,
 	MEASUREMENT_LIMITS,
 	MeasurementAggregateSchema,
 	MeasurementResponseSchema,
 	RequestObservationSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 
 /** Owner-read storage values from physical SQLite allocation and distinct references. */
 export interface MeasurementStorage {

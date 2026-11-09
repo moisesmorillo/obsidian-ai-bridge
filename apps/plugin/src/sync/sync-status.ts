@@ -1,9 +1,3 @@
-import {
-	type CoexistenceConfirmation,
-	type DeviceState,
-	FileHttpErrorSchema,
-	type VaultReadResult,
-} from "@obsidian-ai-bridge/protocol";
 import type { DeviceAttention } from "@plugin/sync/attention";
 import {
 	getAttentionKey,
@@ -11,6 +5,12 @@ import {
 } from "@plugin/sync/attention";
 import type { DeviceJournalFailureStage } from "@plugin/sync/device-journal";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
+import {
+	type CoexistenceConfirmation,
+	type DeviceState,
+	FileHttpErrorSchema,
+	type VaultReadResult,
+} from "@vaultwire/protocol";
 
 /** Confirmed feed boundary; null means no validated observation exists. */
 export interface RemoteHeadObservation {

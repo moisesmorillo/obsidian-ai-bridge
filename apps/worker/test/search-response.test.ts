@@ -4,7 +4,7 @@ import type {
 	AuthorizationContext,
 	SearchRequest,
 	SearchResponse,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { Env } from "@worker/env";

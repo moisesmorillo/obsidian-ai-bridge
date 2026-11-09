@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 describe("production tooling import boundary", () => {
 	it.each([
 		"@tooling/documentation",
-		"@obsidian-ai-bridge/tooling/vite-aliases",
+		"@vaultwire/tooling/vite-aliases",
 		"@ast-grep/napi",
 		"@microsoft/tsdoc",
 	])(
@@ -37,7 +37,7 @@ describe("production tooling import boundary", () => {
 				);
 				await writeFile(
 					path,
-					'import { EpochSchema } from "@obsidian-ai-bridge/protocol"; void EpochSchema;',
+					'import { EpochSchema } from "@vaultwire/protocol"; void EpochSchema;',
 				);
 				const allowed = lint();
 				expect(allowed.status, allowed.stdout + allowed.stderr).toBe(0);

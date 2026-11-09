@@ -1,4 +1,4 @@
-import { EpochSchema } from "@obsidian-ai-bridge/protocol";
+import { EpochSchema } from "@vaultwire/protocol";
 import { isBlobGcRunId } from "@worker/infrastructure/sqlite/blob-gc-id";
 import { RELATIONAL_SCHEMA_STATEMENTS } from "@worker/infrastructure/sqlite/schema.generated";
 import { meta, vaultSchema } from "@worker/infrastructure/sqlite/schema-model";

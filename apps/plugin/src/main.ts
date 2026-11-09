@@ -1,4 +1,3 @@
-import type { VaultReadResult } from "@obsidian-ai-bridge/protocol";
 import {
 	DeviceSession,
 	DeviceSessionNetworkError,
@@ -44,10 +43,11 @@ import {
 	projectSyncStatus,
 	type SyncFailureDiagnostic,
 } from "@plugin/sync/sync-status";
+import type { VaultReadResult } from "@vaultwire/protocol";
 import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
-const DEFAULT_SERVER_URL = "https://obsidian-bridge.mmorillo.dev";
+const DEFAULT_SERVER_URL = "https://vaultwire.mmorillo.dev";
 
 /** Owns device-local enrollment and starts serialized synchronization after connection restore. */
 export default class AIBridgePlugin extends Plugin {
@@ -978,7 +978,7 @@ export default class AIBridgePlugin extends Plugin {
 				isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
 				settingsPolicy: this.settingsValue.settingsSync,
 				onConflictCopy: (path) =>
-					this.notice(`AI Bridge kept your version as ${path}`),
+					this.notice(`Vaultwire kept your version as ${path}`),
 			},
 		);
 	}

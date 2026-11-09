@@ -1,7 +1,7 @@
 import type {
 	AdmissionCompletion,
 	AuthorizationContext,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import type { ReadVaultGateway } from "@worker/application/reads";
 import type { Env } from "@worker/env";

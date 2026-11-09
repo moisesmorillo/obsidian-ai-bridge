@@ -10,7 +10,7 @@ import {
 	McpReadNoteResultSchema,
 	McpToolErrorSchema,
 	parseETag,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import productionWorker from "@worker/index";
 import {
 	activeAdmissionStates,

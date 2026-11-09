@@ -802,7 +802,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 				"notes/a (conflict Test Device 1970-01-01 0000 r2).md",
 			);
 			expect(host.notices).toEqual([
-				"AI Bridge kept your version as notes/a (conflict Test Device 1970-01-01 0000 r2).md",
+				"Vaultwire kept your version as notes/a (conflict Test Device 1970-01-01 0000 r2).md",
 			]);
 		} finally {
 			plugin.onunload();
@@ -1944,13 +1944,13 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		await update("oab-8.8 dev-1");
 		expect(saved).toEqual([
 			{
-				serverUrl: "https://obsidian-bridge.mmorillo.dev",
+				serverUrl: "https://vaultwire.mmorillo.dev",
 				deviceName: "oab-8.8 dev-1",
 				coexistenceMode: false,
 			},
 		]);
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
-			serverUrl: "https://obsidian-bridge.mmorillo.dev",
+			serverUrl: "https://vaultwire.mmorillo.dev",
 			deviceName: "oab-8.8 dev-1",
 			coexistenceMode: false,
 			settingsSync: {

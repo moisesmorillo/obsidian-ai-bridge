@@ -38,8 +38,8 @@
 										"group": [
 											"@tooling/*",
 											"@plugin-tools/*",
-											"@obsidian-ai-bridge/tooling",
-											"@obsidian-ai-bridge/tooling/*",
+											"@vaultwire/tooling",
+											"@vaultwire/tooling/*",
 											"@ast-grep/napi",
 											"@ast-grep/napi/*",
 											"@microsoft/tsdoc",

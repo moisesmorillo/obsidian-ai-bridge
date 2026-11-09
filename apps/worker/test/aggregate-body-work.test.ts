@@ -1,9 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
-import {
-	FileCommandSchema,
-	VaultReadResultSchema,
-} from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
+import { FileCommandSchema, VaultReadResultSchema } from "@vaultwire/protocol";
 import { executeBlobPut } from "@worker/application/blobs";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import {

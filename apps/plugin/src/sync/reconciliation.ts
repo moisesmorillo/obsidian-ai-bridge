@@ -1,14 +1,3 @@
-import {
-	type ChangesPage,
-	DevicePayloadHashSchema,
-	type DeviceState,
-	type ManifestEntry,
-	type ManifestPage,
-	type PendingOperation,
-	parseETag,
-	pathKey,
-	type ReconciliationCheckpoint,
-} from "@obsidian-ai-bridge/protocol";
 import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import {
@@ -26,6 +15,17 @@ import type {
 	TextApplyEngine,
 	TextVault,
 } from "@plugin/sync/text-apply";
+import {
+	type ChangesPage,
+	DevicePayloadHashSchema,
+	type DeviceState,
+	type ManifestEntry,
+	type ManifestPage,
+	type PendingOperation,
+	parseETag,
+	pathKey,
+	type ReconciliationCheckpoint,
+} from "@vaultwire/protocol";
 
 /** Prefix that lets restart recovery identify rejected enrollment paths in attention. */
 const ENROLLMENT_REJECTION_PREFIX = "Enrollment create rejected (";

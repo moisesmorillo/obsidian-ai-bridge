@@ -2,7 +2,7 @@ import {
 	type AuthorizationContext,
 	formatETag,
 	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 import {
 	NATIVE_READ_CONTEXT,

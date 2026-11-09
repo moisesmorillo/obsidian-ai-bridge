@@ -1,7 +1,4 @@
-import type {
-	BlobDeclaration,
-	ByteRangeSelection,
-} from "@obsidian-ai-bridge/protocol";
+import type { BlobDeclaration, ByteRangeSelection } from "@vaultwire/protocol";
 import type { BlobContentStore, BlobEvidence } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 

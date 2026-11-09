@@ -1,4 +1,4 @@
-import type { MeasurementResponse } from "@obsidian-ai-bridge/protocol";
+import type { MeasurementResponse } from "@vaultwire/protocol";
 
 /** Maximum concurrent authoritative read responses in one Worker isolate. */
 export const READ_SLOT_LIMIT = 4;

@@ -8,11 +8,11 @@ import type {
 	TextMutationBeginResult,
 	TextMutationIntent,
 	TextMutationResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	IdempotencyKeySchema,
 	MutationReceiptSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AdmissionDenied,
 	type PreparedDescriptor,

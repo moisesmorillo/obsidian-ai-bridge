@@ -1,7 +1,4 @@
-import {
-	type IdempotencyKey,
-	IdempotencyKeySchema,
-} from "@obsidian-ai-bridge/protocol";
+import { type IdempotencyKey, IdempotencyKeySchema } from "@vaultwire/protocol";
 import { FileOperationDenied } from "@worker/application/files";
 
 /** Rejects invalid keys or UUIDv7 timestamps outside the inclusive policy window. */

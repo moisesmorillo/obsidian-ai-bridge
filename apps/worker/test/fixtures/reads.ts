@@ -1,6 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
-import { EMPTY_PAYLOAD_HASH } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
+import { EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteReadStore } from "@worker/infrastructure/sqlite/reads";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";

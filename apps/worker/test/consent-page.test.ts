@@ -1,4 +1,4 @@
-import { VaultScopeSchema } from "@obsidian-ai-bridge/protocol";
+import { VaultScopeSchema } from "@vaultwire/protocol";
 import { renderConsentPage } from "@worker/transport/owner-pages/consent";
 import { describe, expect, it } from "vitest";
 

@@ -1,5 +1,5 @@
 import { env, runInDurableObject } from "cloudflare:test";
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
 import {
 	MAX_OAUTH_GRANTS,
 	MAX_PENDING_CONSENTS,

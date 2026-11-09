@@ -4,7 +4,7 @@ import {
 	formatETag,
 	IdempotencyKeySchema,
 	RenameReservationSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { BlobGcService } from "@worker/application/blob-gc";
 import type { BlobStore } from "@worker/application/blobs";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";

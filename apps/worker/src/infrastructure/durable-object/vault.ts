@@ -26,7 +26,7 @@ import type {
 	TextReadRequest,
 	TextReadResult,
 	VaultReadResponse,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	BeginClientConsentRequestSchema,
 	FeedPreparationObservationSchema,
@@ -41,7 +41,7 @@ import {
 	RenameClientRequestSchema,
 	RequestObservationSchema,
 	RevokeClientRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import { BlobGcService } from "@worker/application/blob-gc";
 import { PackedExportService } from "@worker/application/export";

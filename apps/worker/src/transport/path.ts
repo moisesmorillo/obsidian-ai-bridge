@@ -1,4 +1,4 @@
-import { normalizePath } from "@obsidian-ai-bridge/protocol";
+import { normalizePath } from "@vaultwire/protocol";
 
 /** Decode one raw URI path segment sequence once, then apply canonical path rules. */
 export function decodeAndNormalizePath(

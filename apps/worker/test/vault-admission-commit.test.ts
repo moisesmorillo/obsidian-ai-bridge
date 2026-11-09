@@ -4,12 +4,8 @@ import type {
 	AdmissionFailure,
 	AuthorizationContext,
 	OperationIntent,
-} from "@obsidian-ai-bridge/protocol";
-import {
-	formatETag,
-	normalizePath,
-	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
+import { formatETag, normalizePath, pathKey } from "@vaultwire/protocol";
 import type { PreparedOperation } from "@worker/application/admission";
 import {
 	AdmissionDenied,

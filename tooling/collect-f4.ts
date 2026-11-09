@@ -1,15 +1,15 @@
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-	type MeasurementResponse,
-	MeasurementResponseSchema,
-} from "@obsidian-ai-bridge/protocol";
 import { collectF4Measurements, formatF4Summary } from "@tooling/f4-collection";
 import {
 	assertAccessCookiePath,
 	defaultF4CredentialRoot,
 	readAccessCookieFile,
 } from "@tooling/f4-credentials";
+import {
+	type MeasurementResponse,
+	MeasurementResponseSchema,
+} from "@vaultwire/protocol";
 
 /** Fixed owner endpoint; command arguments cannot change its origin or route. */
 const SERVICE_MEASUREMENTS_URL =

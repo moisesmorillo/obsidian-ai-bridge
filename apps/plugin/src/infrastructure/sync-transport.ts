@@ -1,4 +1,13 @@
-import type { DevicePrecondition } from "@obsidian-ai-bridge/protocol";
+import type { OAuthTransportResponse } from "@plugin/infrastructure/oauth-transport";
+import {
+	type CanonicalSyncErrorKind,
+	classifyHttpStatus,
+	type DeleteResponseDiagnostic,
+	type ResponseETagClass,
+	SyncTransportError,
+	UnsupportedRemoteTextError,
+} from "@plugin/sync/remote-text";
+import type { DevicePrecondition } from "@vaultwire/protocol";
 import {
 	ChangesPageSchema,
 	DevicePayloadHashSchema,
@@ -10,16 +19,7 @@ import {
 	TextReadResponseSchema,
 	type VaultReadResult,
 	VaultReadResultSchema,
-} from "@obsidian-ai-bridge/protocol";
-import type { OAuthTransportResponse } from "@plugin/infrastructure/oauth-transport";
-import {
-	type CanonicalSyncErrorKind,
-	classifyHttpStatus,
-	type DeleteResponseDiagnostic,
-	type ResponseETagClass,
-	SyncTransportError,
-	UnsupportedRemoteTextError,
-} from "@plugin/sync/remote-text";
+} from "@vaultwire/protocol";
 
 export { SyncTransportError } from "@plugin/sync/remote-text";
 

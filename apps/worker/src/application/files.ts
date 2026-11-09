@@ -1,4 +1,4 @@
-import type { FileFailure } from "@obsidian-ai-bridge/protocol";
+import type { FileFailure } from "@vaultwire/protocol";
 
 /** Carries one canonical policy failure without exposing unsafe details. */
 export class FileOperationDenied extends Error {

@@ -6,13 +6,6 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-	FileHttpErrorSchema,
-	type MutationReceipt,
-	MutationReceiptSchema,
-	PathSchema,
-	parseETag,
-} from "@obsidian-ai-bridge/protocol";
-import {
 	DEVICE_JOURNAL_FAILURE_STAGES,
 	type DeviceJournalFailureStage,
 } from "@plugin/sync/device-journal";
@@ -21,6 +14,13 @@ import type {
 	CanonicalSyncErrorKind,
 	DeleteResponseDiagnostic,
 } from "@plugin/sync/remote-text";
+import {
+	FileHttpErrorSchema,
+	type MutationReceipt,
+	MutationReceiptSchema,
+	PathSchema,
+	parseETag,
+} from "@vaultwire/protocol";
 
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
@@ -425,13 +425,13 @@ export function assertAuthorizedVault(
 	return allowed[id];
 }
 
-/** Accepts only the expected PKCE authorization request and rejects callback credentials. */
+/** Accepts a Vaultwire PKCE authorization request and rejects callback credentials. */
 export function validateAuthorizationUrl(value: string): string {
 	try {
 		const url = new URL(value);
 		const parameters = url.searchParams;
 		if (
-			url.origin !== "https://obsidian-bridge.mmorillo.dev" ||
+			url.origin !== "https://vaultwire.mmorillo.dev" ||
 			url.pathname !== "/authorize" ||
 			url.hash ||
 			parameters.get("response_type") !== "code" ||

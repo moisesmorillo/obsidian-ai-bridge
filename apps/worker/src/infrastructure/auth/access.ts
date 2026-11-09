@@ -1,4 +1,4 @@
-import { LocalAuthConfigurationSchema } from "@obsidian-ai-bridge/protocol";
+import { LocalAuthConfigurationSchema } from "@vaultwire/protocol";
 import type { Env } from "@worker/env";
 import {
 	createRemoteJWKSet,

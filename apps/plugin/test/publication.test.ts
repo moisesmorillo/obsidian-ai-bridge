@@ -1,7 +1,4 @@
-import type {
-	DevicePrecondition,
-	PendingOperation,
-} from "@obsidian-ai-bridge/protocol";
+import type { DevicePrecondition, PendingOperation } from "@vaultwire/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { CoexistenceEffectFence } from "../src/sync/coexistence-effect-fence";
 import { DesktopSyncController } from "../src/sync/desktop-sync";

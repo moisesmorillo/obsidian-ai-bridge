@@ -3,7 +3,7 @@ import {
 	ExportOperationResultSchema,
 	ExportSnapshotSchema,
 	OwnerExportRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 const epoch = "a".repeat(32);

@@ -92,9 +92,13 @@ In ChatGPT plugin or connector settings, add a custom MCP server and create it a
 | Authentication | OAuth |
 | Advanced OAuth settings | Leave empty. The server publishes OAuth metadata. |
 
-ChatGPT opens the Vaultwire consent page behind Cloudflare Access. Sign in through Access, approve the request, and name the client `ChatGPT`. A custom MCP plugin on a personal account is visible only to that account. Vault access also needs Access login and consent.
+ChatGPT opens the Vaultwire consent page behind Cloudflare Access. Sign in through Access, approve the request, and name the client `ChatGPT`.
 
-Do not configure keywords. ChatGPT selects tools from their names, descriptions, and the server instructions sent at initialization. Mention “my vault” or “Vaultwire” in a prompt, or enable Vaultwire in the message tool picker. You can add this custom instruction:
+In the owner's ChatGPT web setup on 2026-11-09, the custom plugin appeared only in that personal account. This is an owner observation, not a Vaultwire access control. Vault access still needs Cloudflare Access login and Vaultwire consent.
+
+Do not configure keywords. ChatGPT selects tools from their names, descriptions, and the server instructions sent at initialization. Mention “my vault” or “Vaultwire” in a prompt, or enable Vaultwire in the message tool picker.
+
+You can add this custom instruction:
 
 > When I talk about my notes, my vault or Obsidian, use Vaultwire to search, read or create them.
 
@@ -120,7 +124,9 @@ Then run `/mcp` in Claude Code to authenticate. Sign in through Cloudflare Acces
 
 #### Claude custom connectors
 
-Claude supports remote custom connectors with OAuth. Follow the [Claude custom connector guide](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp) to add `https://<your-host>/mcp`. Sign in through Access and approve the consent request. Connector controls can change, so use the current Claude guide rather than these menu labels.
+Claude supports remote custom connectors with OAuth. Follow the [Claude custom connector guide](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp) to add `https://<your-host>/mcp`. Sign in through Access and approve the consent request.
+
+Connector controls can change, so use the current Claude guide rather than these menu labels.
 
 #### Other Streamable HTTP clients
 
@@ -130,7 +136,9 @@ The server sends these instructions to MCP clients:
 
 > Use Agents/ for agent notes and Agents/Log/YYYY-MM-DD.md for daily logs. New notes need frontmatter with created and source fields. Search before you create a note. Pass the exact ETag from read_note to update_note and append_under_heading. Always generate a fresh idempotency key for each append. Reuse that key only to retry the same append with the same text. Receipts last 30 days. A retry after receipt expiry can append the text again.
 
-For `update_note` and `append_under_heading`, pass the `etag` argument from `read_note`. For append tools, use the `idempotency_key` argument. Make a fresh key for each append, and reuse it only to retry the same text. Each client needs separate consent. To revoke a client, open the Access-protected [`/owner/clients`](https://<your-host>/owner/clients) page.
+For `update_note` and `append_under_heading`, pass the `etag` argument from `read_note`. For append tools, use the `idempotency_key` argument. Make a fresh key for each append, and reuse it only to retry the same text.
+
+Each client needs separate consent. To revoke a client, open the Access-protected [`/owner/clients`](https://<your-host>/owner/clients) page.
 
 ## Screenshots
 
@@ -161,24 +169,37 @@ Vaultwire is not in the Obsidian community catalog yet. Install it with [BRAT](h
 
 1. Install and enable **BRAT** from the community plugins.
 2. In BRAT, choose **Add beta plugin** and enter `moisesmorillo/vaultwire`.
-3. Enable **Vaultwire**, open its settings, enter your service address and click **Connect**.
-4. Approve the device in the browser. Then click **Resume** to start sync.
+3. Enable **Vaultwire** and open its settings. Enter your service address, but do not click **Connect** yet.
+4. If another sync tool still manages this vault, make a dated local backup. Turn on **Coexistence mode** before Connect.
+5. Click **Connect** and approve the device in the browser. Sync starts after authorization unless this device has a saved local Pause. Use **Resume** only to continue a paused device.
 
 Moving a device from the old AI Bridge plugin? Follow [`apps/plugin/tools/plugin-id-migration.md`](apps/plugin/tools/plugin-id-migration.md).
 
 ## First sync and moving an existing vault
 
-On the first device, Connect authorizes the plugin. After you approve the device and click **Resume**, sync starts. If the service has no files, Vaultwire imports supported local files into the service. Unsupported paths stay out of sync.
+When the first device connects, Vaultwire imports supported local files if the service has no files. If the service already has files and this device is empty, Vaultwire hydrates it after authorization. Unsupported paths stay out of sync.
 
-For each new device, start with an empty local vault and let Vaultwire hydrate it from the service. This avoids mixing old local files with the existing server vault. If the device already has files, Vaultwire compares file hashes: equal files need no copy, local-only files upload, and remote-only files download. If both sides have different content, Vaultwire keeps the local version as a conflict copy and applies the remote version at its path.
+For a populated device, hashes guide reconciliation. Equal content needs no copy. Local-only files upload, and remote-only files download.
+
+When both sides have different content, Vaultwire keeps the local version as a conflict copy and applies the remote version at its path.
 
 ### Coexistence with another sync tool
 
-Use coexistence mode while another tool still syncs the same live vault. The mode queues local deletes and renames for your confirmation. It does not make two sync tools safe to use on one live vault.
+Use **Coexistence mode** while another sync tool still manages the same live vault. Turn it on before **Connect**. It queues local deletes and renames for your confirmation.
 
-Placeholder handling is specific to iCloud: Vaultwire excludes `*.icloud` placeholders and treats a placeholder as unavailable, not as a delete. This iCloud behavior does not describe other providers. For any provider, avoid concurrent writes to the same file. Text apply checks the file hash during the write. Binary apply has a best-effort race window, so a concurrent write can still conflict.
+Placeholder handling is specific to iCloud. Vaultwire excludes `*.icloud` placeholders and treats them as unavailable, not deleted. This placeholder behavior does not apply to other sync providers.
 
-**Pause** stops publishing and applying but keeps queued work. **Resume** continues with those queues. To exit coexistence, empty its confirmation queue, then disable the plugin or turn coexistence off. Before cutover, make a dated local backup and stop the other sync tool. Keep one sync owner per device. Reconnect other devices with fresh local vaults. Never let two sync tools write the same live vault after cutover.
+For any provider, avoid concurrent writes to the same file. Text apply checks the file hash during the write. Binary apply is not atomic.
+
+A concurrent binary edit during the apply race can disappear from the live file without a conflict copy. Vaultwire saves the bytes it observed before the apply in `.ai-bridge/pre-apply/<hash>` for seven days. This copy cannot include an edit that Vaultwire did not observe.
+
+**Pause** stops publishing and applying but keeps queued work. **Resume** continues with those queues. Vaultwire refuses to turn off coexistence while confirmation items remain or sync work is active or queued.
+
+Before cutover, make a dated local backup and stop the former sync tool on every device. Clear all coexistence confirmations and wait until no sync work is active or queued. Turn off **Coexistence mode** only after those conditions hold.
+
+Create a fresh empty local vault outside the former tool's managed folder on every device, including the first device. Connect each fresh vault to the existing Vaultwire service and let it hydrate.
+
+Keep one sync owner per device. Never let two sync tools write the same live vault after cutover.
 
 See [`docs/packed-export-restore.md`](docs/packed-export-restore.md) to verify a packed backup and restore current files into a new local vault. It does not restore the service vault. See [`docs/f4-coexistence-trial.md`](docs/f4-coexistence-trial.md) for the iCloud-specific F4 trial procedure.
 

@@ -15,7 +15,7 @@ import {
 import type { Vault } from "obsidian";
 
 /** Confines hidden recovery bytes to one hash-addressed directory outside the Vault index. */
-const RECOVERY_DIRECTORY = ".ai-bridge/pre-apply";
+const RECOVERY_DIRECTORY = ".vaultwire/pre-apply";
 
 /** Uses Vault effects for visible files and adapter effects for confined hidden recovery bytes. */
 export class ObsidianTextVault implements TextVault {
@@ -41,7 +41,7 @@ export class ObsidianTextVault implements TextVault {
 				? new Uint8Array(await this.vault.adapter.readBinary(path))
 				: null;
 		}
-		if (path.startsWith(".ai-bridge/")) {
+		if (path.startsWith(".vaultwire/")) {
 			if (
 				!isRecoveryPath(path) ||
 				(await this.vault.adapter.stat(path))?.type !== "file"
@@ -57,7 +57,7 @@ export class ObsidianTextVault implements TextVault {
 	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
 		if (path.startsWith(".obsidian/") && !this.isSettingsPath(path))
 			return null;
-		if (path.startsWith(".ai-bridge/") && !isRecoveryPath(path)) return null;
+		if (path.startsWith(".vaultwire/") && !isRecoveryPath(path)) return null;
 		const stat = await this.vault.adapter.stat(path);
 		return stat?.type === "file"
 			? { mtime: stat.mtime, size: stat.size }
@@ -116,7 +116,7 @@ export class ObsidianTextVault implements TextVault {
 			}
 			return true;
 		}
-		if (path.startsWith(".ai-bridge/"))
+		if (path.startsWith(".vaultwire/"))
 			return this.writeRecoveryCopy(path, bytes, false);
 		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
 		await this.ensureParent(path);
@@ -204,7 +204,7 @@ export class ObsidianTextVault implements TextVault {
 			}
 			return true;
 		}
-		if (path.startsWith(".ai-bridge/"))
+		if (path.startsWith(".vaultwire/"))
 			return this.writeRecoveryCopy(path, bytes, true);
 		const file = this.fileAt(path);
 		if (!file) return false;
@@ -417,7 +417,7 @@ export class ObsidianTextVault implements TextVault {
 			if (!refresh) return true;
 		} else {
 			if (refresh) return false;
-			for (const directory of [".ai-bridge", RECOVERY_DIRECTORY]) {
+			for (const directory of [".vaultwire", RECOVERY_DIRECTORY]) {
 				const stat = await adapter.stat(directory);
 				if (stat?.type === "folder") continue;
 				if (stat) return false;

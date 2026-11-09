@@ -180,7 +180,7 @@ function makeRecoveryHostVault() {
 				visible.get(file.path)?.slice().buffer ?? new ArrayBuffer(0),
 		),
 		createBinary: vi.fn(async (path: string, bytes: ArrayBuffer) => {
-			if (path.startsWith(".ai-bridge/"))
+			if (path.startsWith(".vaultwire/"))
 				throw new Error("Hidden files are not indexed");
 			const file = Object.assign(new TFile(), {
 				path,
@@ -194,7 +194,7 @@ function makeRecoveryHostVault() {
 			visible.set(file.path, new Uint8Array(bytes.slice(0)));
 		}),
 		createFolder: vi.fn(async (path: string) => {
-			if (path.startsWith(".ai-bridge/"))
+			if (path.startsWith(".vaultwire/"))
 				throw new Error("Hidden folders need the adapter");
 			directories.add(path);
 		}),
@@ -451,7 +451,7 @@ describe("ObsidianTextVault", () => {
 				),
 			).rejects.toThrow();
 			const copies = [...fake.visible].filter(([name]) =>
-				name.startsWith("AI Bridge settings conflicts/"),
+				name.startsWith("Vaultwire settings conflicts/"),
 			);
 			for (const bytes of replacing
 				? [original, competing, remote]
@@ -639,7 +639,7 @@ describe("ObsidianTextVault", () => {
 		expect(
 			[...fake.visible].some(
 				([copyPath, bytes]) =>
-					copyPath.startsWith("AI Bridge settings conflicts/") &&
+					copyPath.startsWith("Vaultwire settings conflicts/") &&
 					bytes.every((byte, index) => byte === local[index]),
 			),
 		).toBe(true);
@@ -1554,7 +1554,7 @@ describe("ObsidianTextVault", () => {
 		const vault = new ObsidianTextVault(fake.host as unknown as Vault);
 		const bytes = new Uint8Array([0xff, 0x28, 0]);
 		const hash = await recoveryHash(bytes);
-		const path = `.ai-bridge/pre-apply/${hash}`;
+		const path = `.vaultwire/pre-apply/${hash}`;
 		expect(await vault.createBinary(path, bytes)).toBe(true);
 		expect(fake.host.getAbstractFileByPath(path)).toBeNull();
 		expect(fake.host.getFiles()).toEqual([]);
@@ -1565,8 +1565,8 @@ describe("ObsidianTextVault", () => {
 		});
 		expect(await vault.list()).toEqual([path]);
 		expect(fake.adapter.mkdir.mock.calls).toEqual([
-			[".ai-bridge"],
-			[".ai-bridge/pre-apply"],
+			[".vaultwire"],
+			[".vaultwire/pre-apply"],
 		]);
 		expect(await vault.createBinary(path, bytes)).toBe(true);
 		expect(fake.adapter.writeBinary).toHaveBeenCalledTimes(1);
@@ -1585,7 +1585,7 @@ describe("ObsidianTextVault", () => {
 		const expected = new Uint8Array([1, 2]);
 		const different = new Uint8Array([3, 4]);
 		const hash = await recoveryHash(expected);
-		const path = `.ai-bridge/pre-apply/${hash}`;
+		const path = `.vaultwire/pre-apply/${hash}`;
 		fake.hidden.set(path, { bytes: different, mtime: 1 });
 		expect(await vault.createBinary(path, expected)).toBe(false);
 		expect(await vault.modifyBinary(path, expected)).toBe(false);
@@ -1601,15 +1601,15 @@ describe("ObsidianTextVault", () => {
 		const bytes = new Uint8Array([1, 2]);
 		const hash = await recoveryHash(bytes);
 		for (const path of [
-			".ai-bridge/pre-apply/../other",
-			".ai-bridge/pre-apply/not-a-hash",
-			`.ai-bridge/pre-apply/${"f".repeat(64)}`,
+			".vaultwire/pre-apply/../other",
+			".vaultwire/pre-apply/not-a-hash",
+			`.vaultwire/pre-apply/${"f".repeat(64)}`,
 		]) {
 			expect(await vault.createBinary(path, bytes)).toBe(false);
 			expect(await vault.modifyBinary(path, bytes)).toBe(false);
 		}
 		expect(fake.adapter.writeBinary).not.toHaveBeenCalled();
-		const path = `.ai-bridge/pre-apply/${hash}`;
+		const path = `.vaultwire/pre-apply/${hash}`;
 		fake.controls.corruptWrites = true;
 		expect(await vault.createBinary(path, bytes)).toBe(false);
 		expect(fake.hidden.get(path)?.bytes).toEqual(new Uint8Array([9]));
@@ -1629,7 +1629,7 @@ describe("ObsidianTextVault", () => {
 		const remote = new Uint8Array([0xfe, 0x28, 1]);
 		const localHash = await recoveryHash(local);
 		const remoteHash = await recoveryHash(remote);
-		const recoveryPath = `.ai-bridge/pre-apply/${localHash}`;
+		const recoveryPath = `.vaultwire/pre-apply/${localHash}`;
 		await fake.host.createBinary(path, local.slice().buffer);
 		let state: unknown = null;
 		const journal = await DeviceJournal.open({
@@ -1678,13 +1678,13 @@ describe("ObsidianTextVault", () => {
 		await engine.resume();
 		expect(fake.hidden.has(recoveryPath)).toBe(true);
 		fake.controls.now += 2 * 24 * 60 * 60 * 1000;
-		fake.hidden.set(".ai-bridge/pre-apply/not-a-hash", {
+		fake.hidden.set(".vaultwire/pre-apply/not-a-hash", {
 			bytes: local,
 			mtime: 1,
 		});
 		await engine.resume();
 		expect(fake.hidden.has(recoveryPath)).toBe(false);
-		expect(fake.hidden.has(".ai-bridge/pre-apply/not-a-hash")).toBe(true);
+		expect(fake.hidden.has(".vaultwire/pre-apply/not-a-hash")).toBe(true);
 		expect(fake.visible.get(path)).toEqual(remote);
 		expect(fake.adapter.remove).toHaveBeenCalledWith(recoveryPath);
 		engine.close();
@@ -1735,7 +1735,7 @@ describe("ObsidianTextVault", () => {
 		const hash = [...new Uint8Array(digest)]
 			.map((byte) => byte.toString(16).padStart(2, "0"))
 			.join("");
-		const path = `.ai-bridge/pre-apply/${hash}`;
+		const path = `.vaultwire/pre-apply/${hash}`;
 		const fake = makeRecoveryHostVault();
 		fake.hidden.set(path, { bytes: bytes.slice(), mtime: 1 });
 		const remove = fake.adapter.remove;

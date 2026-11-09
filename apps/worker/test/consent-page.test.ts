@@ -18,6 +18,19 @@ describe("consent page rendering", () => {
 		expect(html).toContain("Nov 7, 2026 at 9:30 PM");
 		for (const scope of VaultScopeSchema.options) expect(html).toContain(scope);
 		expect(html).not.toContain("read notes");
+		for (const scope of VaultScopeSchema.options.filter(
+			(scope) => scope !== "vault:read",
+		)) {
+			expect(html).toContain(
+				`<input type="checkbox" name="scope" value="${scope}" checked>`,
+			);
+		}
+		expect(html).toContain(
+			'<input type="checkbox" checked disabled aria-label="vault:read is required">',
+		);
+		expect(html).toContain(
+			'<input type="hidden" name="scope" value="vault:read">',
+		);
 	});
 
 	it("omits the request date when provider metadata has none", () => {
@@ -31,6 +44,7 @@ describe("consent page rendering", () => {
 		});
 
 		expect(html).toContain("vault:read");
+		expect(html).toContain('type="hidden" name="scope" value="vault:read"');
 		expect(html).not.toContain("Requested on");
 	});
 

@@ -50,8 +50,7 @@ describe("production Worker configuration", () => {
 		expect(workflow).toContain(
 			"bun run --filter '@vaultwire/worker' preflight",
 		);
-		expect(workflow).toContain("VAULTWIRE_CUTOVER_AUTHORIZED");
-		expect(workflow).toContain("OAB-50.6 must approve it");
+		expect(workflow).not.toContain("VAULTWIRE_CUTOVER_AUTHORIZED");
 		expect(workflow).toContain("PENDING_S17_VAULTWIRE_");
 		expect(workflow).toContain(
 			"https://vaultwire.mmorillo.dev/.well-known/oauth-protected-resource",
@@ -65,7 +64,7 @@ describe("production Worker configuration", () => {
 		);
 		expect(productionConfig.vars).toEqual({
 			SERVICE_ORIGIN: "https://vaultwire.mmorillo.dev",
-			VAULT_OBJECT_NAME: "obsidian-bridge.mmorillo.dev",
+			VAULT_OBJECT_NAME: "vaultwire",
 			ACCESS_TEAM_DOMAIN: "https://mmorillo.cloudflareaccess.com",
 			ACCESS_AUDIENCE:
 				"1ccdb36c95194c63eeb487eb666285ab5832e35cd0e10eb74a4cdd3141a3ed95",

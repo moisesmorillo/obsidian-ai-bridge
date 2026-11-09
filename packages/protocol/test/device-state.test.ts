@@ -10,7 +10,7 @@ const uuid = "018f47b2-5c00-7000-8000-000000000001";
 const common = {
 	key: uuid,
 	payload_hash: "a".repeat(64),
-	payload_ref: `.ai-bridge/pending/${uuid}`,
+	payload_ref: `.vaultwire/pending/${uuid}`,
 	created_at: 1,
 	attempts: 0,
 	state: "queued" as const,
@@ -69,7 +69,7 @@ describe("device journal protocol schemas", () => {
 			const path = "assets/clean.png";
 			const hash = "c".repeat(64);
 			const recovery = {
-				path: `.ai-bridge/pre-apply/${hash}`,
+				path: `.vaultwire/pre-apply/${hash}`,
 				source: path,
 				side: "path",
 				mode: "local",
@@ -163,7 +163,7 @@ describe("device journal protocol schemas", () => {
 			step: "copied",
 			conflict_copies: [
 				{
-					path: `.ai-bridge/pre-apply/${oldHash}`,
+					path: `.vaultwire/pre-apply/${oldHash}`,
 					source: path,
 					side: "rename_destination",
 					mode: "local",
@@ -270,7 +270,7 @@ describe("device journal protocol schemas", () => {
 		};
 		const recovery = {
 			...conflict,
-			path: `.ai-bridge/pre-apply/${hash}`,
+			path: `.vaultwire/pre-apply/${hash}`,
 			purpose: "pre_apply" as const,
 		};
 		const rename = {
@@ -354,7 +354,7 @@ describe("device journal protocol schemas", () => {
 					purpose: "conflict",
 				},
 				{
-					path: `.ai-bridge/pre-apply/${hash}`,
+					path: `.vaultwire/pre-apply/${hash}`,
 					source: path,
 					side: "path",
 					mode: "local",
@@ -421,7 +421,7 @@ describe("device journal protocol schemas", () => {
 					...plan.conflict_copies.slice(0, 1),
 					{
 						...plan.conflict_copies[1],
-						path: `.ai-bridge/pre-apply/${"e".repeat(64)}`,
+						path: `.vaultwire/pre-apply/${"e".repeat(64)}`,
 					},
 					...plan.conflict_copies.slice(2),
 				],
@@ -441,7 +441,7 @@ describe("device journal protocol schemas", () => {
 						purpose: "conflict",
 					},
 					{
-						path: `.ai-bridge/pre-apply/${"d".repeat(64)}`,
+						path: `.vaultwire/pre-apply/${"d".repeat(64)}`,
 						source: path,
 						side: "path",
 						mode: "local",
@@ -651,7 +651,7 @@ describe("device journal protocol schemas", () => {
 		expect(
 			PendingOperationSchema.safeParse({
 				...common,
-				payload_ref: `.ai-bridge/pending/018f47b2-5c00-7000-8000-000000000002`,
+				payload_ref: `.vaultwire/pending/018f47b2-5c00-7000-8000-000000000002`,
 				op: "put",
 				path: "a.md",
 				precondition: { kind: "absent" },

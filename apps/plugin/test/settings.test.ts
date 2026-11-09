@@ -260,9 +260,9 @@ import type { App, Plugin } from "obsidian";
 import type { DeviceSession } from "../src/auth/device-session";
 import type { CredentialStorage } from "../src/infrastructure/credential-storage";
 import {
-	type AIBridgeSettings,
-	AIBridgeSettingTab,
 	resolveDeviceName,
+	type VaultwireSettings,
+	VaultwireSettingTab,
 } from "../src/settings";
 
 /** Creates a settings tab with safe synthetic controller and storage effects. */
@@ -270,7 +270,7 @@ function createTab() {
 	host.controls.splice(0);
 	host.elements.splice(0);
 	host.isMobile = true;
-	const settings: AIBridgeSettings = {
+	const settings: VaultwireSettings = {
 		serverUrl: "https://service.test",
 		deviceName: "Obsidian desktop",
 		coexistenceMode: false,
@@ -306,7 +306,7 @@ function createTab() {
 	let rejectCoexistenceUpdate = false;
 	let rejectUpdate = false;
 	let rejectDeviceNameUpdate = false;
-	const tab = new AIBridgeSettingTab(
+	const tab = new VaultwireSettingTab(
 		{} as App,
 		{} as Plugin,
 		settings,
@@ -379,7 +379,7 @@ describe("resolveDeviceName", () => {
 	});
 });
 
-describe("AIBridgeSettingTab", () => {
+describe("VaultwireSettingTab", () => {
 	it("returns the sync projection to settled after durable attention dismissal", async () => {
 		let state: unknown = null;
 		const journal = await DeviceJournal.open({

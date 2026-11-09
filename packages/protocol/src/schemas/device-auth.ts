@@ -3,7 +3,7 @@ import { ClientIdSchema, ServiceOriginSchema } from "@protocol/schemas/auth";
 import { z } from "zod";
 
 /** Canonical Obsidian callback URI supported by the desktop OAuth flow. */
-export const DEVICE_CALLBACK_URI = "obsidian://ai-bridge/callback";
+export const DEVICE_CALLBACK_URI = "obsidian://vaultwire/callback";
 
 /** Validates discovery DTO shape and URL syntax before service-origin checks. */
 export const DeviceDiscoverySchema = z

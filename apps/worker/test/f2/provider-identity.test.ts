@@ -6,7 +6,7 @@ describe("provider user identity", () => {
 		expect(
 			await deriveProviderUserId("synthetic-owner", "https://service.test"),
 		).toBe(
-			"oab1_e3bc591b296bb542e961d30e2f77415a1cb4b97ed607ed0575fdf5afe91ce653",
+			"oab1_252cf1cfcb6ae44fe7490034d3993c274a0079f5d9e07cf1cc5477398ae1087d",
 		);
 	});
 

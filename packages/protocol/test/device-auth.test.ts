@@ -109,7 +109,7 @@ describe("device enrollment protocol schemas", () => {
 				code_challenge_methods_supported: ["S256"],
 			}).success,
 		).toBe(true);
-		expect(DEVICE_CALLBACK_URI).toBe("obsidian://ai-bridge/callback");
+		expect(DEVICE_CALLBACK_URI).toBe("obsidian://vaultwire/callback");
 		expect(
 			DeviceDiscoverySchema.safeParse({ issuer: "https://service.test" })
 				.success,

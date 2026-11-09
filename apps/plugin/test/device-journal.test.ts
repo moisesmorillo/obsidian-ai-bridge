@@ -322,7 +322,7 @@ describe("DeviceJournal", () => {
 							purpose: "conflict",
 						},
 						{
-							path: `.ai-bridge/pre-apply/${localHash}`,
+							path: `.vaultwire/pre-apply/${localHash}`,
 							source: path,
 							side: "path",
 							mode: "local",
@@ -344,7 +344,7 @@ describe("DeviceJournal", () => {
 			pending?.conflict_copies?.map((copy: PendingConflictCopy) => copy.path),
 		).toEqual([
 			"assets/pre-extension (conflict Device).png",
-			`.ai-bridge/pre-apply/${localHash}`,
+			`.vaultwire/pre-apply/${localHash}`,
 		]);
 		expect(journal.snapshot().base[path]).toEqual({
 			deleted: false,

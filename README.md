@@ -75,7 +75,7 @@ Connect any MCP client to `https://<your-host>/mcp`. The client registers itself
 | `append_under_heading` | Add text under a heading |
 | `delete_note` | Delete a note when its revision still matches |
 
-Write tools follow the same revision rules as the plugin. An agent cannot overwrite an edit it has not seen.
+Consent keeps `vault:read` mandatory. Owners can clear either requested optional scope, `vault:write` or `vault:delete`. Write does not grant delete. Write tools follow the same revision rules as the plugin. An agent cannot overwrite an edit it has not seen.
 
 ### Connect ChatGPT
 
@@ -173,8 +173,6 @@ Vaultwire is not in the Obsidian community catalog yet. Install it with [BRAT](h
 4. If another sync tool still manages this vault, make a dated local backup. Turn on **Coexistence mode** before Connect.
 5. Click **Connect** and approve the device in the browser. Sync starts after authorization unless this device has a saved local Pause. Use **Resume** only to continue a paused device.
 
-Moving a device from the old AI Bridge plugin? Follow [`apps/plugin/tools/plugin-id-migration.md`](apps/plugin/tools/plugin-id-migration.md).
-
 ## First sync and moving an existing vault
 
 When the first device connects, Vaultwire imports supported local files if the service has no files. If the service already has files and this device is empty, Vaultwire hydrates it after authorization. Unsupported paths stay out of sync.
@@ -191,7 +189,7 @@ Placeholder handling is specific to iCloud. Vaultwire excludes `*.icloud` placeh
 
 For any provider, avoid concurrent writes to the same file. Text apply checks the file hash during the write. Binary apply is not atomic.
 
-A concurrent binary edit during the apply race can disappear from the live file without a conflict copy. Vaultwire saves the bytes it observed before the apply in `.ai-bridge/pre-apply/<hash>` for seven days. This copy cannot include an edit that Vaultwire did not observe.
+A concurrent binary edit during the apply race can disappear from the live file without a conflict copy. Vaultwire saves the bytes it observed before the apply in `.vaultwire/pre-apply/<hash>` for seven days. This copy cannot include an edit that Vaultwire did not observe.
 
 **Pause** stops publishing and applying but keeps queued work. **Resume** continues with those queues. Vaultwire refuses to turn off coexistence while confirmation items remain or sync work is active or queued.
 

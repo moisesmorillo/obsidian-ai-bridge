@@ -129,10 +129,7 @@ export function createOAuthOptions(
 				};
 		},
 		scopesSupported: [...SCOPES],
-		requiredScopes: SCOPES.filter(
-			(scope: (typeof SCOPES)[number]) =>
-				scope === "vault:read" || scope === "vault:write",
-		),
+		requiredScopes: [...SCOPES],
 		resourceMetadata: {
 			resource: serviceOrigin,
 			resource_name: "Vaultwire",
@@ -308,6 +305,20 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				});
 			}
 			const consent = await api.approveConsent(browserRequest, handle);
+			const selectedValues = form.getAll("scope");
+			const selectedScopes: string[] = [];
+			for (const scope of selectedValues) {
+				if (
+					typeof scope !== "string" ||
+					!(SCOPES as readonly string[]).includes(scope) ||
+					!consent.request.scope.includes(scope) ||
+					selectedScopes.includes(scope)
+				)
+					return context.text("Invalid consent scopes", 400);
+				selectedScopes.push(scope);
+			}
+			if (!selectedScopes.includes("vault:read"))
+				return context.text("Invalid consent scopes", 400);
 			const name = String(form.get("client_name") ?? "")
 				.trim()
 				.slice(0, 80);
@@ -328,7 +339,7 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				userId: ownerIdentity,
 				metadata: { client_name: name },
 				revokeExistingGrants: false,
-				scope: [...consent.request.scope],
+				scope: selectedScopes,
 				props: {
 					client_id: consent.request.clientId,
 					generation: fence.generation,

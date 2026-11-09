@@ -372,24 +372,24 @@ Device authority stays outside `data.json`, which iCloud syncs between devices:
 | Appearance | On | `appearance.json`, `themes/**`, `snippets/**` |
 | Core | On | `app.json`, `core-plugins.json`, `hotkeys.json`, `types.json` |
 | Community plugins | On | `community-plugins.json`, `plugins/*/manifest.json`, `plugins/*/main.js`, `plugins/*/styles.css`, `plugins/*/data.json` |
-| Always excluded | N/A | `workspace*.json`, `plugins/ai-bridge/**`, `cache*`, `graph.json`, `plugins/*/node_modules/**` |
+| Always excluded | N/A | `workspace*.json`, `plugins/vaultwire/**`, `cache*`, `graph.json`, `plugins/*/node_modules/**` |
 
-Excluded paths stay excluded under every switch combination. This selected-settings exception overrides §7.8's blanket `.obsidian/**` exclusion only for the listed included paths. Preserve different local bytes as visible conflict copies under `AI Bridge settings conflicts/`, outside `.obsidian`. Every settings conflict copy uses a sync-supported extension. Unsupported extensions gain `.txt`, including `.js`, `.css`, and `.woff2`. Extensionless files gain `.txt`. Global `.DS_Store` and `*.icloud` exclusions also apply inside selected settings trees. AI Bridge exclusion uses the canonical case-folded path identity. Enumeration prunes excluded dependency, cache, and irrelevant trees. A change to a community plugin's `data.json` needs that plugin to reload or Obsidian to restart. An enabled-plugin list change needs a vault reload or Obsidian restart. Changes to AI Bridge plugin settings need the affected plugin to reload or Obsidian to restart.
+Excluded paths stay excluded under every switch combination. This selected-settings exception overrides §7.8's blanket `.obsidian/**` exclusion only for the listed included paths. Preserve different local bytes as visible conflict copies under `Vaultwire settings conflicts/`, outside `.obsidian`. Every settings conflict copy uses a sync-supported extension. Unsupported extensions gain `.txt`, including `.js`, `.css`, and `.woff2`. Extensionless files gain `.txt`. Global `.DS_Store` and `*.icloud` exclusions also apply inside selected settings trees. Vaultwire exclusion uses the canonical case-folded path identity. Enumeration prunes excluded dependency, cache, and irrelevant trees. A change to a community plugin's `data.json` needs that plugin to reload or Obsidian to restart. An enabled-plugin list change needs a vault reload or Obsidian restart. Changes to Vaultwire plugin settings need the plugin to reload or Obsidian to restart.
 
 Automatic settings installation uses a pre-write target stat, an adapter write, and a hash-checked read-back. Observed competing versions remain visible as conflict files, with attention status. This guarded write is not atomic. A local version can appear after the last observation and disappear under the adapter write before any read observes it. The plugin cannot detect or recover that unobserved version. Creation and replacement both retain this race. This owner-approved limit overrides claims of complete collision protection for settings adapter writes. No manual-placement fallback applies.
 
 - **Sync state** in `app.saveLocalStorage`, one JSON document, written atomically as a whole and read back after each write; a failed write puts the plugin in *attention* and stops publishing until it succeeds:
   - `device_id`, `client_id`, `epoch`, `cursor` (last applied `seq`)
   - `base[path] = {rev, hash}` — the exact server state this device last acknowledged per path
-  - `pending_ops[]` — queue of outgoing operations: `{key (UUIDv7), op, path, to?, precondition, payload_hash, payload_ref, created_at, attempts, state ∈ {queued, sent, resolved}}`. **Before** an op leaves `queued`, its bytes are copied to `.ai-bridge/pending/<key>` (excluded from sync) and verified by hash; `payload_ref` points there. A `sent` op is immutable: it is removed only on a receipt or an explicit rejection, and a newer edit of the same path becomes a new `queued` op behind it. Only `queued` ops can be replaced.
+  - `pending_ops[]` — queue of outgoing operations: `{key (UUIDv7), op, path, to?, precondition, payload_hash, payload_ref, created_at, attempts, state ∈ {queued, sent, resolved}}`. **Before** an op leaves `queued`, its bytes are copied to `.vaultwire/pending/<key>` (excluded from sync) and verified by hash; `payload_ref` points there. A `sent` op is immutable: it is removed only on a receipt or an explicit rejection, and a newer edit of the same path becomes a new `queued` op behind it. Only `queued` ops can be replaced.
   - `pending_apply[]` — in-progress incoming applications (§7.5) for crash recovery: `{path, R, step, conflict_path?, conflict_hash?}`
   - `expected_writes[path] = hash` — echo suppression for writes the plugin itself is about to make (§7.5); never used as confirmed state
   - `attention[]` — items needing the owner
 
 ### 7.2 Enrollment
 
-1. Owner opens Settings → Connect. Plugin opens the browser to `/authorize` (PKCE). Owner authenticates through Cloudflare Access, names the device, approves `read write delete`.
-2. Callback via `obsidian://ai-bridge/callback?code=…` (works on mobile). Plugin exchanges the code, stores tokens, registers in `clients`.
+1. Owner opens Settings → Connect. Plugin opens the browser to `/authorize` (PKCE). Owner authenticates through Cloudflare Access, names the device, and approves all three scopes.
+2. Callback via `obsidian://vaultwire/callback?code=…` (works on mobile). Plugin exchanges the code, stores tokens, registers in `clients`.
 3. Plugin fetches `/v1/vault`. Three cases:
    - **Server empty, local has content** → first device: upload all in-scope files with `If-None-Match: *`; record bases; show progress per file.
    - **Server has content, local empty** → hydrate (§7.3).
@@ -448,7 +448,7 @@ For the remaining `put`/`delete` entries, with `L = local hash`, `B = base[path]
 
 **Echo suppression is separate from confirmed state.** Before writing, the plugin records `expected_writes[path] = R`. A `modify` event whose file hash equals `expected_writes[path]` is consumed as an echo and not published; any other hash is a genuine edit and is queued. `expected_writes[path]` is cleared when the apply completes or aborts. **`base[path]` advances to `R` only after the effect is confirmed** (the `process` callback returned `remote_text`, or the read-back hash equals `R`). If the callback refused, `base` is unchanged, so the entry is **not** discarded by the `rev ≤ base.rev` rule; it is re-evaluated against the dirty state.
 
-**Blob apply** (binaries and oversized `.md`/`.canvas`): Obsidian offers no atomic read-modify-write for binaries. Procedure: `stat` (mtime, size) → read → hash check against `B` → **re-`stat` immediately before writing; any change aborts and re-evaluates the entry as dirty** → copy the bytes just read to `.ai-bridge/pre-apply/<hash>` (durable, excluded from sync) → `modifyBinary` → read back and verify `R` → only then `base[path] = R`. The remaining window spans the second `stat`, the durable pre-apply copy and the write itself, up to 25 MB of I/O. A user write landing inside it is lost from disk, but the bytes we read are preserved in `pre-apply` for 7 days. **This residual window was explicitly approved by the owner (§17.1).**
+**Blob apply** (binaries and oversized `.md`/`.canvas`): Obsidian offers no atomic read-modify-write for binaries. Procedure: `stat` (mtime, size) → read → hash check against `B` → **re-`stat` immediately before writing; any change aborts and re-evaluates the entry as dirty** → copy the bytes just read to `.vaultwire/pre-apply/<hash>` (durable, excluded from sync) → `modifyBinary` → read back and verify `R` → only then `base[path] = R`. The remaining window spans the second `stat`, the durable pre-apply copy and the write itself, up to 25 MB of I/O. A user write landing inside it is lost from disk, but the bytes we read are preserved in `pre-apply` for 7 days. **This residual window was explicitly approved by the owner (§17.1).**
 
 **Durable ordering** (R1): for every apply, `pending_apply` records `{path, rev R, step}` before the first local effect and is cleared after `base`/`cursor` are persisted. On restart, each `pending_apply` is resumed from its step; conflict copies are checked by name and hash before being rewritten.
 
@@ -482,7 +482,7 @@ Identical bytes on both sides with different `rev` never produce a conflict (§7
 
 ### 7.8 Scope
 
-Included: `**/*.md`, `**/*.canvas`, and attachments with extensions `png jpg jpeg gif webp svg pdf mp3 m4a wav mp4 mov webm json csv txt` up to 25 MB. Excluded always: `.obsidian/**`, `.trash/**`, `.ai-bridge/**`, `.DS_Store`, `*.icloud`, any path failing §5.1. The panel lists excluded and unsupported files on demand; the status never says "synced" while an in-scope file is pending, failed or in *attention*.
+Included: `**/*.md`, `**/*.canvas`, and attachments with extensions `png jpg jpeg gif webp svg pdf mp3 m4a wav mp4 mov webm json csv txt` up to 25 MB. Excluded always: `.obsidian/**`, `.trash/**`, `.vaultwire/**`, `.DS_Store`, `*.icloud`, any path failing §5.1. The panel lists excluded and unsupported files on demand; the status never says "synced" while an in-scope file is pending, failed or in *attention*.
 
 ### 7.9 Status model
 
@@ -524,11 +524,11 @@ OAuth 2.1 authorization code with PKCE, implemented by `@cloudflare/workers-oaut
 
 ### 9.2 Owner authentication
 
-`/authorize` and `/owner/*` sit behind **Cloudflare Access** (Zero Trust, free tier) with the owner's identity provider. The consent page shows client name, redirect URI, requested scopes, and lets the owner name the client. The Worker trusts the `Cf-Access-Jwt-Assertion` only after verifying it against the Access public keys.
+`/authorize` and `/owner/*` sit behind **Cloudflare Access** (Zero Trust, free tier) with the owner's identity provider. The consent page shows client name, redirect URI, and requested scopes. It keeps `vault:read` selected and mandatory. Owners can clear requested `vault:write` or `vault:delete` scopes. The Worker validates selections against the stored consent request before it creates a durable grant. The Worker trusts the `Cf-Access-Jwt-Assertion` only after verifying it against the Access public keys.
 
 ### 9.3 Scopes
 
-`vault:read`, `vault:write`, `vault:delete`. `write` does not imply `delete`. Each `/v1` route and each MCP tool declares its scope (§6.1, §8); the Worker enforces it on every request **and** the DO re-checks it, so announcing scopes in the OAuth library is never the only control.
+The Worker advertises `vault:read`, `vault:write`, and `vault:delete`. `vault:read` is mandatory at owner consent. Owners can grant either requested optional scope or both. `vault:write` does not imply `vault:delete`. The provider challenge accepts the full vocabulary, but token grants contain only selected requested scopes. Each `/v1` route and each MCP tool declares its scope (§6.1, §8). The Worker enforces scope on every request, and the Durable Object checks it again.
 
 ### 9.4 Token storage on devices
 

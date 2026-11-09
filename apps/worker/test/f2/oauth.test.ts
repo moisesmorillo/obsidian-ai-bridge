@@ -84,6 +84,7 @@ async function issueAccessToken(
 	assertion: string,
 	scope: string,
 	redirectUri = "https://flow.test/callback",
+	selectedScopes = scope.split(" "),
 ): Promise<{
 	access_token: string;
 	refresh_token: string;
@@ -107,6 +108,13 @@ async function issueAccessToken(
 	const cookie = consent.headers.get("set-cookie")?.split(";")[0] ?? "";
 	const handle =
 		(await consent.text()).match(/name="handle" value="([^"]+)"/)?.[1] ?? "";
+	const consentForm = new URLSearchParams({
+		handle,
+		decision: "approve",
+		client_name: "Named client",
+	});
+	for (const selectedScope of selectedScopes)
+		consentForm.append("scope", selectedScope);
 	const approved = await SELF.fetch("https://service.test/authorize/consent", {
 		method: "POST",
 		redirect: "manual",
@@ -115,11 +123,7 @@ async function issueAccessToken(
 			cookie,
 			"Cf-Access-Jwt-Assertion": assertion,
 		},
-		body: new URLSearchParams({
-			handle,
-			decision: "approve",
-			client_name: "Named client",
-		}),
+		body: consentForm,
 	});
 	const location = approved.headers.get("location");
 	if (!location)
@@ -303,7 +307,11 @@ async function createAuthorizationCode(
 			cookie,
 			"Cf-Access-Jwt-Assertion": assertion,
 		},
-		body: new URLSearchParams({ handle, decision: "approve" }),
+		body: new URLSearchParams({
+			handle,
+			decision: "approve",
+			scope: "vault:read",
+		}),
 	});
 	const redirect = new URL(
 		requireValue(approved.headers.get("location"), "authorization redirect"),
@@ -584,6 +592,7 @@ describe("production OAuth entry", () => {
 				body: new URLSearchParams({
 					handle: handle ?? "",
 					decision: "approve",
+					scope: "vault:read",
 				}),
 			}) as Parameters<NonNullable<typeof consentHandler.fetch>>[0],
 			bindings,
@@ -688,11 +697,7 @@ describe("production OAuth entry", () => {
 		);
 		const resourceMetadata = (await resource.json()) as Record<string, unknown>;
 		expect(resourceMetadata.resource).toBe("https://service.test");
-		expect(resourceMetadata.scopes_supported).toEqual(
-			VaultScopeSchema.options.filter(
-				(scope) => scope === "vault:read" || scope === "vault:write",
-			),
-		);
+		expect(resourceMetadata.scopes_supported).toEqual(VaultScopeSchema.options);
 		expect(
 			(
 				await SELF.fetch(
@@ -800,8 +805,22 @@ describe("production OAuth entry", () => {
 			options.tokenExchangeCallback,
 			"token exchange callback",
 		);
+		const oldIdentityDigest = new Uint8Array(
+			await crypto.subtle.digest(
+				"SHA-256",
+				new TextEncoder().encode(
+					JSON.stringify([
+						"obsidian-ai-bridge/provider-identity/v1",
+						"https://service.test",
+						"synthetic-owner",
+					]),
+				),
+			),
+		);
+		const oldProviderIdentity = `oab1_${Array.from(oldIdentityDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 		const invalidIdentities = [
 			"synthetic-other-owner",
+			oldProviderIdentity,
 			await deriveProviderUserId(
 				"synthetic-other-owner",
 				"https://service.test",
@@ -1137,6 +1156,45 @@ describe("production OAuth entry", () => {
 		expect(html).toContain('name="client_name"');
 	});
 
+	it.each([
+		[["vault:read"], "vault:read"],
+		[["vault:read", "vault:write"], "vault:read vault:write"],
+		[["vault:read", "vault:delete"], "vault:read vault:delete"],
+		[
+			["vault:read", "vault:write", "vault:delete"],
+			"vault:read vault:write vault:delete",
+		],
+	] as const)(
+		"grants only the selected scopes %j",
+		async (selectedScopes, expectedScope) => {
+			const assertion = await ownerAssertion();
+			const client = await registerPublicClient();
+			const token = await issueAccessToken(
+				client.client_id,
+				assertion,
+				"vault:read vault:write vault:delete",
+				"https://flow.test/callback",
+				[...selectedScopes],
+			);
+			expect(token.scope).toBe(expectedScope);
+			const refreshed = await SELF.fetch("https://service.test/oauth/token", {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					grant_type: "refresh_token",
+					client_id: client.client_id,
+					refresh_token: token.refresh_token,
+					scope: expectedScope,
+					resource: "https://service.test",
+				}),
+			});
+			expect(refreshed.status).toBe(200);
+			expect(((await refreshed.json()) as { scope: string }).scope).toBe(
+				expectedScope,
+			);
+		},
+	);
+
 	it("exchanges S256 codes once, downscopes, and rotates refresh tokens", async () => {
 		const assertion = await ownerAssertion();
 		const client = await registerPublicClient();
@@ -1170,11 +1228,13 @@ describe("production OAuth entry", () => {
 					cookie,
 					"Cf-Access-Jwt-Assertion": assertion,
 				},
-				body: new URLSearchParams({
-					handle,
-					decision: "approve",
-					client_name: "Named client",
-				}),
+				body: new URLSearchParams([
+					["handle", handle],
+					["decision", "approve"],
+					["client_name", "Named client"],
+					["scope", "vault:read"],
+					["scope", "vault:write"],
+				]),
 			},
 		);
 		const location = requireValue(
@@ -1432,6 +1492,7 @@ describe("production OAuth entry", () => {
 		const submitConsent = (decisions: (string | File)[]) => {
 			const body = new FormData();
 			body.set("handle", handle);
+			body.append("scope", "vault:read");
 			for (const decision of decisions) body.append("decision", decision);
 			return SELF.fetch("https://service.test/authorize/consent", {
 				method: "POST",
@@ -1466,6 +1527,60 @@ describe("production OAuth entry", () => {
 		expect((await kv.list({ prefix: grantPrefix })).keys).toHaveLength(
 			grantsBefore.length + 1,
 		);
+	});
+
+	it("rejects invalid or unrequested scope selections before registry consent", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const scenarios = [
+			{ requested: "vault:read vault:write vault:delete", selected: [] },
+			{
+				requested: "vault:read vault:write",
+				selected: ["vault:read", "vault:read"],
+			},
+			{
+				requested: "vault:read vault:write",
+				selected: ["vault:read", "vault:admin"],
+			},
+			{ requested: "vault:read", selected: ["vault:read", "vault:write"] },
+		] as const;
+		for (const scenario of scenarios) {
+			const { challenge } = createPkce();
+			const query = new URLSearchParams({
+				response_type: "code",
+				client_id: client.client_id,
+				redirect_uri: "https://flow.test/callback",
+				scope: scenario.requested,
+				state: crypto.randomUUID(),
+				code_challenge: await challenge,
+				code_challenge_method: "S256",
+				resource: "https://service.test",
+			});
+			const page = await SELF.fetch(`https://service.test/authorize?${query}`, {
+				headers: { "Cf-Access-Jwt-Assertion": assertion },
+			});
+			const cookie = page.headers.get("set-cookie")?.split(";")[0] ?? "";
+			const handle = requireValue(
+				(await page.text()).match(/name="handle" value="([^"]+)"/)?.[1],
+				"consent handle",
+			);
+			const form = new URLSearchParams({ handle, decision: "approve" });
+			for (const scope of scenario.selected) form.append("scope", scope);
+			const response = await SELF.fetch(
+				"https://service.test/authorize/consent",
+				{
+					method: "POST",
+					redirect: "manual",
+					headers: {
+						"Cf-Access-Jwt-Assertion": assertion,
+						cookie,
+					},
+					body: form,
+				},
+			);
+			expect(response.status).toBe(400);
+			expect(response.headers.get("location")).toBeNull();
+		}
 	});
 
 	it("rejects forged, expired, reused, and foreign-browser consent handles and permits denial", async () => {
@@ -1666,37 +1781,6 @@ describe("production OAuth entry", () => {
 			);
 			expect(deniedWrite.status).toBe(403);
 		}
-		const writeOnlyClient = await registerPublicClient(
-			"https://flow.test/callback",
-			"Independent write-only client",
-		);
-		const writeOnly = await issueAccessToken(
-			writeOnlyClient.client_id,
-			assertion,
-			"vault:write",
-		);
-		const deniedRestRead = await SELF.fetch("https://service.test/v1/vault", {
-			headers: { authorization: `Bearer ${writeOnly.access_token}` },
-		});
-		expect(deniedRestRead.status).toBe(403);
-		const deniedMcpRead = await SELF.fetch("https://service.test/mcp", {
-			method: "POST",
-			headers: {
-				authorization: `Bearer ${writeOnly.access_token}`,
-				"content-type": "application/json",
-				accept: "application/json, text/event-stream",
-			},
-			body: JSON.stringify({
-				jsonrpc: "2.0",
-				id: "write-only-read-denial",
-				method: "tools/call",
-				params: { name: "list_notes", arguments: {} },
-			}),
-		});
-		expect(deniedMcpRead.status).toBe(403);
-		const denialBody = await deniedMcpRead.text();
-		expect(denialBody).not.toContain("epoch");
-		expect(denialBody).not.toContain("MCP updates; REST verifies.");
 	});
 
 	it("bounds paged provider cleanup and resumes interrupted real grant cleanup", async () => {
@@ -2180,6 +2264,7 @@ describe("production OAuth entry", () => {
 				body: new URLSearchParams({
 					handle,
 					decision: "approve",
+					scope: "vault:read",
 				}),
 			},
 		);
@@ -2494,19 +2579,19 @@ describe("production OAuth entry", () => {
 		},
 	);
 
-	it("keeps write-only tokens from reading or deleting", async () => {
+	it("keeps read/write tokens from deleting", async () => {
 		const assertion = await ownerAssertion();
 		const client = await registerPublicClient();
 		const token = await issueAccessToken(
 			client.client_id,
 			assertion,
-			"vault:write",
+			"vault:read vault:write",
 		);
-		expect(token.scope).toBe("vault:write");
+		expect(token.scope).toBe("vault:read vault:write");
 		const headers = { authorization: `Bearer ${token.access_token}` };
 		expect(
 			(await SELF.fetch("https://service.test/v1/vault", { headers })).status,
-		).toBe(403);
+		).toBe(200);
 		expect(
 			(
 				await SELF.fetch("https://service.test/v1/files/forbidden.md", {

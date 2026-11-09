@@ -1345,7 +1345,7 @@ describe("ReconciliationController", () => {
 		expect(conflicts).toHaveLength(1);
 		expectExactBytes(conflicts[0]?.[1], local);
 		expectExactBytes(
-			context.vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+			context.vault.binaryFiles.get(`.vaultwire/pre-apply/${localHash}`),
 			local,
 		);
 		expect(context.vault.binaryFiles.has(path)).toBe(false);
@@ -1684,7 +1684,7 @@ describe("ReconciliationController", () => {
 					);
 					expect(saved?.conflict_copies).toContainEqual(
 						expect.objectContaining({
-							path: `.ai-bridge/pre-apply/${localHash}`,
+							path: `.vaultwire/pre-apply/${localHash}`,
 							hash: localHash,
 							kind: "blob",
 							purpose: "pre_apply",
@@ -1734,7 +1734,7 @@ describe("ReconciliationController", () => {
 					);
 					expectExactBytes(
 						(await context.vault.readBinary(
-							`.ai-bridge/pre-apply/${localHash}`,
+							`.vaultwire/pre-apply/${localHash}`,
 						)) ?? undefined,
 						local,
 					);
@@ -1820,7 +1820,7 @@ describe("ReconciliationController", () => {
 				expect(events.slice(events.indexOf("write") + 1)).toContain("read");
 				expectExactBytes(
 					(await context.vault.readBinary(
-						`.ai-bridge/pre-apply/${localHash}`,
+						`.vaultwire/pre-apply/${localHash}`,
 					)) ?? undefined,
 					local,
 				);
@@ -2617,7 +2617,7 @@ describe("ReconciliationController", () => {
 		for (const path of [
 			".obsidian/config.md",
 			".trash/old.md",
-			".ai-bridge/pending/journal",
+			".vaultwire/pending/journal",
 			"notes/.DS_Store",
 			"notes/photo.icloud",
 			"notes/unknown.exe",
@@ -2638,7 +2638,7 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().attention).toContainEqual(
 			expect.objectContaining({ path: "large.md" }),
 		);
-		for (const path of [".ai-bridge/pending/journal", ".obsidian/config.md"])
+		for (const path of [".vaultwire/pending/journal", ".obsidian/config.md"])
 			expect(context.vault.reads).not.toContain(path);
 	});
 

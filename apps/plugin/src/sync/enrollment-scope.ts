@@ -58,7 +58,7 @@ export function classifyEnrollmentPath(
 		return "excluded";
 	const segments = path.split("/");
 	if (
-		[".trash", ".ai-bridge"].includes(segments[0] ?? "") ||
+		[".trash", ".vaultwire"].includes(segments[0] ?? "") ||
 		segments.at(-1) === ".DS_Store" ||
 		segments.at(-1)?.toLowerCase().endsWith(".icloud")
 	)
@@ -122,10 +122,7 @@ function isHardExcludedSettingsPath(segments: string[]): boolean {
 		/^workspace.*\.json$/i.test(first) ||
 		first === "graph.json" ||
 		first.startsWith("cache") ||
-		(relative[0] === "plugins" &&
-			["ai-bridge", "vaultwire", "ai-bridge-vaultwire-backup"].includes(
-				relative[1] ?? "",
-			)) ||
+		(relative[0] === "plugins" && relative[1] === "vaultwire") ||
 		relative.includes("node_modules")
 	);
 }

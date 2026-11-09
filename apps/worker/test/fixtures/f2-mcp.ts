@@ -81,7 +81,11 @@ export async function issueToken(
 			cookie,
 			"Cf-Access-Jwt-Assertion": assertion,
 		},
-		body: new URLSearchParams({ handle, decision: "approve" }),
+		body: new URLSearchParams([
+			["handle", handle],
+			["decision", "approve"],
+			...scope.split(" ").map((value) => ["scope", value]),
+		]),
 	});
 	const code =
 		new URL(

@@ -13,7 +13,7 @@ import {
 
 /** Fixed owner endpoint; command arguments cannot change its origin or route. */
 const SERVICE_MEASUREMENTS_URL =
-	"https://obsidian-bridge.mmorillo.dev/owner/measurements";
+	"https://vaultwire.mmorillo.dev/owner/measurements";
 /** Caps retained JSON body bytes after decompression. */
 const MAX_MEASUREMENT_RESPONSE_BYTES = 262_144;
 /** Static command syntax that never repeats user-supplied paths. */

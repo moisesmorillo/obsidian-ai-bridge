@@ -5,7 +5,7 @@ import {
 import type { App } from "obsidian";
 
 /** Device-only configuration key, separate from the protocol journal and shared plugin data. */
-const SETTINGS_SYNC_STORAGE_KEY = "obsidian-ai-bridge:settings-sync:v1";
+const SETTINGS_SYNC_STORAGE_KEY = "vaultwire:settings-sync:v1";
 
 /** Keeps consent and its full-manifest duty in one local configuration write. */
 export interface SettingsSyncConfiguration {

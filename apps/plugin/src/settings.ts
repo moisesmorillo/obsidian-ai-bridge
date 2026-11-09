@@ -10,7 +10,7 @@ import type { SyncStatusProjection } from "@plugin/sync/sync-status";
 import { type App, Platform, type Plugin } from "obsidian";
 
 /** Non-secret user settings for the desktop enrollment endpoint. */
-export interface AIBridgeSettings {
+export interface VaultwireSettings {
 	serverUrl: string;
 	/** Local label used to distinguish this device's conflict copies. */
 	deviceName: string;
@@ -34,7 +34,7 @@ export function resolveDeviceName(savedName: unknown): string {
 }
 
 /** Settings page for enrollment controls and safe connection status. */
-export class AIBridgeSettingTab extends PluginSettingTab {
+export class VaultwireSettingTab extends PluginSettingTab {
 	/** Current safe status element, or null before the settings page renders. */
 	private statusElement: HTMLElement | null = null;
 	private syncElement: HTMLElement | null = null;
@@ -48,7 +48,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	constructor(
 		app: App,
 		plugin: Plugin,
-		private readonly settings: AIBridgeSettings,
+		private readonly settings: VaultwireSettings,
 		private readonly getSession: () => DeviceSession,
 		private readonly credentials: CredentialStorage,
 		private readonly onServerUrlChange: (url: string) => Promise<void>,
@@ -192,7 +192,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 			this.showAuthorizationInstructions();
 		}
 		this.syncElement = containerEl.createEl("div", {
-			cls: "ai-bridge-sync-status",
+			cls: "vaultwire-sync-status",
 		});
 		this.renderSyncStatus();
 		if (this.credentials.warning)

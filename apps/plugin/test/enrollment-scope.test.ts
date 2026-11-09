@@ -32,8 +32,8 @@ describe("classifyEnrollmentPath", () => {
 		["notes/large.md", 1_000_001, "blob"],
 		[".obsidian/plugins/x.md", 24, "excluded"],
 		[".trash/old.md", 24, "excluded"],
-		[".ai-bridge/pending/x", 24, "excluded"],
-		["notes/.ai-bridge/note.md", 24, "text"],
+		[".vaultwire/pending/x", 24, "excluded"],
+		["notes/.vaultwire/note.md", 24, "text"],
 		["notes/.DS_Store", 24, "excluded"],
 		["notes/photo.icloud", 24, "excluded"],
 		["notes/binary.exe", 24, "excluded"],
@@ -95,13 +95,11 @@ describe("settings category enrollment", () => {
 	it.each([
 		".obsidian/themes/Example/.DS_Store",
 		".obsidian/themes/Example/font.icloud",
-		".obsidian/plugins/AI-BRIDGE/main.js",
-		".obsidian/PLUGINS/AI-BRIDGE/data.json",
+		".obsidian/plugins/VAULTWIRE/main.js",
+		".obsidian/PLUGINS/VAULTWIRE/data.json",
 		".obsidian/workspace.json",
 		".obsidian/workspace-mobile.json",
-		".obsidian/plugins/ai-bridge/data.json",
 		".obsidian/plugins/vaultwire/data.json",
-		".obsidian/plugins/ai-bridge-vaultwire-backup/data.json",
 		".obsidian/cache/cache.db",
 		".obsidian/cache2/cache.db",
 		".obsidian/graph.json",
@@ -118,7 +116,7 @@ describe("settings category enrollment", () => {
 		).toBe("excluded");
 	});
 
-	it("does not traverse migration backups when all settings categories are enabled", () => {
+	it("traverses former plugin folders when settings sync is enabled", () => {
 		const policy = {
 			...DEFAULT_SETTINGS_SYNC_POLICY,
 			enabled: true,
@@ -131,10 +129,10 @@ describe("settings category enrollment", () => {
 		);
 		expect(
 			shouldTraverseSettingsDirectory(
-				".obsidian/plugins/ai-bridge-vaultwire-backup",
+				`.obsidian/plugins/${"ai-" + "bridge"}`,
 				policy,
 			),
-		).toBe(false);
+		).toBe(true);
 	});
 
 	it("preserves exact JavaScript and CSS bytes within the blob limit", () => {

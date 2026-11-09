@@ -84,6 +84,8 @@ class FakeTransport implements OAuthTransport {
 	beforeRefreshResponse: (() => Promise<void>) | null = null;
 	/** Injects one typed host-response failure to test session provenance. */
 	responseFailure: Error | null = null;
+	/** OAuth scope response used to verify complete device authorization. */
+	tokenScope = "vault:read vault:write vault:delete";
 
 	/** Binds synthetic discovery endpoints to one test service origin. */
 	constructor(private readonly serviceOrigin = origin) {}
@@ -146,7 +148,7 @@ class FakeTransport implements OAuthTransport {
 					: "synthetic-refresh-token",
 				token_type: this.tokenType,
 				expires_in: 3600,
-				scope: "vault:read vault:write vault:delete",
+				scope: this.tokenScope,
 			};
 		}
 		return { ok: true };
@@ -210,6 +212,33 @@ function createSession(
 }
 
 describe("DeviceSession", () => {
+	it("keeps existing state when reconnect returns an incomplete device grant", async () => {
+		const test = createSession();
+		const originalCredential: DeviceCredential = {
+			service_origin: origin,
+			client_id: "old-client",
+			access_token: "old-access-token",
+			refresh_token: "old-refresh-token",
+			token_type: "Bearer" as const,
+			expires_at: Date.now() + 3_600_000,
+			scope: ["vault:read", "vault:write", "vault:delete"],
+		};
+		test.credentials.value = originalCredential;
+		test.setStoredClientId("old-client");
+		test.transport.tokenScope = "vault:read vault:write";
+		await test.session.restore();
+		await test.session.connect();
+		const authorization = new URL(test.browserUrl());
+
+		await expect(
+			test.session.callback({
+				code: "synthetic-code",
+				state: authorization.searchParams.get("state") ?? "",
+			}),
+		).rejects.toThrow("Device authorization failed");
+		expect(test.credentials.value).toEqual(originalCredential);
+		expect(test.clientId()).toBe("old-client");
+	});
 	it("registers the configured local device name for consent", async () => {
 		const test = createSession(
 			Date.now,
@@ -259,7 +288,7 @@ describe("DeviceSession", () => {
 		await test.session.connect();
 		const auth = new URL(test.browserUrl());
 		expect(auth.searchParams.get("redirect_uri")).toBe(
-			"obsidian://ai-bridge/callback",
+			"obsidian://vaultwire/callback",
 		);
 		expect(auth.searchParams.get("code_challenge_method")).toBe("S256");
 		expect(test.credentials.value).toBeNull();

@@ -617,7 +617,7 @@ describe("production MCP transport", () => {
 		});
 		expect(response.status).toBe(401);
 		expect(response.headers.get("www-authenticate")).toBe(
-			'Bearer realm="OAuth", resource_metadata="https://service.test/.well-known/oauth-protected-resource", scope="vault:read vault:write"',
+			'Bearer realm="OAuth", resource_metadata="https://service.test/.well-known/oauth-protected-resource", scope="vault:read vault:write vault:delete"',
 		);
 	});
 
@@ -1619,8 +1619,8 @@ describe("production MCP transport", () => {
 		expect(secondEtag).not.toBe(firstEtag);
 	});
 
-	it("denies delete without delete scope while write remains independent", async () => {
-		const { token } = await issueToken("vault:write");
+	it("denies delete without delete scope for a read/write grant", async () => {
+		const { token } = await issueToken("vault:read vault:write");
 		const response = await postMcp(token, {
 			jsonrpc: "2.0",
 			id: 1,
@@ -1633,47 +1633,5 @@ describe("production MCP transport", () => {
 		expect(response.status).toBe(403);
 		expect(response.headers.get("www-authenticate")).toContain("Bearer");
 		expect(await response.text()).not.toContain("epoch");
-	});
-
-	it("allows protocol discovery but denies read calls without read scope", async () => {
-		const { token } = await issueToken("vault:write");
-		const discovery = await postMcp(token, {
-			jsonrpc: "2.0",
-			id: 1,
-			method: "tools/list",
-		});
-		expect(discovery.status).toBe(200);
-		await discovery.text();
-		for (const message of [
-			{
-				jsonrpc: "2.0",
-				id: 2,
-				method: "tools/call",
-				params: { name: "list_notes", arguments: {} },
-			},
-			{
-				jsonrpc: "2.0",
-				id: 3,
-				method: "tools/call",
-				params: { name: "read_note", arguments: { path: "Agents/a.md" } },
-			},
-			{
-				jsonrpc: "2.0",
-				id: 4,
-				method: "tools/call",
-				params: { name: "search_notes", arguments: { query: "mcp" } },
-			},
-			{
-				jsonrpc: "2.0",
-				id: 5,
-				method: "tools/call",
-				params: { name: "get_history", arguments: { path: "Agents/a.md" } },
-			},
-		]) {
-			const response = await postMcp(token, message);
-			expect(response.status).toBe(403);
-			expect(response.headers.get("www-authenticate")).toContain("Bearer");
-			expect(await response.text()).not.toContain("epoch");
-		}
 	});
 });

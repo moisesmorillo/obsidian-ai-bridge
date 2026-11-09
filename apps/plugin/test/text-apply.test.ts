@@ -104,7 +104,7 @@ class MemoryVault implements TextVault {
 	): Promise<boolean> {
 		const bytes = this.binaryFiles.get(path);
 		if (
-			!path.startsWith(".ai-bridge/pre-apply/") ||
+			!path.startsWith(".vaultwire/pre-apply/") ||
 			!bytes ||
 			(await hashBytes(bytes)) !== expectedHash
 		)
@@ -479,7 +479,7 @@ describe("TextApplyEngine", () => {
 			expect.objectContaining({ path }),
 		);
 		expect(vault.binaryFiles.get(path)).toEqual(partial);
-		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${baseHash}`)).toEqual(
+		expect(vault.binaryFiles.get(`.vaultwire/pre-apply/${baseHash}`)).toEqual(
 			base,
 		);
 	});
@@ -726,7 +726,7 @@ describe("TextApplyEngine", () => {
 			const remote = new Uint8Array([0xfe, 0x28, 2]);
 			const localHash = await hashBytes(local);
 			const remoteHash = await hashBytes(remote);
-			const recoveryPath = `.ai-bridge/pre-apply/${localHash}`;
+			const recoveryPath = `.vaultwire/pre-apply/${localHash}`;
 			const now = Date.now();
 			vault.binaryFiles.set(path, local.slice());
 			await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
@@ -865,7 +865,7 @@ describe("TextApplyEngine", () => {
 			await engine.resume();
 			await engine.resume();
 			expect(
-				vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+				vault.binaryFiles.get(`.vaultwire/pre-apply/${localHash}`),
 			).toEqual(local);
 			expect(
 				(await vault.list()).filter((source) => source.includes("conflict")),
@@ -898,7 +898,7 @@ describe("TextApplyEngine", () => {
 			const remote = new Uint8Array([5, 6]);
 			const preservedHash = await hashBytes(preserved);
 			const remoteHash = await hashBytes(remote);
-			const recoveryPath = `.ai-bridge/pre-apply/${preservedHash}`;
+			const recoveryPath = `.vaultwire/pre-apply/${preservedHash}`;
 			const row = { ...change, path, hash: remoteHash };
 			await journal.setBase(path, {
 				deleted: false,
@@ -953,7 +953,7 @@ describe("TextApplyEngine", () => {
 						edited,
 					);
 					expect(
-						vault.binaryFiles.get(`.ai-bridge/pre-apply/${editedHash}`),
+						vault.binaryFiles.get(`.vaultwire/pre-apply/${editedHash}`),
 					).toEqual(edited);
 					expect(journal.snapshot().base[path]?.rev).toBe(1);
 				}
@@ -964,7 +964,7 @@ describe("TextApplyEngine", () => {
 			expect(vault.binaryFiles.get(recoveryPath)).toEqual(preserved);
 			expect(vault.binaryFiles.get(editedConflictPath ?? "")).toEqual(edited);
 			expect(
-				vault.binaryFiles.get(`.ai-bridge/pre-apply/${editedHash}`),
+				vault.binaryFiles.get(`.vaultwire/pre-apply/${editedHash}`),
 			).toEqual(edited);
 			expect(journal.snapshot().base[path]).toEqual({
 				deleted: false,
@@ -1015,7 +1015,7 @@ describe("TextApplyEngine", () => {
 				.pending_apply[0]?.conflict_copies?.find(
 					(copy: PendingConflictCopy) => copy.purpose === "conflict",
 				)?.path;
-			const firstRecoveryPath = `.ai-bridge/pre-apply/${firstHash}`;
+			const firstRecoveryPath = `.vaultwire/pre-apply/${firstHash}`;
 			expect(firstConflictPath).toBeDefined();
 			expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
 			expect(vault.binaryFiles.get(firstConflictPath ?? "")).toEqual(first);
@@ -1058,7 +1058,7 @@ describe("TextApplyEngine", () => {
 						expectedVersion,
 					);
 					expect(
-						vault.binaryFiles.get(`.ai-bridge/pre-apply/${expectedHash}`),
+						vault.binaryFiles.get(`.vaultwire/pre-apply/${expectedHash}`),
 					).toEqual(expectedVersion);
 					expect(journal.snapshot().base[path]?.rev).toBe(1);
 				}
@@ -1074,7 +1074,7 @@ describe("TextApplyEngine", () => {
 			expect(vault.binaryFiles.get(firstRecoveryPath)).toEqual(first);
 			expect(vault.binaryFiles.get(laterConflictPath ?? "")).toEqual(later);
 			expect(
-				vault.binaryFiles.get(`.ai-bridge/pre-apply/${laterHash}`),
+				vault.binaryFiles.get(`.vaultwire/pre-apply/${laterHash}`),
 			).toEqual(later);
 			expect(vault.binaryFiles.get(path)).toEqual(later);
 			expect(journal.snapshot().base[path]?.rev).toBe(1);
@@ -1090,7 +1090,7 @@ describe("TextApplyEngine", () => {
 			expect(vault.binaryFiles.get(firstRecoveryPath)).toEqual(first);
 			expect(vault.binaryFiles.get(laterConflictPath ?? "")).toEqual(later);
 			expect(
-				vault.binaryFiles.get(`.ai-bridge/pre-apply/${laterHash}`),
+				vault.binaryFiles.get(`.vaultwire/pre-apply/${laterHash}`),
 			).toEqual(later);
 			expect(vault.binaryFiles.get(latestConflictPath ?? "")).toEqual(latest);
 			expect(
@@ -1098,7 +1098,7 @@ describe("TextApplyEngine", () => {
 			).toBeLessThanOrEqual(512);
 			expect(latestConflictPath?.endsWith(".png")).toBe(true);
 			expect(
-				vault.binaryFiles.get(`.ai-bridge/pre-apply/${latestHash}`),
+				vault.binaryFiles.get(`.vaultwire/pre-apply/${latestHash}`),
 			).toEqual(latest);
 			expect(vault.binaryFiles.get(path)).toEqual(remote);
 			expect(journal.snapshot().base[path]).toEqual({
@@ -1138,7 +1138,7 @@ describe("TextApplyEngine", () => {
 						purpose: "conflict",
 					},
 					{
-						path: `.ai-bridge/pre-apply/${hashValue}`,
+						path: `.vaultwire/pre-apply/${hashValue}`,
 						source: path,
 						side: "path",
 						mode: "local",
@@ -1274,7 +1274,7 @@ describe("TextApplyEngine", () => {
 				purpose: "conflict",
 			},
 			{
-				path: `.ai-bridge/pre-apply/${hashValue}`,
+				path: `.vaultwire/pre-apply/${hashValue}`,
 				source: path,
 				side: "path",
 				mode: "local",
@@ -1357,7 +1357,7 @@ describe("TextApplyEngine", () => {
 					purpose: "conflict",
 				},
 				{
-					path: `.ai-bridge/pre-apply/${hashValue}`,
+					path: `.vaultwire/pre-apply/${hashValue}`,
 					source: path,
 					side: "path",
 					mode: "local",
@@ -1437,7 +1437,7 @@ describe("TextApplyEngine", () => {
 					purpose: "conflict",
 				},
 				{
-					path: `.ai-bridge/pre-apply/${hashValue}`,
+					path: `.vaultwire/pre-apply/${hashValue}`,
 					source: path,
 					side: "path",
 					mode: "local",
@@ -1448,7 +1448,7 @@ describe("TextApplyEngine", () => {
 				},
 			);
 			vault.binaryFiles.set(conflictPath, bytes.slice());
-			vault.binaryFiles.set(`.ai-bridge/pre-apply/${hashValue}`, bytes.slice());
+			vault.binaryFiles.set(`.vaultwire/pre-apply/${hashValue}`, bytes.slice());
 		}
 		vault.binaryFiles.set(path, new Uint8Array([4, 4]));
 		vault.mtimeByPath.set(path, 4);
@@ -1537,7 +1537,7 @@ describe("TextApplyEngine", () => {
 		await expect(engine.apply(row, "blob")).rejects.toThrow(
 			"Binary write was not confirmed",
 		);
-		const recoveryPath = `.ai-bridge/pre-apply/${firstHash}`;
+		const recoveryPath = `.vaultwire/pre-apply/${firstHash}`;
 		vault.binaryFiles.set(recoveryPath, new Uint8Array([99]));
 		vault.binaryFiles.set(path, edited.slice());
 		engine.close();
@@ -1635,7 +1635,7 @@ describe("TextApplyEngine", () => {
 				)?.path;
 				expect(vault.binaryFiles.get(editedConflictPath ?? "")).toEqual(edited);
 				expect(
-					vault.binaryFiles.get(`.ai-bridge/pre-apply/${editedHash}`),
+					vault.binaryFiles.get(`.vaultwire/pre-apply/${editedHash}`),
 				).toEqual(edited);
 			}
 			return modify(target, bytes);
@@ -1645,11 +1645,11 @@ describe("TextApplyEngine", () => {
 
 		expect(vault.binaryFiles.get(path)).toEqual(remote);
 		expect(vault.binaryFiles.get(firstConflictPath ?? "")).toEqual(first);
-		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${firstHash}`)).toEqual(
+		expect(vault.binaryFiles.get(`.vaultwire/pre-apply/${firstHash}`)).toEqual(
 			first,
 		);
 		expect(vault.binaryFiles.get(editedConflictPath ?? "")).toEqual(edited);
-		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${editedHash}`)).toEqual(
+		expect(vault.binaryFiles.get(`.vaultwire/pre-apply/${editedHash}`)).toEqual(
 			edited,
 		);
 		expect(journal.snapshot().base[path]?.rev).toBe(2);
@@ -1712,7 +1712,7 @@ describe("TextApplyEngine", () => {
 			throw new Error("Expected persisted binary conflict identity");
 		expect(vault.binaryFiles.get(conflictPlan.path)).toEqual(changed);
 		expect(
-			vault.binaryFiles.get(`.ai-bridge/pre-apply/${await hashBytes(changed)}`),
+			vault.binaryFiles.get(`.vaultwire/pre-apply/${await hashBytes(changed)}`),
 		).toEqual(changed);
 		journal.close();
 		const restartedJournal = await DeviceJournal.open(storage);
@@ -1739,7 +1739,7 @@ describe("TextApplyEngine", () => {
 		expect(conflict?.[1]).toEqual(changed);
 		expect(
 			restartedVault.binaryFiles.get(
-				`.ai-bridge/pre-apply/${await hashBytes(changed)}`,
+				`.vaultwire/pre-apply/${await hashBytes(changed)}`,
 			),
 		).toEqual(changed);
 		expect(restartedVault.binaryFiles.get(blobChange.path)).toEqual(
@@ -1827,7 +1827,7 @@ describe("TextApplyEngine", () => {
 			"Binary write was not confirmed",
 		);
 
-		const recoveryPath = `.ai-bridge/pre-apply/${localHash}`;
+		const recoveryPath = `.vaultwire/pre-apply/${localHash}`;
 		expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
 		expect(vault.binaryFiles.get(recoveryPath)).toEqual(local);
 		vault.mtimeByPath.set(recoveryPath, now - 8 * 24 * 60 * 60 * 1000);
@@ -1890,7 +1890,7 @@ describe("TextApplyEngine", () => {
 			"Binary rename destination was not confirmed",
 		);
 
-		const preApplyPath = `.ai-bridge/pre-apply/${previousHash}`;
+		const preApplyPath = `.vaultwire/pre-apply/${previousHash}`;
 		expect(vault.binaryFiles.get(destinationPath)).toEqual(previous);
 		expect(vault.binaryFiles.get(preApplyPath)).toEqual(previous);
 		expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
@@ -1995,7 +1995,7 @@ describe("TextApplyEngine", () => {
 		);
 		expect(vault.binaryFiles.has(path)).toBe(false);
 		expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
-		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`)).toEqual(
+		expect(vault.binaryFiles.get(`.vaultwire/pre-apply/${localHash}`)).toEqual(
 			local,
 		);
 		engine.close();
@@ -2196,7 +2196,7 @@ describe("TextApplyEngine", () => {
 					purpose: "conflict",
 				},
 				{
-					path: `.ai-bridge/pre-apply/${localHash}`,
+					path: `.vaultwire/pre-apply/${localHash}`,
 					source: path,
 					side: "path",
 					mode: "local",
@@ -2327,7 +2327,7 @@ describe("TextApplyEngine", () => {
 		expect(copies).toHaveLength(1);
 		expect(copies[0]?.[1]).toEqual(local);
 		expect(notices).toEqual([copies[0]?.[0]]);
-		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`)).toEqual(
+		expect(vault.binaryFiles.get(`.vaultwire/pre-apply/${localHash}`)).toEqual(
 			local,
 		);
 		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
@@ -2396,7 +2396,7 @@ describe("TextApplyEngine", () => {
 			expect(conflict).toBeDefined();
 			expectExactBytes(conflict?.[1], localBytes);
 			expectExactBytes(
-				vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+				vault.binaryFiles.get(`.vaultwire/pre-apply/${localHash}`),
 				localBytes,
 			);
 			expect(vault.files.get(path)).toBe(remoteText);
@@ -2957,7 +2957,7 @@ describe("TextApplyEngine", () => {
 		expect(vault.binaryFiles.get(conflictPath)).toEqual(source);
 		expect(notices).toEqual([conflictPath]);
 		expect(
-			notices.some((path) => path.startsWith(".ai-bridge/pre-apply/")),
+			notices.some((path) => path.startsWith(".vaultwire/pre-apply/")),
 		).toBe(false);
 		expect(journal.snapshot().attention).toContainEqual(
 			expect.objectContaining({ path: rename.path }),
@@ -3123,8 +3123,8 @@ describe("TextApplyEngine", () => {
 		const recent = new Uint8Array([13, 14]);
 		const expiredHash = await hashBytes(expired);
 		const recentHash = await hashBytes(recent);
-		const expiredPath = `.ai-bridge/pre-apply/${expiredHash}`;
-		const recentPath = `.ai-bridge/pre-apply/${recentHash}`;
+		const expiredPath = `.vaultwire/pre-apply/${expiredHash}`;
+		const recentPath = `.vaultwire/pre-apply/${recentHash}`;
 		vault.binaryFiles.set(expiredPath, expired);
 		vault.binaryFiles.set(recentPath, recent);
 		vault.mtimeByPath.set(expiredPath, Date.now() - 8 * 24 * 60 * 60 * 1000);
@@ -3145,7 +3145,7 @@ describe("TextApplyEngine", () => {
 		const path = "notes/pending.png";
 		const conflictPath =
 			"notes/pending (conflict Test Device 1970-01-01 0000 r2).png";
-		const recoveryPath = `.ai-bridge/pre-apply/${localHash}`;
+		const recoveryPath = `.vaultwire/pre-apply/${localHash}`;
 		const blobChange = { ...change, path, hash: remoteHash };
 		await journal.beginApply(blobChange);
 		await journal.updateApply({
@@ -4470,7 +4470,7 @@ describe("TextApplyEngine", () => {
 
 			expect(vault.binaryFiles.get(path)).toEqual(remoteBytes);
 			const conflict = [...vault.binaryFiles.entries()].find(([candidate]) =>
-				candidate.startsWith("AI Bridge settings conflicts/"),
+				candidate.startsWith("Vaultwire settings conflicts/"),
 			);
 			expect(conflict?.[0]).toMatch(suffix);
 			expect(conflict?.[1]).toEqual(localBytes);

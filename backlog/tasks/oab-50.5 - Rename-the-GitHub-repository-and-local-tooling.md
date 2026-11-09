@@ -1,9 +1,10 @@
 ---
 id: OAB-50.5
 title: Rename the GitHub repository and local tooling
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
+updated_date: '2026-11-09T17:04:00Z'
 labels:
   - rename
 dependencies:
@@ -24,3 +25,15 @@ Rename moisesmorillo/obsidian-ai-bridge to moisesmorillo/vaultwire after the lab
 - [ ] #1 The repository is moisesmorillo/vaultwire and CI, Release Please and the deploy secret work on it.
 - [ ] #2 Local clones and Orca worktrees point at the new remote.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Rename the GitHub repository with gh repo rename. 2. Point local remotes at the new URL. 3. Update the current plugin release doc link. Historical plans and CHANGELOG links stay. 4. Change the deploy secret repository target in cloudflare-infra. 5. Verify CI, Release Please and secret on the renamed repository.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-09: repository renamed with gh repo rename to moisesmorillo/vaultwire. The old URL returns 301 to the new one. The local remote points at git@github.com:moisesmorillo/vaultwire.git. All Orca worktrees share that git directory. The local folder name stays obsidian-ai-bridge to keep Orca registration and supervisor paths stable. docs/plugin-release.md now names the new repository. Historical plans and CHANGELOG links stay. Deploy secret target change: cloudflare-infra PR #27. BRAT on iPhone and iPad follows the redirect. The cutover task re-adds the repository as moisesmorillo/vaultwire.
+<!-- SECTION:NOTES:END -->

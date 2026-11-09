@@ -1,10 +1,10 @@
 ---
 id: OAB-50.4
 title: Prepare the Worker for the vaultwire script
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:27:00Z'
+updated_date: '2026-11-09T16:29:00Z'
 labels:
   - rename
   - worker
@@ -30,33 +30,26 @@ Repository obsidian-ai-bridge, apps/worker wrangler configs, deploy workflow and
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-## Goal and design
-Prepare the vaultwire script without a production deploy. Keep the pinned Wrangler migrations flow. Transfer the existing Vault namespace instead of creating an empty destination.
-
-## Global constraints
-Edit only the three Worker Wrangler configs, .github/workflows/deploy.yml, deployment-config tests, preflight tooling/tests, and this task. No production deploy, personal vault access, infrastructure changes, or new dependencies. Preserve protocol and storage invariants.
+## Goal and approved design
+Prepare the vaultwire Worker without a production deploy. Transfer Vault from obsidian-ai-bridge with transferred_classes and no destination-create migration. Preserve the object key with VAULT_OBJECT_NAME=obsidian-bridge.mmorillo.dev in production. Use isolated development values. Fail closed when the binding is missing.
 
 ## Owner decisions
-The owner skips Plannotator for this task. Development scripts and deploys with synthetic data are allowed by S19. Keep CLOUDFLARE_DEPLOY_TOKEN as the GitHub secret key. S17 supplies its replacement token value. Use PENDING_S17_VAULTWIRE_OAUTH_KV_ID and PENDING_S17_VAULTWIRE_ACCESS_AUDIENCE until infrastructure outputs exist. Fail closed in the deploy workflow while placeholders or the host-identity cutover blocker remain. Do not change source files outside ownership.
+The supervisor extended source scope to index.ts and infrastructure/auth/oauth.ts for stable object selection, with binding typing and supporting tests. S17 placeholders stay. The production cutover guard stays. The supervisor authorized only vaultwire-rehearsal-a and vaultwire-rehearsal-b, including deletion. No production deploy or personal vault access. Keep CLOUDFLARE_DEPLOY_TOKEN as the GitHub secret key. No new dependencies.
 
-## Task 1: Worker script, bindings and namespace transfer
-- [ ] Add deployment-config assertions for vaultwire, https://vaultwire.mmorillo.dev, vaultwire-blobs, vaultwire-backups, named S17 placeholders, and one transferred_classes migration from Vault in obsidian-ai-bridge to Vault. Reject destination create migrations.
-- [ ] Run the focused tests before implementation. Record the expected failing assertions.
-- [ ] Change production config and development config names. Development configs create isolated local Vault namespaces, never transfer production data.
-- [ ] Change deploy workflow labels and metadata URL. Keep owner/main gates and safe output handling. Add an explicit cutover guard so merging cannot deploy production accidentally.
-- [ ] Make preflight replace the remote transfer migration with an isolated local create migration. Test this distinction and credential isolation.
-- [ ] Rehearse on two unique development scripts using synthetic SQLite journal data. Keep the same object key across the transfer. Compare cursor and files before and after. Also establish that a new host-derived key selects a different object. Never query production data.
-- [ ] Run bun run docs:check, bun run check and bun run --filter @obsidian-ai-bridge/worker preflight. Commit scoped changes and actual evidence in task notes.
-- [ ] Run independent task review and whole-branch review. Rebase on origin/main, open one PR, and remove the worktree. Use a draft PR if rehearsal or the source-code identity dependency blocks completion.
+## Completed steps
+- [x] Verify official Cloudflare transfer syntax and destination constraints.
+- [x] Add failing config and object-selection tests before implementation.
+- [x] Prepare configs, bindings, deployment guards and isolated preflight.
+- [x] Route all nine production selections through VAULT_OBJECT_NAME.
+- [x] Test missing names, callback name drift, every routing seam, and origin checks.
+- [x] Rehearse synthetic SQLite cursor and file continuity across the two authorized scripts.
+- [x] Delete both rehearsal scripts and inspect both deletion messages.
+- [x] Pass bun run check, docs:check, focused tests and Worker preflight.
+- [x] Complete task review, whole-branch review and scoped correction review.
+- [x] Continue PR 130 on the same branch. Publish and remove the isolated worktree after final bookkeeping.
 
-## Platform evidence and review focus
-Cloudflare official documentation: https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/#transfer-migration . transferred_classes uses from, from_script and to. The destination must export the class and must not create it first. Migration tags are ordered and apply once. Transfer is atomic and cannot use gradual deployment. Existing source bindings forward after transfer but need updated config before their next deploy. Current docs prefer exports for new tools, but the existing pinned Wrangler 4.45.0 and owner brief use supported migrations. No tool upgrade belongs here.
-Review remote versus local migration separation, credential isolation, placeholder blocking, hostname-derived object identity, and unchanged production resources.
-
-## Approved scope extension
-Supervisor decision: add VAULT_OBJECT_NAME and use it at every production idFromName call. Production keeps obsidian-bridge.mmorillo.dev as the stable object name. Development configs use isolated object names. Fail closed when absent. Add RED/GREEN tests for REST, measurements, owner registry, exports, garbage collection, scheduled exports, OAuth token exchange, and consent selection. Keep SERVICE_ORIGIN for origin and auth checks only. Add binding typing and the test fixtures needed for this change. Do not expand unrelated runtime behavior.
-
-The supervisor authorizes only vaultwire-rehearsal-a and vaultwire-rehearsal-b for the remote rehearsal. Wait for a second message that confirms the token file exists. Read its contents only through the specified CLOUDFLARE_API_TOKEN command substitution. Never print or persist it. Deploy synthetic source data, transfer to the destination script, compare the same object cursor and files, and delete both scripts at the end. S17 placeholders stay. Continue PR 130 on the same branch. Mark the PR ready only after the remote rehearsal passes. Run local full checks and independent review after code changes.
+## Evidence limits
+The remote rehearsal used a temporary SQLite fixture and Wrangler 4.156.2, not repository-pinned 4.45.0. It proves synthetic namespace and object continuity only. It does not qualify the production Worker, production schema, alarms, OAuth state or R2 content. S17 output replacement and production cutover remain separate work. Earlier blocked-draft notes describe superseded task states.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -91,4 +84,12 @@ Task review of approved object-name extension at 383ff04 returned APPROVE WITH N
 Final-review finding closure: added the requested callback object-name drift case with a different non-empty name. The callback returns invalid_grant, and the namespace spy confirms zero idFromName selections. Added outer Worker fetch checks for missing and empty names. Each asserts status 503, exact body `Vault object name is not configured`, cache-control `no-store`, and zero namespace selections.
 
 Validation for this bounded test-only change: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts -t 'fails closed at the Worker entry|rejects other provider identities'` passed 2 tests, exit 0. `bun run docs:check` passed, exit 0. `bun run check` passed, exit 0. It reported 54 Worker test files with 774 tests, 19 protocol files with 314 tests, 30 plugin files with 844 passed and 1 skipped, and 9 tooling files with 102 tests. The Worker F2 suite passed 145 tests.\n\nRehearsal version clarification: the remote rehearsal used Wrangler CLI 4.156.2. This repository pins Wrangler 4.45.0. The remote rehearsal does not directly qualify transfer behavior with the pinned CLI. Do not rerun the rehearsal in this test-only fix wave.
+
+Final review closure: whole-branch review covered 383ff04 against origin/main 7ed19cc and approved with one bounded test gap. Corrective review covered 383ff04..8f8d0f7 and returned APPROVE. Both callback drift and outer-fetch missing/empty-name cases are ADDRESSED with exact failure and zero-namespace-selection assertions. No actionable finding remains. Parent inspected synthetic before/after snapshots and confirmed successful deletion messages for both rehearsal scripts. The parent also confirmed a clean worktree, unchanged origin/main and git diff --check. All acceptance criteria are checked. Hosted CI remains separate evidence. This task is complete within the supervisor scope. S17 placeholders and the production deploy guard stay in place.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Prepared the vaultwire Worker, bindings and Vault namespace transfer. Added VAULT_OBJECT_NAME at all nine selection sites, with the legacy production key and fail-closed guards. Local checks and synthetic development transfer passed. Wrangler confirmed deletion of both authorized rehearsal scripts. Independent reviews closed all findings. S17 placeholders and production deployment guards remain by owner decision. No production deploy or personal vault access occurred. Remote rehearsal used a temporary SQLite fixture and Wrangler 4.156.2 rather than pinned 4.45.0. PR 130 is the delivery record.
+<!-- SECTION:FINAL_SUMMARY:END -->

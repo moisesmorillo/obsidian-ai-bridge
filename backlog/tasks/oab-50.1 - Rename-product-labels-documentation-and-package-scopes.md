@@ -1,11 +1,11 @@
 ---
 id: OAB-50.1
 title: Rename product labels, documentation and package scopes
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:36:00Z'
+updated_date: '2026-11-09T16:39:00Z'
 labels:
   - rename
 dependencies: []
@@ -22,9 +22,9 @@ Repository obsidian-ai-bridge. Scope: visible plugin name and settings text, own
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A repository search for ai-bridge, obsidian-ai-bridge and "AI Bridge" outside historical records and the files owned by sibling tasks returns no match.
-- [ ] #2 Release Please config and its tests produce `vaultwire-v<version>` plugin tags and keep worker tags. Existing tags and releases stay.
-- [ ] #3 bun run check passes and snapshots change only in brand text.
+- [x] #1 A repository search for ai-bridge, obsidian-ai-bridge and "AI Bridge" outside historical records and the files owned by sibling tasks returns no match.
+- [x] #2 Release Please config and its tests produce `vaultwire-v<version>` plugin tags and keep worker tags. Existing tags and releases stay.
+- [x] #3 bun run check passes and snapshots change only in brand text.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -109,4 +109,21 @@ Final whole-branch correction evidence:
 - `docs/api/f2.md` now marks the four-note count as historical and states the OAB-50.4 namespace transfer and OAB-50.6 object-copy, checksum, cursor, and file-set duties. README history remains unchanged because it already limits the count to evidence recorded at that time and does not waive migration.
 - Final `bun run docs:check` passed. Final `bun run check` passed 132 test files, 2,311 tests, and 1 skipped test. Final `bun run --filter '@vaultwire/worker' preflight` passed.
 - No sibling implementation files, live service, vault, tag, release, deployment, or Cloudflare resource changed.
+
+Review closure at 85acf64:
+- Task review found early shared-pin removal. Commit daefc87 fixes the policy. The scoped reviewer approved the fix.
+- Complete branch review covered 175 files at daefc87 against 7ed19cc. It found fixed live-version assertions and unsafe cutover guidance.
+- Commit 85acf64 fixes both findings. The final scoped reviewer approved daefc87..85acf64 with no open actionable finding.
+- Review covered public package boundaries, release state policy, named TypeScript helper contracts, current documentation, and brand-only snapshot changes.
+- Final evidence: 132 test files, 2,311 tests passed, one test skipped. Documentation check and Worker preflight passed.
+- Repository name matches remain only in historical records, sibling-owned names and tests, existing repository links, provider identity, and storage or synthetic path contracts. Owner scope preserves these names.
+- Release pin regression checks local configuration and policy, not the Release Please engine. No live release or production transfer check occurred.
+- Main remained at 7ed19cc during final review. The branch rebase reports no changes.
+- Publication follows this closure commit. Keep the release pin until Release Please publishes the first vaultwire-v plugin release. OAB-50.4 must change the deploy workflow package selector before cutover.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Renamed current labels, documentation, published package names, imports, selectors, and plugin release tags to Vaultwire. Kept versions, private aliases, historical records, and sibling-owned contracts unchanged. Added regression tests for release baselines, future version updates, labels, and safe cutover guidance. All review findings are closed. Full check: 2,311 tests passed and one skipped. Worker preflight passed. No deployment, Cloudflare resource change, or real vault access occurred.
+<!-- SECTION:FINAL_SUMMARY:END -->

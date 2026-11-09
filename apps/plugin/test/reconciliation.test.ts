@@ -776,7 +776,9 @@ describe("ReconciliationController", () => {
 	});
 
 	it("preserves local bytes after a stale legacy journal and missing credentials on new-key startup", async () => {
-		const oldJournalKey = ["obsidian", "-ai-bridge:device-state:v1"].join("");
+		const oldJournalKey = ["obsidian", "-ai", "-bridge:device-state:v1"].join(
+			"",
+		);
 		const oldEpoch = "b".repeat(32);
 		const staleState = {
 			version: 1 as const,

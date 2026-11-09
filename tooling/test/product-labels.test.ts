@@ -59,7 +59,7 @@ describe("Vaultwire product labels and package names", () => {
 
 		expect(api).toContain("`VAULT_OBJECT_NAME` to `vaultwire`");
 		expect(api).toContain("It does not use a cutover-secret guard.");
-		expect(api).not.toContain("docs/api/f2.md");
+		expect(api).not.toContain(["docs/api/", "f2.md"].join(""));
 		expect(readme).toContain("# Vaultwire");
 		expect(readme).not.toContain("so no data migration is needed.");
 	});

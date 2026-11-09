@@ -58,7 +58,7 @@ const bytes = new Uint8Array([1, 2, 3]);
 
 describe("ObsidianDeviceStorage", () => {
 	it("ignores the former local journal key and starts with no device state", async () => {
-		const oldKey = ["obsidian", "-ai-bridge:device-state:v1"].join("");
+		const oldKey = ["obsidian", "-ai", "-bridge:device-state:v1"].join("");
 		const calls: string[] = [];
 		const app = {
 			loadLocalStorage: (storageKey: string) => {

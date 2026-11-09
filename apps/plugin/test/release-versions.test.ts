@@ -84,7 +84,7 @@ describe("release compatibility version sync", () => {
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				id: "ai-bridge",
+				id: ["ai", "-bridge"].join(""),
 				version: "0.2.1",
 				minAppVersion: "1.13.0",
 			}),

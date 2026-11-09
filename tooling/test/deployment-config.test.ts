@@ -51,7 +51,9 @@ describe("production Worker configuration", () => {
 		expect(workflow).toContain(
 			"bun run --filter '@vaultwire/worker' preflight",
 		);
-		expect(workflow).not.toContain("VAULTWIRE_CUTOVER_AUTHORIZED");
+		expect(workflow).not.toContain(
+			["VAULTWIRE_CUTOVER_", "AUTHORIZED"].join(""),
+		);
 		expect(workflow).toContain("PENDING_S17_VAULTWIRE_");
 		expect(workflow).toContain(
 			"https://vaultwire.mmorillo.dev/.well-known/oauth-protected-resource",

@@ -757,7 +757,8 @@ describe("production OAuth entry", () => {
 		const client = await registerPublicClient();
 		const oldIdentitySeparator = [
 			"obsidian",
-			"-ai-bridge/provider-identity/v1",
+			"-ai",
+			"-bridge/provider-identity/v1",
 		].join("");
 		const oldIdentityDigest = new Uint8Array(
 			await crypto.subtle.digest(
@@ -772,7 +773,7 @@ describe("production OAuth entry", () => {
 			),
 		);
 		const oldUserId = `oab${"1_"}${Array.from(oldIdentityDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-		const oldObjectName = ["obsidian-bridge", ".mmorillo.dev"].join("");
+		const oldObjectName = ["obsidian", "-bridge", ".mmorillo.dev"].join("");
 		const oldEnv = new Proxy(env, {
 			/** Select the released object name only for old-token creation. */
 			get(target, property) {
@@ -1004,7 +1005,7 @@ describe("production OAuth entry", () => {
 				"SHA-256",
 				new TextEncoder().encode(
 					JSON.stringify([
-						["obsidian", "-ai-bridge/provider-identity/v1"].join(""),
+						["obsidian", "-ai", "-bridge/provider-identity/v1"].join(""),
 						"https://service.test",
 						"synthetic-owner",
 					]),

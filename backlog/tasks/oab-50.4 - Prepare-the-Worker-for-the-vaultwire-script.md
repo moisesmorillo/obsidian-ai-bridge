@@ -4,7 +4,7 @@ title: Prepare the Worker for the vaultwire script
 status: In Progress
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:41:00Z'
+updated_date: '2026-11-09T16:49:00Z'
 labels:
   - rename
   - worker
@@ -53,6 +53,8 @@ The remote rehearsal used a temporary SQLite fixture and Wrangler 4.156.2, not r
 
 ## Applied S17 outputs
 The supervisor confirms applied infrastructure. Replace production OAUTH_KV id with f1332596a3e84e4691d5ce71f1131510 and ACCESS_AUDIENCE with 1ccdb36c95194c63eeb487eb666285ab5832e35cd0e10eb74a4cdd3141a3ed95. Update deployment-config expectations first and verify RED, then config and GREEN. Keep the cutover guard, stable object name, bucket names and transfer unchanged. Run docs:check, full check, and Worker preflight. Review this bounded change, update PR 130 and return it ready. No remote resource changes or production deploy.
+
+Supervisor continuation: PR 132 merged. Use @vaultwire/worker in the deploy workflow and its deployment-config assertion after integration with main. Preserve stable object identity, migration and production guard. Replace both S17 placeholders with the exact applied values. Review and return PR 130 ready. The supervisor approved task-note conflict resolution through the committed version with S17 instructions. Preserve published branch history without force push.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -89,6 +91,8 @@ Final-review finding closure: added the requested callback object-name drift cas
 Validation for this bounded test-only change: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts -t 'fails closed at the Worker entry|rejects other provider identities'` passed 2 tests, exit 0. `bun run docs:check` passed, exit 0. `bun run check` passed, exit 0. It reported 54 Worker test files with 774 tests, 19 protocol files with 314 tests, 30 plugin files with 844 passed and 1 skipped, and 9 tooling files with 102 tests. The Worker F2 suite passed 145 tests.\n\nRehearsal version clarification: the remote rehearsal used Wrangler CLI 4.156.2. This repository pins Wrangler 4.45.0. The remote rehearsal does not directly qualify transfer behavior with the pinned CLI. Do not rerun the rehearsal in this test-only fix wave.
 
 Final review closure: whole-branch review covered 383ff04 against origin/main 7ed19cc and approved with one bounded test gap. Corrective review covered 383ff04..8f8d0f7 and returned APPROVE. Both callback drift and outer-fetch missing/empty-name cases are ADDRESSED with exact failure and zero-namespace-selection assertions. No actionable finding remains. Parent inspected synthetic before/after snapshots and confirmed successful deletion messages for both rehearsal scripts. The parent also confirmed a clean worktree, unchanged origin/main and git diff --check. All acceptance criteria are checked. Hosted CI remains separate evidence. This task is complete within the supervisor scope. S17 placeholders and the production deploy guard stay in place.
+
+S17 output continuation: replaced OAUTH_KV with applied production KV id f1332596a3e84e4691d5ce71f1131510 and ACCESS_AUDIENCE with applied production audience 1ccdb36c95194c63eeb487eb666285ab5832e35cd0e10eb74a4cdd3141a3ed95. Updated deploy preflight selector to @vaultwire/worker after PR 132 integration. RED: bunx vitest run tooling/test/deployment-config.test.ts failed 3 assertions against the old worker selector and S17 placeholders. GREEN: the same focused test passed 7 tests. bun run docs:check passed. bun run --filter @vaultwire/worker preflight passed. bun run check passed after formatting the assertion file. Lint reported 15 pre-existing noNonNullAssertion warnings in unrelated Worker tests, with no errors. Build used Wrangler 4.45.0 dry-run. No runtime source, production deployment, remote command, token read, or Cloudflare resource change occurred. Stable object name, transfer migration, buckets, production cutover guard, and placeholder rejection guard remain unchanged.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

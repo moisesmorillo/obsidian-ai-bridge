@@ -48,7 +48,7 @@ describe("production Worker configuration", () => {
 			"github.actor == github.repository_owner && github.triggering_actor == github.repository_owner",
 		);
 		expect(workflow).toContain(
-			"bun run --filter '@obsidian-ai-bridge/worker' preflight",
+			"bun run --filter '@vaultwire/worker' preflight",
 		);
 		expect(workflow).toContain("VAULTWIRE_CUTOVER_AUTHORIZED");
 		expect(workflow).toContain("OAB-50.6 must approve it");
@@ -67,7 +67,8 @@ describe("production Worker configuration", () => {
 			SERVICE_ORIGIN: "https://vaultwire.mmorillo.dev",
 			VAULT_OBJECT_NAME: "obsidian-bridge.mmorillo.dev",
 			ACCESS_TEAM_DOMAIN: "https://mmorillo.cloudflareaccess.com",
-			ACCESS_AUDIENCE: "PENDING_S17_VAULTWIRE_ACCESS_AUDIENCE",
+			ACCESS_AUDIENCE:
+				"1ccdb36c95194c63eeb487eb666285ab5832e35cd0e10eb74a4cdd3141a3ed95",
 		});
 		expect(productionConfig.vars).not.toHaveProperty("OWNER_SUBJECT");
 		const authVars = productionConfig.vars as Record<string, string>;
@@ -97,7 +98,7 @@ describe("production Worker configuration", () => {
 		expect(config.kv_namespaces).toEqual([
 			{
 				binding: "OAUTH_KV",
-				id: "PENDING_S17_VAULTWIRE_OAUTH_KV_ID",
+				id: "f1332596a3e84e4691d5ce71f1131510",
 			},
 		]);
 		expect(config.r2_buckets).toEqual([

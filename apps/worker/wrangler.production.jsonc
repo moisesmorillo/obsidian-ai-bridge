@@ -12,7 +12,7 @@
 		"SERVICE_ORIGIN": "https://vaultwire.mmorillo.dev",
 		"VAULT_OBJECT_NAME": "obsidian-bridge.mmorillo.dev",
 		"ACCESS_TEAM_DOMAIN": "https://mmorillo.cloudflareaccess.com",
-		"ACCESS_AUDIENCE": "PENDING_S17_VAULTWIRE_ACCESS_AUDIENCE"
+		"ACCESS_AUDIENCE": "1ccdb36c95194c63eeb487eb666285ab5832e35cd0e10eb74a4cdd3141a3ed95"
 	},
 	"durable_objects": {
 		"bindings": [{ "name": "VAULTS", "class_name": "Vault" }]
@@ -20,7 +20,7 @@
 	"kv_namespaces": [
 		{
 			"binding": "OAUTH_KV",
-			"id": "PENDING_S17_VAULTWIRE_OAUTH_KV_ID"
+			"id": "f1332596a3e84e4691d5ce71f1131510"
 		}
 	],
 	"r2_buckets": [

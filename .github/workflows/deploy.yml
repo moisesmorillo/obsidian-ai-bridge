@@ -31,16 +31,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_TOKEN }}
           OWNER_SUBJECT: ${{ secrets.OWNER_SUBJECT }}
-          VAULTWIRE_CUTOVER_AUTHORIZED: ${{ secrets.VAULTWIRE_CUTOVER_AUTHORIZED }}
         shell: bash
         run: |
           set +x
           set -eu
 
-          if [ "${VAULTWIRE_CUTOVER_AUTHORIZED:-}" != "true" ]; then
-            echo "Vaultwire production cutover is not authorized. OAB-50.6 must approve it." >&2
-            exit 1
-          fi
           if grep -Eq 'PENDING_S17_VAULTWIRE_(OAUTH_KV_ID|ACCESS_AUDIENCE)' wrangler.production.jsonc; then
             echo "Vaultwire production configuration contains unresolved S17 placeholders." >&2
             exit 1

@@ -3,7 +3,7 @@ import { TFile, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import type { DeviceSession } from "../src/auth/device-session";
 import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
-import AIBridgePlugin from "../src/main";
+import VaultwirePlugin from "../src/main";
 import type { DesktopSyncController } from "../src/sync/desktop-sync";
 import type { DeviceJournalStorage } from "../src/sync/device-journal";
 import { DeviceJournal } from "../src/sync/device-journal";
@@ -242,7 +242,7 @@ describe("plugin startup enrollment", () => {
 			addEventListener: () => undefined,
 			removeEventListener: () => undefined,
 		});
-		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const plugin = new VaultwirePlugin({} as never, {} as never);
 		const session = new EnrollmentSession();
 		session.vaultFailure = {
 			status: 429,
@@ -316,7 +316,7 @@ describe("plugin startup enrollment", () => {
 			addEventListener: () => undefined,
 			removeEventListener: () => undefined,
 		});
-		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const plugin = new VaultwirePlugin({} as never, {} as never);
 		const session = new EnrollmentSession();
 		const journal = await DeviceJournal.open(new MemoryJournalStorage());
 		Reflect.set(plugin, "app", { vault: makeVault() });

@@ -5,7 +5,10 @@ import {
 	parseETag,
 	pathKey,
 } from "@vaultwire/protocol";
+import type { App } from "obsidian";
 import { beforeEach, describe, expect, it } from "vitest";
+import { ObsidianCredentialStorage } from "../src/infrastructure/credential-storage";
+import { ObsidianDeviceStorage } from "../src/infrastructure/device-storage";
 import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
 import {
 	SyncTransport,
@@ -772,6 +775,81 @@ describe("ReconciliationController", () => {
 		expect(after.pending_apply).toEqual(before.pending_apply);
 	});
 
+	it("preserves local bytes after a stale legacy journal and missing credentials on new-key startup", async () => {
+		const oldJournalKey = ["obsidian", "-ai", "-bridge:device-state:v1"].join(
+			"",
+		);
+		const oldEpoch = "b".repeat(32);
+		const staleState = {
+			version: 1 as const,
+			device_id: "018f47b2-5c00-7000-8000-000000000001",
+			epoch: oldEpoch,
+			cursor: 12,
+			pending_ops: [],
+			base: {
+				"survivor.md": {
+					deleted: false as const,
+					rev: 8,
+					hash: "0".repeat(64),
+				},
+			},
+		};
+		const localStorage = new Map<string, unknown>([
+			[oldJournalKey, staleState],
+		]);
+		const app = {
+			loadLocalStorage: (key: string) => localStorage.get(key) ?? null,
+			saveLocalStorage: (key: string, state: unknown) =>
+				localStorage.set(key, state),
+			vault: { adapter: {} },
+		} as unknown as App;
+		const journal = await DeviceJournal.open(new ObsidianDeviceStorage(app));
+		const credentials = new ObsidianCredentialStorage(
+			app,
+			journal.snapshot().device_id,
+		);
+		const vault = new MemoryVault();
+		const remote = new MemoryRemote();
+		const content = "local bytes survive startup";
+		const contentHash = await hash(content);
+		vault.files.set("survivor.md", content);
+		remote.entries = [
+			{
+				path: "survivor.md",
+				etag: formatETag(epoch, 2),
+				seq: 2,
+				hash: contentHash,
+				kind: "text",
+				deleted: false,
+			},
+		];
+		remote.texts.set("2", content);
+		const engine = new TextApplyEngine(journal, vault, remote, {
+			deviceName: "test",
+		});
+		const controller = new ReconciliationController(
+			journal,
+			engine,
+			vault,
+			remote,
+		);
+
+		expect(await credentials.read()).toBeNull();
+		expect(journal.snapshot().epoch).toBeUndefined();
+		expect(journal.snapshot().base).toEqual({});
+		await controller.reconcile();
+
+		expect(vault.files.get("survivor.md")).toBe(content);
+		expect(vault.writes).toBe(0);
+		expect(journal.snapshot().epoch).toBe(epoch);
+		expect(journal.snapshot().base["survivor.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: contentHash,
+		});
+		expect(localStorage.get(oldJournalKey)).toEqual(staleState);
+	});
+
 	it("does not enroll a fresh disconnected journal during resume", async () => {
 		await context.controller.resume();
 		expect(context.remote.manifestCalls).toEqual([]);
@@ -1345,7 +1423,7 @@ describe("ReconciliationController", () => {
 		expect(conflicts).toHaveLength(1);
 		expectExactBytes(conflicts[0]?.[1], local);
 		expectExactBytes(
-			context.vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+			context.vault.binaryFiles.get(`.vaultwire/pre-apply/${localHash}`),
 			local,
 		);
 		expect(context.vault.binaryFiles.has(path)).toBe(false);
@@ -1684,7 +1762,7 @@ describe("ReconciliationController", () => {
 					);
 					expect(saved?.conflict_copies).toContainEqual(
 						expect.objectContaining({
-							path: `.ai-bridge/pre-apply/${localHash}`,
+							path: `.vaultwire/pre-apply/${localHash}`,
 							hash: localHash,
 							kind: "blob",
 							purpose: "pre_apply",
@@ -1734,7 +1812,7 @@ describe("ReconciliationController", () => {
 					);
 					expectExactBytes(
 						(await context.vault.readBinary(
-							`.ai-bridge/pre-apply/${localHash}`,
+							`.vaultwire/pre-apply/${localHash}`,
 						)) ?? undefined,
 						local,
 					);
@@ -1820,7 +1898,7 @@ describe("ReconciliationController", () => {
 				expect(events.slice(events.indexOf("write") + 1)).toContain("read");
 				expectExactBytes(
 					(await context.vault.readBinary(
-						`.ai-bridge/pre-apply/${localHash}`,
+						`.vaultwire/pre-apply/${localHash}`,
 					)) ?? undefined,
 					local,
 				);
@@ -2617,7 +2695,7 @@ describe("ReconciliationController", () => {
 		for (const path of [
 			".obsidian/config.md",
 			".trash/old.md",
-			".ai-bridge/pending/journal",
+			".vaultwire/pending/journal",
 			"notes/.DS_Store",
 			"notes/photo.icloud",
 			"notes/unknown.exe",
@@ -2638,7 +2716,7 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().attention).toContainEqual(
 			expect.objectContaining({ path: "large.md" }),
 		);
-		for (const path of [".ai-bridge/pending/journal", ".obsidian/config.md"])
+		for (const path of [".vaultwire/pending/journal", ".obsidian/config.md"])
 			expect(context.vault.reads).not.toContain(path);
 	});
 

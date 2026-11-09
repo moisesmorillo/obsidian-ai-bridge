@@ -53,8 +53,6 @@ export interface DeviceSessionHost {
 	openBrowser(url: string): void;
 	/** Persists identity only when this session generation still owns journal admission. */
 	setClientId(clientId: string, isCurrent: () => boolean): Promise<void>;
-	/** Persists one-time target approval before a migration session becomes connected. */
-	authorizationCompleted?(): Promise<void>;
 	/** Publishes a fixed safe status without sensitive OAuth response values. */
 	statusChanged(status: DeviceSessionStatus): void;
 }
@@ -285,8 +283,6 @@ export class DeviceSession {
 					throw error;
 				}
 			});
-			if (this.ownsGeneration(generation))
-				await this.host.authorizationCompleted?.();
 			if (this.ownsGeneration(generation)) this.setStatus("connected");
 		} catch {
 			if (generation === this.generation && !this.closed) {

@@ -9,5 +9,5 @@ coverage/
 .DS_Store
 .pi/
 .unipi/
-.ai-bridge/
+.vaultwire/
 .claude/settings.local.json

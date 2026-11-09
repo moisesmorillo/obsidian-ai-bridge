@@ -404,8 +404,8 @@ export function authorizedVaults(
 	home = homedir(),
 ): Record<DesktopVaultId, string> {
 	return {
-		"dev-1": resolve(home, "vaults/obsidian-ai-bridge-dev"),
-		"dev-2": resolve(home, "vaults/obsidian-ai-bridge-dev-2"),
+		"dev-1": resolve(home, "vaults/vaultwire-dev"),
+		"dev-2": resolve(home, "vaults/vaultwire-dev-2"),
 	};
 }
 
@@ -458,7 +458,7 @@ export function validateCallbackUrl(value: string): void {
 		const keys = [...parameters.keys()];
 		if (
 			url.protocol !== "obsidian:" ||
-			url.hostname !== "ai-bridge" ||
+			url.hostname !== "vaultwire" ||
 			url.pathname !== "/callback" ||
 			url.username ||
 			url.password ||
@@ -1850,7 +1850,7 @@ export function createAc19CaseScripts(
 	const fixture = createAc19FixturePaths(id, [], fixtureName);
 	const action = `
 		const adapter = app.vault.adapter;
-		if (app.vault.getName() !== "obsidian-ai-bridge-dev-2" || typeof adapter.basePath !== "string" || !adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2") || adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
+		if (app.vault.getName() !== "vaultwire-dev-2" || typeof adapter.basePath !== "string" || !adapter.basePath.endsWith("/vaults/vaultwire-dev-2") || adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
 		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.composition?.publication || !plugin.settingsTab?.syncActions?.pause || !plugin.settingsTab?.syncActions?.resume || !plugin.settingsValue?.coexistenceMode) throw new Error("AC19_ASSERT_PLUGIN_CONTROLS");
 		if (plugin.sessionStatus !== "connected" || plugin.desktopSync.isBusy || plugin.syncPaused || plugin.syncActive || !plugin.composition) throw new Error("AC19_ASSERT_INITIAL_STATE");
@@ -1940,7 +1940,7 @@ export function createAc19CaseScripts(
 		caseEvidence.ac19 = { captureReload: false, attentionUnchanged, baselineSynced: true, confirmationVisible: Boolean(confirmation), placeholderExcluded, serviceSourceLive, deleteOrRenameOperationCount, initialPendingOperationCount: initialCounts.pendingOperations, initialPendingApplyCount: initialCounts.pendingApplies, initialAttentionCount: initialCounts.attention, initialConfirmationCount: initialCounts.confirmations, ...deltas };
 	`;
 	const cleanup = `
-		if (app.vault.getName() !== "obsidian-ai-bridge-dev-2" || typeof app.vault.adapter.basePath !== "string" || !app.vault.adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2") || app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+		if (app.vault.getName() !== "vaultwire-dev-2" || typeof app.vault.adapter.basePath !== "string" || !app.vault.adapter.basePath.endsWith("/vaults/vaultwire-dev-2") || app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
 		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
 		if (ac19Cleanup.started && ac19Cleanup.sourceCreated && !plugin.syncPaused) {
@@ -2005,7 +2005,7 @@ export function createAc19CaptureReloadScripts(
 ): Ac19CaptureReloadScripts {
 	const target = assertAuthorizedVault("dev-1", resolvedPath, home);
 	const fixture = createAc19FixturePaths("dev-1");
-	const baselinePath = ".ai-bridge/oab-10.1-dev-1-baseline.json";
+	const baselinePath = ".vaultwire/oab-10.1-dev-1-baseline.json";
 	const capture = `
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CAPTURE_ASSERT_TARGET_VAULT");
 		const plugin = app.plugins.plugins?.["vaultwire"];
@@ -2039,7 +2039,7 @@ export function createAc19CaptureReloadScripts(
 		if (!confirmation || !captured.unavailable_paths.includes(source) || !placeholderExcluded || !historyUnchanged) throw new Error("AC19_CAPTURE_ASSERT_CAPTURE_ONLY");
 		const deltas = { pendingOperationDelta: captured.pending_ops.length - counts.pendingOperations, pendingApplyDelta: captured.pending_apply.length - counts.pendingApplies, attentionDelta: captured.attention.length - counts.attention, confirmationDelta: captured.coexistence_confirmations.length - counts.confirmations };
 		if (deltas.pendingOperationDelta !== 0 || deltas.pendingApplyDelta !== 0 || deltas.attentionDelta !== 0 || deltas.confirmationDelta !== 1) throw new Error("AC19_CAPTURE_ASSERT_BASELINE_DELTAS");
-		if (!(await adapter.exists(".ai-bridge"))) await adapter.mkdir(".ai-bridge");
+		if (!(await adapter.exists(".vaultwire"))) await adapter.mkdir(".vaultwire");
 		const historyFingerprint = await fingerprint({ pending_ops: captured.pending_ops, pending_apply: captured.pending_apply, attention: captured.attention });
 		const confirmationFingerprint = await fingerprint(captured.coexistence_confirmations);
 		const reloadBaseline = { version: 1, source, placeholder, historyFingerprint, confirmationFingerprint, counts: { pendingOperations: captured.pending_ops.length, pendingApplies: captured.pending_apply.length, attention: captured.attention.length, confirmations: captured.coexistence_confirmations.length } };
@@ -2058,7 +2058,7 @@ export function createAc19CaptureReloadScripts(
 		const confirmation = state.coexistence_confirmations.find((item) => item.path === source);
 		if (!confirmation || !state.unavailable_paths.includes(source) || !app.vault.getAbstractFileByPath(placeholder) || app.vault.getAbstractFileByPath(source)) throw new Error("AC19_BASELINE_ASSERT_CAPTURE_STATE");
 		if (await adapter.exists(${JSON.stringify(baselinePath)})) throw new Error("AC19_BASELINE_ASSERT_ALREADY_PRESENT");
-		if (!(await adapter.exists(".ai-bridge"))) await adapter.mkdir(".ai-bridge");
+		if (!(await adapter.exists(".vaultwire"))) await adapter.mkdir(".vaultwire");
 		const historyFingerprint = await fingerprint({ pending_ops: state.pending_ops, pending_apply: state.pending_apply, attention: state.attention });
 		const confirmationFingerprint = await fingerprint(state.coexistence_confirmations);
 		const reloadBaseline = { version: 1, source, placeholder, historyFingerprint, confirmationFingerprint, counts: { pendingOperations: state.pending_ops.length, pendingApplies: state.pending_apply.length, attention: state.attention.length, confirmations: state.coexistence_confirmations.length } };
@@ -2854,7 +2854,7 @@ export function createAc30CaseScripts(
 	const target = JSON.stringify(
 		assertAuthorizedVault(
 			"dev-2",
-			resolve(home, "vaults/obsidian-ai-bridge-dev-2"),
+			resolve(home, "vaults/vaultwire-dev-2"),
 			home,
 		),
 	);
@@ -3063,7 +3063,7 @@ export function createAc31CaseScripts(
 	const target = JSON.stringify(
 		assertAuthorizedVault(
 			"dev-2",
-			resolve(home, "vaults/obsidian-ai-bridge-dev-2"),
+			resolve(home, "vaults/vaultwire-dev-2"),
 			home,
 		),
 	);

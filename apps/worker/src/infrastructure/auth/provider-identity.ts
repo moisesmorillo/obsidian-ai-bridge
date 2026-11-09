@@ -7,7 +7,7 @@ export async function deriveProviderUserId(
 	serviceOrigin: string,
 ): Promise<string> {
 	const input = JSON.stringify([
-		"obsidian-ai-bridge/provider-identity/v1",
+		"vaultwire/provider-identity/v1",
 		serviceOrigin,
 		ownerSubject,
 	]);

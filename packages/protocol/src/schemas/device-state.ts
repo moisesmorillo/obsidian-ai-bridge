@@ -37,7 +37,7 @@ export const DevicePreconditionSchema = z.discriminatedUnion("kind", [
 export type DevicePrecondition = z.infer<typeof DevicePreconditionSchema>;
 
 /** Canonical excluded directory for immutable operation payloads. */
-export const DEVICE_PAYLOAD_DIRECTORY = ".ai-bridge/pending/";
+export const DEVICE_PAYLOAD_DIRECTORY = ".vaultwire/pending/";
 
 /** Validates one UUIDv7 payload reference inside the excluded journal directory. */
 export const DevicePayloadReferenceSchema = z
@@ -108,7 +108,7 @@ export const PendingOperationSchema = z
 				path: ["to"],
 			});
 		}
-		if (operation.payload_ref !== `.ai-bridge/pending/${operation.key}`) {
+		if (operation.payload_ref !== `.vaultwire/pending/${operation.key}`) {
 			context.addIssue({
 				code: "custom",
 				message: "Payload reference must match its operation key",
@@ -295,10 +295,10 @@ export const PendingApplySchema = z
 							? (copy.side === "path" ||
 									(pending.change.op === "rename" &&
 										copy.side === "rename_destination")) &&
-								copy.path === `.ai-bridge/pre-apply/${copy.hash}`
+								copy.path === `.vaultwire/pre-apply/${copy.hash}`
 							: copy.purpose === "conflict" &&
 								copy.path !== copy.source &&
-								!copy.path.startsWith(".ai-bridge/pre-apply/");
+								!copy.path.startsWith(".vaultwire/pre-apply/");
 					const validRemoteConflict =
 						copy.mode === "remote" &&
 						copy.purpose === "conflict" &&

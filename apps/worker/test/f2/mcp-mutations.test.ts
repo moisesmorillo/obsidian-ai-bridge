@@ -305,55 +305,43 @@ describe("production MCP mutation safety", () => {
 		expect(await published(path)).toEqual(afterAppend);
 	});
 
-	it.each([
-		["read-write", "vault:read vault:write", true],
-		["write-only", "vault:write", false],
-	] as const)(
-		"returns scoped current details for a stale %s heading append",
-		async (_label, scopes, includesContent) => {
-			const { token } = await issueToken(scopes);
-			const reader =
-				scopes === "vault:write"
-					? (await issueToken("vault:read")).token
-					: token;
-			const epoch = await epochFor(reader);
-			const path = `Agents/stale-heading-${crypto.randomUUID()}.md`;
-			const original = await receipt(
-				await call(token, "create_note", {
-					path,
-					epoch,
-					content: "# Tasks\nold\n",
-				}),
-			);
-			const currentContent = "# Tasks\ncurrent\n";
-			const current = await receipt(
-				await call(token, "update_note", {
-					path,
-					etag: original.etag,
-					content: currentContent,
-				}),
-			);
-			const before = await published(path);
-			const response = await call(token, "append_under_heading", {
+	it("returns scoped current details for a stale read-write heading append", async () => {
+		const { token } = await issueToken("vault:read vault:write");
+		const epoch = await epochFor(token);
+		const path = `Agents/stale-heading-${crypto.randomUUID()}.md`;
+		const original = await receipt(
+			await call(token, "create_note", {
 				path,
-				heading: "Tasks",
-				text: "stale",
+				epoch,
+				content: "# Tasks\nold\n",
+			}),
+		);
+		const currentContent = "# Tasks\ncurrent\n";
+		const current = await receipt(
+			await call(token, "update_note", {
+				path,
 				etag: original.etag,
-				idempotency_key: "stale-heading-append-key",
-			});
-			const conflict = await failure(response, epoch, "precondition_failed");
+				content: currentContent,
+			}),
+		);
+		const before = await published(path);
+		const response = await call(token, "append_under_heading", {
+			path,
+			heading: "Tasks",
+			text: "stale",
+			etag: original.etag,
+			idempotency_key: "stale-heading-append-key",
+		});
+		const conflict = await failure(response, epoch, "precondition_failed");
 
-			expect(conflict).toMatchObject({
-				etag: current.etag,
-				hash: await hashContent(currentContent),
-				deleted: false,
-			});
-			if (includesContent)
-				expect(conflict).toHaveProperty("content", currentContent);
-			else expect(conflict).not.toHaveProperty("content");
-			expect(await published(path)).toEqual(before);
-		},
-	);
+		expect(conflict).toMatchObject({
+			etag: current.etag,
+			hash: await hashContent(currentContent),
+			deleted: false,
+		});
+		expect(conflict).toHaveProperty("content", currentContent);
+		expect(await published(path)).toEqual(before);
+	});
 
 	it("accepts escaped heading text and replays its receipt after a later edit", async () => {
 		const { token } = await issueToken();
@@ -432,7 +420,7 @@ describe("production MCP mutation safety", () => {
 
 	it("accepts the worst-case escaped note envelope within the canonical wire limit", async () => {
 		const reader = await issueToken();
-		const { token, clientId } = await issueToken("vault:write");
+		const { token, clientId } = await issueToken("vault:read vault:write");
 		const epoch = await epochFor(reader.token);
 		const path = `Agents/worst-escaped-${crypto.randomUUID()}.md`;
 		const content = "\0".repeat(1_000_000);
@@ -609,7 +597,7 @@ describe("production MCP mutation safety", () => {
 		"returns 428 for $label append arguments without a key",
 		async ({ label, input }) => {
 			const reader = await issueToken();
-			const writer = await issueToken("vault:write");
+			const writer = await issueToken("vault:read vault:write");
 			const epoch = await epochFor(reader.token);
 			const path = `Agents/absent-append-${label.replaceAll(" ", "-")}.md`;
 			await receipt(
@@ -659,7 +647,7 @@ describe("production MCP mutation safety", () => {
 	it("checks identity, scope, and DO revocation before absent append arguments", async () => {
 		const reader = await issueToken("vault:read");
 		const writer = await issueToken();
-		const revoked = await issueToken("vault:write");
+		const revoked = await issueToken("vault:read vault:write");
 		const epoch = await epochFor(reader.token);
 		const path = "Agents/absent-append-authority.md";
 		const content = "OAB75-1 protected content";
@@ -714,10 +702,10 @@ describe("production MCP mutation safety", () => {
 		expect(body).not.toContain(epoch);
 	});
 
-	it("uses operation-specific DO authority for write-only and delete-only clients", async () => {
+	it("uses operation-specific DO authority for read/write and read/delete clients", async () => {
 		const reader = await issueToken("vault:read");
-		const writer = await issueToken("vault:write");
-		const deleter = await issueToken("vault:delete");
+		const writer = await issueToken("vault:read vault:write");
+		const deleter = await issueToken("vault:read vault:delete");
 		const epoch = await epochFor(reader.token);
 		const path = "Agents/scope-specific-authority.md";
 		const created = await receipt(
@@ -739,7 +727,7 @@ describe("production MCP mutation safety", () => {
 				path,
 				epoch,
 				text: " third",
-				idempotency_key: "write-only-append",
+				idempotency_key: "read-write-append",
 			}),
 		);
 		const restored = await receipt(
@@ -1042,10 +1030,9 @@ describe("production MCP mutation safety", () => {
 		]);
 	});
 
-	it("returns complete conflict content only to clients with read scope", async () => {
-		const reader = await issueToken();
-		const writer = await issueToken("vault:write");
-		const epoch = await epochFor(reader.token);
+	it("returns complete conflict content to a read/write client", async () => {
+		const writer = await issueToken("vault:read vault:write");
+		const epoch = await epochFor(writer.token);
 		const path = "Agents/conflict-content.md";
 		const first = await receipt(
 			await call(writer.token, "create_note", { path, epoch, content: "old" }),
@@ -1059,27 +1046,21 @@ describe("production MCP mutation safety", () => {
 			}),
 		);
 		const before = await published(path);
-		for (const [client, canRead] of [
-			[reader, true],
-			[writer, false],
-		] as const) {
-			const result = await failure(
-				await call(client.token, "update_note", {
-					path,
-					etag: first.etag,
-					content: "obsolete",
-				}),
-				epoch,
-				"precondition_failed",
-			);
-			expect(result).toMatchObject({
-				etag: current.etag,
-				deleted: false,
-				hash: expect.stringMatching(/^[0-9a-f]{64}$/),
-			});
-			if (canRead) expect(result).toHaveProperty("content", content);
-			else expect(result).not.toHaveProperty("content");
-		}
+		const result = await failure(
+			await call(writer.token, "update_note", {
+				path,
+				etag: first.etag,
+				content: "obsolete",
+			}),
+			epoch,
+			"precondition_failed",
+		);
+		expect(result).toMatchObject({
+			etag: current.etag,
+			deleted: false,
+			hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+			content,
+		});
 		expect(await published(path)).toEqual(before);
 	});
 
@@ -1094,7 +1075,9 @@ describe("production MCP mutation safety", () => {
 		async (name) => {
 			const allowed = await issueToken("vault:read vault:write vault:delete");
 			const denied = await issueToken(
-				name === "delete_note" ? "vault:write" : "vault:read vault:delete",
+				name === "delete_note"
+					? "vault:read vault:write"
+					: "vault:read vault:delete",
 			);
 			const epoch = await epochFor(allowed.token);
 			const path = `Agents/scope-${name}.md`;

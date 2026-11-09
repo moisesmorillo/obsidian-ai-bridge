@@ -7,12 +7,6 @@ import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-sto
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
 import {
-	hasCopiedLegacyPluginSettings,
-	hasLegacyPluginSettingsToMigrate,
-	migrateLegacyPluginSettings,
-	readLegacyPluginSettings,
-} from "@plugin/infrastructure/plugin-settings-migration";
-import {
 	readSettingsSyncConfiguration,
 	saveSettingsSyncConfiguration,
 } from "@plugin/infrastructure/settings-sync-storage";
@@ -21,9 +15,9 @@ import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import { Notice, Platform, Plugin, TFile } from "@plugin/obsidian-api";
 import {
-	type AIBridgeSettings,
-	AIBridgeSettingTab,
 	resolveDeviceName,
+	type VaultwireSettings,
+	VaultwireSettingTab,
 } from "@plugin/settings";
 import { CoexistenceController } from "@plugin/sync/coexistence";
 import {
@@ -56,7 +50,7 @@ import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 const DEFAULT_SERVER_URL = "https://vaultwire.mmorillo.dev";
 
 /** Owns device-local enrollment and starts serialized synchronization after connection restore. */
-export default class AIBridgePlugin extends Plugin {
+export default class VaultwirePlugin extends Plugin {
 	/** Active journal for this plugin lifecycle, or null when unavailable. */
 	private journal: DeviceJournal | null = null;
 	/** Active authorization controller, replaced only when its non-secret server URL changes. */
@@ -64,7 +58,7 @@ export default class AIBridgePlugin extends Plugin {
 	/** Device-local credential storage selected by Obsidian capability availability. */
 	private credentials: ObsidianCredentialStorage | null = null;
 	/** Settings view that receives safe status refreshes while it is visible. */
-	private settingsTab: AIBridgeSettingTab | null = null;
+	private settingsTab: VaultwireSettingTab | null = null;
 	/** Shared application effect owners for the active credential and server lifetime. */
 	private composition: PublicationComposition | null = null;
 	/** Sole timer and event admission owner for desktop synchronization. */
@@ -93,7 +87,7 @@ export default class AIBridgePlugin extends Plugin {
 	private deleteResponseDiagnostic: DeleteResponseDiagnostic | null = null;
 	private vaultSummary: VaultReadResult | null = null;
 	/** Non-secret server and local device labels persisted in this plugin's settings. */
-	private settingsValue: AIBridgeSettings = {
+	private settingsValue: VaultwireSettings = {
 		serverUrl: DEFAULT_SERVER_URL,
 		deviceName: resolveDeviceName(undefined),
 		coexistenceMode: false,
@@ -101,11 +95,7 @@ export default class AIBridgePlugin extends Plugin {
 	};
 	/** Durable full-manifest duty. Only completed hydration can clear this flag. */
 	private settingsHydrationPending = false;
-	/** Blocks credential restore until the owner copies old shared plugin settings. */
-	private legacySettingsMigrationPending = false;
-	/** Blocks restore and sync until copied settings receive successful OAuth approval. */
-	private migrationConfirmationPending = false;
-	/** Retains device-local storage for the journal and migration target approval. */
+	/** Device-local storage adapter for the journal lifecycle. */
 	private deviceStorage: ObsidianDeviceStorage | null = null;
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
@@ -141,8 +131,6 @@ export default class AIBridgePlugin extends Plugin {
 		this.sessionRestoreComplete = false;
 		try {
 			const stored = await this.loadData();
-			this.legacySettingsMigrationPending =
-				await hasLegacyPluginSettingsToMigrate(this.app);
 			if (stored && typeof stored === "object") {
 				if (typeof stored.serverUrl === "string")
 					this.settingsValue.serverUrl = stored.serverUrl;
@@ -153,10 +141,6 @@ export default class AIBridgePlugin extends Plugin {
 			Object.assign(this.settingsValue.settingsSync, localSettings.policy);
 			this.settingsHydrationPending = localSettings.hydrationPending;
 			this.deviceStorage = new ObsidianDeviceStorage(this.app);
-			const migrationTarget = await this.deviceStorage.readMigrationTarget();
-			this.migrationConfirmationPending =
-				(await hasCopiedLegacyPluginSettings(this.app)) &&
-				migrationTarget !== this.settingsValue.serverUrl;
 			const journal = await DeviceJournal.open(this.deviceStorage);
 			if (generation !== this.lifecycleGeneration) {
 				journal.close();
@@ -173,11 +157,7 @@ export default class AIBridgePlugin extends Plugin {
 				journal.snapshot().device_id,
 			);
 			const session = this.createSession();
-			if (
-				!this.legacySettingsMigrationPending &&
-				!this.migrationConfirmationPending
-			)
-				await session.restore().catch(() => undefined);
+			await session.restore().catch(() => undefined);
 			if (generation !== this.lifecycleGeneration) {
 				session.close();
 				return;
@@ -185,7 +165,7 @@ export default class AIBridgePlugin extends Plugin {
 			this.sessionRestoreComplete = true;
 			if (this.sessionStatus === "connected") this.startSync();
 			this.registerObsidianProtocolHandler(
-				"ai-bridge/callback",
+				"vaultwire/callback",
 				(params: ObsidianProtocolData) => {
 					const callback = Object.fromEntries(
 						Object.entries(params).map(([key, value]) => [key, String(value)]),
@@ -195,7 +175,7 @@ export default class AIBridgePlugin extends Plugin {
 					});
 				},
 			);
-			this.settingsTab = new AIBridgeSettingTab(
+			this.settingsTab = new VaultwireSettingTab(
 				this.app,
 				this,
 				this.settingsValue,
@@ -337,68 +317,10 @@ export default class AIBridgePlugin extends Plugin {
 				},
 				(policy) => this.changeSettingsSyncPolicy(generation, policy),
 			);
-			if (!this.legacySettingsMigrationPending)
-				this.addSettingTab(this.settingsTab);
-			this.addCommand({
-				id: "migrate-ai-bridge-settings",
-				name: "Migrate AI Bridge settings to Vaultwire",
-				callback: () => this.runLegacySettingsMigration(),
-			});
+			this.addSettingTab(this.settingsTab);
 		} catch {
 			if (generation === this.lifecycleGeneration)
 				this.attentionReason = DEVICE_JOURNAL_ATTENTION_REASON;
-		}
-	}
-
-	/** Copies old plugin settings only after startup blocks session restore and sync effects. */
-	private async runLegacySettingsMigration(): Promise<void> {
-		if (!this.legacySettingsMigrationPending) {
-			this.notice("No old plugin settings migration is pending");
-			return;
-		}
-		let importedSession: DeviceSession | null = null;
-		try {
-			const source = await readLegacyPluginSettings(this.app);
-			const importedServerUrl =
-				typeof source.settings.serverUrl === "string"
-					? source.settings.serverUrl
-					: DEFAULT_SERVER_URL;
-			importedSession = this.buildSession(importedServerUrl);
-			const migration = await migrateLegacyPluginSettings(
-				this.app,
-				{
-					sessionStatus: this.sessionStatus,
-					syncActive: this.syncActive,
-					syncControllerActive:
-						this.desktopSync !== null || this.composition !== null,
-				},
-				source.data,
-			);
-			if (typeof migration.settings.serverUrl === "string")
-				this.settingsValue.serverUrl = migration.settings.serverUrl;
-			this.settingsValue.deviceName = resolveDeviceName(
-				migration.settings.deviceName,
-			);
-			this.settingsValue.coexistenceMode =
-				migration.settings.coexistenceMode === true;
-			const previousSession = this.session;
-			this.session = importedSession;
-			importedSession = null;
-			previousSession?.close();
-			this.sessionStatus = "disconnected";
-			this.migrationConfirmationPending = true;
-			this.legacySettingsMigrationPending = false;
-			if (this.settingsTab) this.addSettingTab(this.settingsTab);
-			this.notice(
-				"Settings copied. Vaultwire remains disconnected. Check the service address before reconnecting.",
-			);
-		} catch (error) {
-			importedSession?.close();
-			this.notice(
-				error instanceof Error
-					? error.message
-					: "Plugin settings migration failed. Keep both plugin folders.",
-			);
 		}
 	}
 
@@ -637,7 +559,7 @@ export default class AIBridgePlugin extends Plugin {
 
 	/** Saves only shared non-secret settings. Device consent never enters data.json. */
 	private saveSharedSettings(
-		next: Partial<Omit<AIBridgeSettings, "settingsSync">>,
+		next: Partial<Omit<VaultwireSettings, "settingsSync">>,
 	): Promise<void> {
 		const { settingsSync: _localPolicy, ...shared } = this.settingsValue;
 		return this.saveData({ ...shared, ...next });
@@ -870,21 +792,11 @@ export default class AIBridgePlugin extends Plugin {
 				if (!this.journal) throw new Error("Device journal is unavailable");
 				return journal.setClientId(clientId, isCurrent);
 			},
-			authorizationCompleted: async () => {
-				if (!this.migrationConfirmationPending) return;
-				if (!this.deviceStorage)
-					throw new Error("Device storage is unavailable");
-				await this.deviceStorage.confirmMigrationTarget(serverUrl);
-				this.migrationConfirmationPending = false;
-			},
 			statusChanged: (status) => {
 				this.sessionStatus = status;
 				if (status === "connected") {
 					this.syncRevoked = false;
-					if (
-						this.sessionRestoreComplete &&
-						!this.migrationConfirmationPending
-					) {
+					if (this.sessionRestoreComplete) {
 						if (!this.desktopSync) this.startSync();
 						else if (!this.syncPaused)
 							this.runSyncAction(() => this.resumeSync());
@@ -897,13 +809,7 @@ export default class AIBridgePlugin extends Plugin {
 
 	/** Creates one retained controller and starts recovery only when sync is not paused. */
 	private startSync(): void {
-		if (
-			this.desktopSync ||
-			!this.journal ||
-			!this.session ||
-			this.migrationConfirmationPending
-		)
-			return;
+		if (this.desktopSync || !this.journal || !this.session) return;
 		this.composition = this.createSyncComposition();
 		this.coexistence = new CoexistenceController(
 			this.journal,

@@ -20,7 +20,7 @@ export interface CredentialFileAccess {
 
 /** Returns the dedicated credential directory outside the repository and vault. */
 export function defaultF4CredentialRoot(home: string): string {
-	return resolve(home, ".config", "obsidian-ai-bridge", "f4");
+	return resolve(home, ".config", "vaultwire", "f4");
 }
 
 /** Checks the lexical file boundary before any filesystem access. */

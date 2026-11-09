@@ -129,10 +129,7 @@ export function createOAuthOptions(
 				};
 		},
 		scopesSupported: [...SCOPES],
-		requiredScopes: SCOPES.filter(
-			(scope: (typeof SCOPES)[number]) =>
-				scope === "vault:read" || scope === "vault:write",
-		),
+		requiredScopes: [...SCOPES],
 		resourceMetadata: {
 			resource: serviceOrigin,
 			resource_name: "Vaultwire",
@@ -308,6 +305,20 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				});
 			}
 			const consent = await api.approveConsent(browserRequest, handle);
+			const selectedValues = form.getAll("scope");
+			const selectedScopes: string[] = [];
+			for (const scope of selectedValues) {
+				if (
+					typeof scope !== "string" ||
+					!(SCOPES as readonly string[]).includes(scope) ||
+					!consent.request.scope.includes(scope) ||
+					selectedScopes.includes(scope)
+				)
+					return context.text("Invalid consent scopes", 400);
+				selectedScopes.push(scope);
+			}
+			if (!selectedScopes.includes("vault:read"))
+				return context.text("Invalid consent scopes", 400);
 			const name = String(form.get("client_name") ?? "")
 				.trim()
 				.slice(0, 80);
@@ -328,7 +339,7 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				userId: ownerIdentity,
 				metadata: { client_name: name },
 				revokeExistingGrants: false,
-				scope: [...consent.request.scope],
+				scope: selectedScopes,
 				props: {
 					client_id: consent.request.clientId,
 					generation: fence.generation,
@@ -409,7 +420,7 @@ export function createOAuthWorker(
 	defaultHandler: ExportedHandler<Env>,
 ): OAuthProvider<Env> | null {
 	const apiHandler: ExportedHandler<Env> = {
-		fetch: (request, bindings, context) => {
+		fetch: async (request, bindings, context) => {
 			const enriched = context as ExecutionContext & {
 				props?: unknown;
 				auth?: unknown;
@@ -427,6 +438,19 @@ export function createOAuthWorker(
 				scopes,
 			});
 			if (!identity.success)
+				return Promise.resolve(new Response("Unauthorized", { status: 401 }));
+			const objectName = bindings.VAULT_OBJECT_NAME;
+			if (!objectName)
+				return Promise.resolve(new Response("Unauthorized", { status: 401 }));
+			const registry = bindings.VAULTS.get(
+				bindings.VAULTS.idFromName(objectName),
+			);
+			if (
+				!(await registry.hasRegisteredGrant(
+					identity.data.client_id,
+					identity.data.grant_id,
+				))
+			)
 				return Promise.resolve(new Response("Unauthorized", { status: 401 }));
 			const headers = new Headers(request.headers);
 			headers.set(CONTEXT_HEADER, JSON.stringify(identity.data));

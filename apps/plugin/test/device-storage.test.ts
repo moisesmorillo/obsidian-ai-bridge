@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ObsidianDeviceStorage } from "../src/infrastructure/device-storage";
 
 const key = "018f47b2-5c00-7000-8000-000000000001";
-const path = `.ai-bridge/pending/${key}`;
+const path = `.vaultwire/pending/${key}`;
 
 /** Models the vault adapter with missing folders, partial writes, and read-back faults. */
 class AdapterMock {
@@ -57,11 +57,28 @@ function createStorage(adapter = new AdapterMock()): {
 const bytes = new Uint8Array([1, 2, 3]);
 
 describe("ObsidianDeviceStorage", () => {
+	it("ignores the former local journal key and starts with no device state", async () => {
+		const oldKey = ["obsidian", "-ai", "-bridge:device-state:v1"].join("");
+		const calls: string[] = [];
+		const app = {
+			loadLocalStorage: (storageKey: string) => {
+				calls.push(storageKey);
+				return storageKey === oldKey ? { device_id: "old-device" } : null;
+			},
+			saveLocalStorage: (storageKey: string) => calls.push(storageKey),
+			vault: { adapter: new AdapterMock() },
+		} as unknown as App;
+		const storage = new ObsidianDeviceStorage(app);
+
+		expect(await storage.readState()).toBeNull();
+		expect(calls).toEqual(["vaultwire:device-state:v1"]);
+	});
+
 	it("creates missing excluded directories and verifies the binary payload", async () => {
 		const { storage, adapter } = createStorage();
 		await storage.writePayload(path, bytes);
 		expect(adapter.directories).toEqual(
-			new Set([".ai-bridge", ".ai-bridge/pending"]),
+			new Set([".vaultwire", ".vaultwire/pending"]),
 		);
 		expect(await storage.readPayload(path)).toEqual(bytes);
 	});
@@ -91,7 +108,7 @@ describe("ObsidianDeviceStorage", () => {
 	it("rejects forged payload paths before adapter access", async () => {
 		const { storage, adapter } = createStorage();
 		await expect(
-			storage.readPayload(".ai-bridge/pending/../../outside"),
+			storage.readPayload(".vaultwire/pending/../../outside"),
 		).rejects.toThrow("Invalid device payload path");
 		expect(adapter.files.size).toBe(0);
 	});

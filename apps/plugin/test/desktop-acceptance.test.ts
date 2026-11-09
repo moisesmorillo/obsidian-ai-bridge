@@ -68,8 +68,8 @@ import {
 } from "../tools/desktop-acceptance";
 
 const vaults = {
-	"dev-1": "/Users/test/vaults/obsidian-ai-bridge-dev",
-	"dev-2": "/Users/test/vaults/obsidian-ai-bridge-dev-2",
+	"dev-1": "/Users/test/vaults/vaultwire-dev",
+	"dev-2": "/Users/test/vaults/vaultwire-dev-2",
 };
 const epoch = "a".repeat(32);
 
@@ -249,10 +249,10 @@ function createAc19Host(responses: readonly Ac19ReadResponse[] = []): {
 	};
 	const app = {
 		vault: {
-			getName: () => "obsidian-ai-bridge-dev-2",
+			getName: () => "vaultwire-dev-2",
 			adapter: {
-				basePath: "/Users/test/vaults/obsidian-ai-bridge-dev-2",
-				getBasePath: () => "/Users/test/vaults/obsidian-ai-bridge-dev-2",
+				basePath: "/Users/test/vaults/vaultwire-dev-2",
+				getBasePath: () => "/Users/test/vaults/vaultwire-dev-2",
 				stat: async (path: string) =>
 					files.get(path) ?? (folders.has(path) ? { path } : null),
 				mkdir: async (path: string) => {
@@ -587,15 +587,15 @@ describe("desktop acceptance safety", () => {
 			"/Users/test",
 		);
 		expect(scripts.action).toContain(
-			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev-2"',
+			'getBasePath() !== "/Users/test/vaults/vaultwire-dev-2"',
 		);
 		expect(scripts.action).toContain('"oab-10.1/dev-2/simulated-eviction.md"');
 		expect(scripts.action).toContain("initialAttentionCount");
 		expect(scripts.action).toContain(
-			'app.vault.getName() !== "obsidian-ai-bridge-dev-2"',
+			'app.vault.getName() !== "vaultwire-dev-2"',
 		);
 		expect(scripts.action).toContain(
-			'adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2")',
+			'adapter.basePath.endsWith("/vaults/vaultwire-dev-2")',
 		);
 		expect(scripts.action).toContain(
 			"AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE",
@@ -628,7 +628,7 @@ describe("desktop acceptance safety", () => {
 		);
 		expect(scripts.cleanup).toContain("keepServerState");
 		expect(scripts.cleanup).toContain(
-			'app.vault.getName() !== "obsidian-ai-bridge-dev-2"',
+			'app.vault.getName() !== "vaultwire-dev-2"',
 		);
 		expect(scripts.cleanup).toContain("settingsTab.syncActions.pause()");
 		expect(scripts.cleanup).toContain("settingsTab.syncActions.resume()");
@@ -647,7 +647,7 @@ describe("desktop acceptance safety", () => {
 			"/Users/test",
 		);
 		expect(captureReload.capture).toContain(
-			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+			'getBasePath() !== "/Users/test/vaults/vaultwire-dev"',
 		);
 		expect(captureReload.capture).toContain('deviceName !== "oab-10.1 dev-1"');
 		expect(captureReload.capture).not.toContain("disablePlugin");
@@ -656,11 +656,11 @@ describe("desktop acceptance safety", () => {
 			"globalThis.__oab10Ac19Capture",
 		);
 		expect(captureReload.prepareReloadVerification).toContain(
-			".ai-bridge/oab-10.1-dev-1-baseline.json",
+			".vaultwire/oab-10.1-dev-1-baseline.json",
 		);
 		expect(captureReload.prepareReloadVerification).toContain("adapter.write");
 		expect(
-			classifyEnrollmentPath(".ai-bridge/oab-10.1-dev-1-baseline.json", 0),
+			classifyEnrollmentPath(".vaultwire/oab-10.1-dev-1-baseline.json", 0),
 		).toBe("excluded");
 		expect(captureReload.reloadVerification).toContain(
 			"adapter.read(baselinePath)",
@@ -776,7 +776,7 @@ describe("desktop acceptance safety", () => {
 		{ name: "wrong vault name", vaultName: "dev", basePath: vaults["dev-2"] },
 		{
 			name: "wrong vault path",
-			vaultName: "obsidian-ai-bridge-dev-2",
+			vaultName: "vaultwire-dev-2",
 			basePath: "/Users/test/vaults/other",
 		},
 	])(
@@ -1003,13 +1003,13 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 	it("checks the exact vault and preserves differing plugin files", () => {
 		const script = createInstallScript(
 			"dev-1",
-			"/Users/test/vaults/obsidian-ai-bridge-dev",
+			"/Users/test/vaults/vaultwire-dev",
 			'{"id":"vaultwire","version":"0.1.0"}',
 			"synthetic bundle",
 			"/Users/test",
 		);
 		expect(script).toContain(
-			'adapter.getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+			'adapter.getBasePath() !== "/Users/test/vaults/vaultwire-dev"',
 		);
 		expect(script.indexOf("Vault path mismatch")).toBeLessThan(
 			script.indexOf("adapter.mkdir(directory)"),
@@ -1084,7 +1084,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 	it("splits large install bundles into guarded CLI payloads", () => {
 		const scripts = createInstallPayloadScripts(
 			"dev-1",
-			"/Users/test/vaults/obsidian-ai-bridge-dev",
+			"/Users/test/vaults/vaultwire-dev",
 			'{"id":"vaultwire","version":"0.1.0"}',
 			"synthetic bundle ".repeat(80_000),
 			"/Users/test",
@@ -1098,7 +1098,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		]) {
 			expect(Buffer.byteLength(script)).toBeLessThan(65_536);
 			expect(script).toContain(
-				'adapter.getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+				'adapter.getBasePath() !== "/Users/test/vaults/vaultwire-dev"',
 			);
 			expect(() => new Function(script)).not.toThrow();
 		}
@@ -1111,7 +1111,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 
 	it("verifies paused reload state from an excluded local baseline", async () => {
 		const fixture = createAc19FixturePaths("dev-1");
-		const baselinePath = ".ai-bridge/oab-10.1-dev-1-baseline.json";
+		const baselinePath = ".vaultwire/oab-10.1-dev-1-baseline.json";
 		const files = new Map<string, string>();
 		const folders = new Set<string>();
 		const state = {
@@ -1196,7 +1196,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 	it("returns installed artifact hashes after host read-back", () => {
 		const script = createInstallScript(
 			"dev-1",
-			"/Users/test/vaults/obsidian-ai-bridge-dev",
+			"/Users/test/vaults/vaultwire-dev",
 			'{"id":"vaultwire","version":"0.1.0"}',
 			"synthetic bundle",
 			"/Users/test",
@@ -1236,7 +1236,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		const basePath = vaults["dev-1"];
 		const mainPath = ".obsidian/plugins/vaultwire/main.js";
 		const manifestPath = ".obsidian/plugins/vaultwire/manifest.json";
-		const oldPluginFile = ".obsidian/plugins/ai-bridge/data.json";
+		const oldPluginFile = ".obsidian/plugins/example-plugin/data.json";
 		const firstBackup = `${mainPath}.oab-8.8-backup`;
 		const manifestText = '{"id":"vaultwire","version":"0.1.0"}';
 		const oldBundle = "current altered bundle";
@@ -1249,7 +1249,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		]);
 		const folders = new Set([
 			".obsidian/plugins/vaultwire",
-			".obsidian/plugins/ai-bridge",
+			".obsidian/plugins/example-plugin",
 		]);
 		const enabled = new Set(["vaultwire"]);
 		const app = {
@@ -1335,15 +1335,15 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 	it("accepts only a complete Obsidian callback without duplicate parameters", () => {
 		expect(
 			validateCallbackUrl(
-				"obsidian://ai-bridge/callback?code=private-code&state=private-state",
+				"obsidian://vaultwire/callback?code=private-code&state=private-state",
 			),
 		).toBeUndefined();
 		for (const url of [
 			"https://example.test/callback?code=c&state=s",
 			"obsidian://other/callback?code=c&state=s",
-			"obsidian://ai-bridge/callback?state=s",
-			"obsidian://ai-bridge/callback?code=c&state=s&state=other",
-			"obsidian://ai-bridge/callback?code=c&code=other&state=s",
+			"obsidian://vaultwire/callback?state=s",
+			"obsidian://vaultwire/callback?code=c&state=s&state=other",
+			"obsidian://vaultwire/callback?code=c&code=other&state=s",
 		])
 			expect(() => validateCallbackUrl(url)).toThrow("Invalid device callback");
 	});
@@ -1556,7 +1556,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 
 	it("checks captured callback metadata without returning private values", () => {
 		const callback =
-			"obsidian://ai-bridge/callback?code=private-code&state=private-state";
+			"obsidian://vaultwire/callback?code=private-code&state=private-state";
 		expect(
 			hasCapturedCallback(
 				JSON.stringify({ result: { effects: { url: callback } } }),
@@ -1580,7 +1580,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		).toBe(false);
 		expect(
 			hasCapturedCallback(
-				[callback, "obsidian://ai-bridge/callback?code=other&state=other"],
+				[callback, "obsidian://vaultwire/callback?code=other&state=other"],
 				"page-one",
 				"page-one",
 			),
@@ -1591,17 +1591,17 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		expect(() =>
 			dispatchCapturedCallback(
 				"dev-1",
-				"obsidian-ai-bridge-dev",
+				"vaultwire-dev",
 				"page-two",
 				"page-one",
-				"obsidian://ai-bridge/callback?code=c&state=s",
+				"obsidian://vaultwire/callback?code=c&state=s",
 				{ executable: "/not-run" },
 			),
 		).toThrow("Callback page mismatch");
 		expect(() =>
 			submitConsentAndDispatch(
 				"dev-1",
-				"obsidian-ai-bridge-dev",
+				"vaultwire-dev",
 				"page-two",
 				"page-one",
 				"approve",
@@ -1611,10 +1611,10 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		expect(() =>
 			dispatchCapturedCallback(
 				"dev-3" as never,
-				"obsidian-ai-bridge-dev",
+				"vaultwire-dev",
 				"page-one",
 				"page-one",
-				"obsidian://ai-bridge/callback?code=c&state=s",
+				"obsidian://vaultwire/callback?code=c&state=s",
 				{ executable: "/not-run" },
 			),
 		).toThrow("Unauthorized vault target");
@@ -1622,14 +1622,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 
 	it("rejects unknown acceptance case IDs before host effects", () => {
 		expect(() =>
-			runHostCase(
-				"dev-1",
-				"obsidian-ai-bridge-dev",
-				"AC-2",
-				"controlled",
-				"",
-				"",
-			),
+			runHostCase("dev-1", "vaultwire-dev", "AC-2", "controlled", "", ""),
 		).toThrow("Invalid acceptance case ID");
 	});
 

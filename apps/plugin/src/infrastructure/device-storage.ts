@@ -8,10 +8,7 @@ import {
 import type { App } from "obsidian";
 
 /** Stable localStorage key for the single device-only journal document. */
-const LOCAL_STORAGE_KEY = "obsidian-ai-bridge:device-state:v1";
-/** Device-local target approval for copied Vaultwire settings. */
-const MIGRATION_TARGET_KEY = "obsidian-ai-bridge:vaultwire-migration-target:v1";
-
+const LOCAL_STORAGE_KEY = "vaultwire:device-state:v1";
 /** Adapts one localStorage document and confined payload files to the journal port. */
 export class ObsidianDeviceStorage implements DeviceJournalStorage {
 	constructor(private readonly app: App) {}
@@ -19,19 +16,6 @@ export class ObsidianDeviceStorage implements DeviceJournalStorage {
 	/** Reads the one localStorage document without repairing invalid persisted values. */
 	async readState(): Promise<unknown> {
 		return this.app.loadLocalStorage(LOCAL_STORAGE_KEY);
-	}
-
-	/** Reads the service origin approved by a successful post-migration authorization. */
-	async readMigrationTarget(): Promise<string | null> {
-		const value = this.app.loadLocalStorage(MIGRATION_TARGET_KEY);
-		return typeof value === "string" ? value : null;
-	}
-
-	/** Stores target approval after OAuth installs credentials for that origin. */
-	async confirmMigrationTarget(origin: string): Promise<void> {
-		this.app.saveLocalStorage(MIGRATION_TARGET_KEY, origin);
-		if (this.app.loadLocalStorage(MIGRATION_TARGET_KEY) !== origin)
-			throw new Error("Migration target approval did not verify");
 	}
 
 	/** Replaces the complete localStorage document; the journal verifies read-back. */

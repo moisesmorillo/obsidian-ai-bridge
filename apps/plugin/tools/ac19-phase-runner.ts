@@ -134,7 +134,7 @@ function createPhaseSource(
 		: createPhaseAction(phase);
 	return `(async function(){
 const v=app.vault,adapter=v.adapter;
-if(v.getName()!=="obsidian-ai-bridge-dev-2"||typeof adapter.basePath!=="string"||!adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2")||adapter.getBasePath()!==${targetValue})throw Error("AC19P6_TARGET");
+if(v.getName()!=="vaultwire-dev-2"||typeof adapter.basePath!=="string"||!adapter.basePath.endsWith("/vaults/vaultwire-dev-2")||adapter.getBasePath()!==${targetValue})throw Error("AC19P6_TARGET");
 const phase=${phaseValue},phases=${phaseList},source=${sourceValue},placeholder=${placeholderValue},key="__oabAc19P6",now=Date.now();
 const plugin=app.plugins.plugins?.["vaultwire"];
 const safe=(status,flags={})=>({phase,status,at:now,clientId:plugin?.journal?.snapshot?.().client_id??null,counts:counts(),attentionHash:s?.private?.attentionHash??null,flags,...(s?.taskState==="admission_limited"&&Number.isFinite(s.retryAfterUntil)?{retryAfterMs:Math.max(0,s.retryAfterUntil-now)}:{})});
@@ -248,9 +248,9 @@ export function runAc19Phase(
 ): Ac19PhaseCheckpoint {
 	const target = authorizeTarget(
 		id,
-		resolve(homedir(), "vaults/obsidian-ai-bridge-dev-2"),
+		resolve(homedir(), "vaults/vaultwire-dev-2"),
 	);
-	if (id !== "dev-2" || vaultName !== "obsidian-ai-bridge-dev-2")
+	if (id !== "dev-2" || vaultName !== "vaultwire-dev-2")
 		throw new Error("Unauthorized AC-19 CLI target");
 	const phaseMatch = script.match(/const phase=("[a-z-]+")/);
 	if (!phaseMatch) throw new Error("AC-19 phase script is invalid");

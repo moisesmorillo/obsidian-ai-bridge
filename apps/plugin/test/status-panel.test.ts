@@ -2,7 +2,7 @@ import { TFile } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DeviceSession } from "../src/auth/device-session";
 import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
-import AIBridgePlugin from "../src/main";
+import VaultwirePlugin from "../src/main";
 import { SyncStatusPanel } from "../src/status-panel";
 import { CoexistenceController } from "../src/sync/coexistence";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
@@ -218,7 +218,7 @@ describe("SyncStatusPanel", () => {
 	});
 
 	it("opens only the indexed TFile through an Obsidian leaf", async () => {
-		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const plugin = new VaultwirePlugin({} as never, {} as never);
 		const file = Object.assign(new TFile(), { path: "notes/indexed.md" });
 		const opened: unknown[] = [];
 		let createLeaf = false;
@@ -245,7 +245,7 @@ describe("SyncStatusPanel", () => {
 		["notes/missing.md", "missing"],
 		["notes/folder", "folder"],
 	])("shows a safe Open notice for %s", async (path) => {
-		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const plugin = new VaultwirePlugin({} as never, {} as never);
 		const notices: string[] = [];
 		const opened: unknown[] = [];
 		Reflect.set(plugin, "app", {
@@ -589,7 +589,7 @@ describe("SyncStatusPanel", () => {
 			addEventListener: () => undefined,
 			removeEventListener: () => undefined,
 		});
-		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const plugin = new VaultwirePlugin({} as never, {} as never);
 		const journal = await openJournal();
 		let rejectNextSummary = true;
 		const session = {

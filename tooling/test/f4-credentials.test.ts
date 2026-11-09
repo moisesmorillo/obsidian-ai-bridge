@@ -49,7 +49,7 @@ function access(
 describe("F4 credential file reader", () => {
 	it("uses the dedicated per-user directory outside the vault and repository", () => {
 		expect(defaultF4CredentialRoot("/synthetic/home")).toBe(
-			"/synthetic/home/.config/obsidian-ai-bridge/f4",
+			"/synthetic/home/.config/vaultwire/f4",
 		);
 	});
 

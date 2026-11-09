@@ -3800,7 +3800,7 @@ describe("PublicationController", () => {
 					clearInterval(handle as unknown as ReturnType<typeof setInterval>),
 			},
 		});
-		const target = "/Users/test/vaults/obsidian-ai-bridge-dev-2";
+		const target = "/Users/test/vaults/vaultwire-dev-2";
 		const app = {
 			vault: {
 				adapter: { getBasePath: () => target },

@@ -359,7 +359,7 @@ export class TextApplyEngine {
 		const paths = await this.vault.list();
 		this.assertOpen();
 		for (const path of paths) {
-			const prefix = ".ai-bridge/pre-apply/";
+			const prefix = ".vaultwire/pre-apply/";
 			if (!path.startsWith(prefix) || protectedPaths.has(path)) continue;
 			const hash = path.slice(prefix.length);
 			if (!DevicePayloadHashSchema.safeParse(hash).success) continue;
@@ -448,7 +448,7 @@ export class TextApplyEngine {
 						common,
 						{
 							...common,
-							path: `.ai-bridge/pre-apply/${observedHash}`,
+							path: `.vaultwire/pre-apply/${observedHash}`,
 							purpose: "pre_apply",
 						},
 					],
@@ -637,7 +637,7 @@ export class TextApplyEngine {
 				identity.rev,
 				change.at,
 			);
-			const recoveryPath = `.ai-bridge/pre-apply/${observedHash}`;
+			const recoveryPath = `.vaultwire/pre-apply/${observedHash}`;
 			const localCopy: PendingConflictCopy = {
 				path: conflictPath,
 				source: change.path,
@@ -893,7 +893,7 @@ export class TextApplyEngine {
 		};
 		const recoveryCopy: PendingConflictCopy = {
 			...conflictCopy,
-			path: `.ai-bridge/pre-apply/${observedHash}`,
+			path: `.vaultwire/pre-apply/${observedHash}`,
 			purpose: "pre_apply",
 		};
 		await this.activeJournal.updateApply({
@@ -1300,7 +1300,7 @@ export class TextApplyEngine {
 		if (destinationPending && destination && destinationHash !== change.hash) {
 			const preApplyHash = destinationHash as string;
 			conflictCopies.push({
-				path: `.ai-bridge/pre-apply/${preApplyHash}`,
+				path: `.vaultwire/pre-apply/${preApplyHash}`,
 				source: change.path,
 				side: "rename_destination",
 				mode: "local",
@@ -1888,7 +1888,7 @@ export class TextApplyEngine {
 		}
 		if (addPreApply)
 			nextCopies.push({
-				path: `.ai-bridge/pre-apply/${observedHash}`,
+				path: `.vaultwire/pre-apply/${observedHash}`,
 				source: change.path,
 				side: "path",
 				mode: "local",
@@ -2425,7 +2425,7 @@ export class TextApplyEngine {
 				)
 			) {
 				plans.push({
-					path: `.ai-bridge/pre-apply/${currentHash}`,
+					path: `.vaultwire/pre-apply/${currentHash}`,
 					source: change.path,
 					side: change.op === "rename" ? "rename_destination" : "path",
 					mode: "local",
@@ -3246,7 +3246,7 @@ function conflictName(
 		: path;
 	const slash = conflictSource.lastIndexOf("/");
 	const directory = isSettingsPath
-		? "AI Bridge settings conflicts/"
+		? "Vaultwire settings conflicts/"
 		: slash < 0
 			? ""
 			: conflictSource.slice(0, slash + 1);

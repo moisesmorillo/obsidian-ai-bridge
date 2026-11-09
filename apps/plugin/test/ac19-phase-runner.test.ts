@@ -306,7 +306,7 @@ function createPhaseHost(
 	};
 	const app = {
 		vault: {
-			getName: () => "obsidian-ai-bridge-dev-2",
+			getName: () => "vaultwire-dev-2",
 			adapter: {
 				basePath: target,
 				getBasePath: () => target,
@@ -401,7 +401,7 @@ describe("AC-19 bounded phase runner", () => {
 		expect(Object.keys(generated)).toEqual(AC19_PHASES);
 		for (const phase of AC19_PHASES) {
 			const script = generated[phase];
-			expect(script).toContain('getName()!=="obsidian-ai-bridge-dev-2"');
+			expect(script).toContain('getName()!=="vaultwire-dev-2"');
 			expect(script).toContain("adapter.basePath");
 			expect(script).toContain("getBasePath()");
 			expect(script.length).toBeLessThan(11_000);
@@ -427,12 +427,10 @@ describe("AC-19 bounded phase runner", () => {
 		}));
 		const phaseScript = scripts().preflight;
 		const executable = "/test/obsidian";
-		const result = runAc19Phase(
-			"dev-2",
-			"obsidian-ai-bridge-dev-2",
-			phaseScript,
-			{ executable, invoke },
-		);
+		const result = runAc19Phase("dev-2", "vaultwire-dev-2", phaseScript, {
+			executable,
+			invoke,
+		});
 		expect(result).toMatchObject({
 			phase: "preflight",
 			status: "ready",
@@ -445,12 +443,12 @@ describe("AC-19 bounded phase runner", () => {
 		expect(JSON.stringify(result)).not.toContain("private body");
 		expect(JSON.stringify(result)).not.toContain("secret");
 		expect(invoke).toHaveBeenNthCalledWith(1, executable, [
-			"vault=obsidian-ai-bridge-dev-2",
+			"vault=vaultwire-dev-2",
 			"vault",
 			"info=path",
 		]);
 		expect(invoke).toHaveBeenNthCalledWith(2, executable, [
-			"vault=obsidian-ai-bridge-dev-2",
+			"vault=vaultwire-dev-2",
 			"eval",
 			`code=${phaseScript}`,
 		]);
@@ -465,7 +463,7 @@ describe("AC-19 bounded phase runner", () => {
 				: "private service body and token",
 		}));
 		expect(
-			runAc19Phase("dev-2", "obsidian-ai-bridge-dev-2", scripts().seed, {
+			runAc19Phase("dev-2", "vaultwire-dev-2", scripts().seed, {
 				invoke,
 			}),
 		).toMatchObject({ phase: "seed", status: "uncertain" });
@@ -484,7 +482,7 @@ describe("AC-19 bounded phase runner", () => {
 						},
 			);
 			expect(
-				runAc19Phase("dev-2", "obsidian-ai-bridge-dev-2", scripts().seed, {
+				runAc19Phase("dev-2", "vaultwire-dev-2", scripts().seed, {
 					invoke,
 				}),
 			).toMatchObject({ phase: "seed", status: "uncertain" });
@@ -499,7 +497,7 @@ describe("AC-19 bounded phase runner", () => {
 				: `OAB8AC19P6:${JSON.stringify({ phase: "evict", status: "passed" })}`,
 		}));
 		expect(
-			runAc19Phase("dev-2", "obsidian-ai-bridge-dev-2", scripts().seed, {
+			runAc19Phase("dev-2", "vaultwire-dev-2", scripts().seed, {
 				invoke,
 			}),
 		).toMatchObject({ phase: "seed", status: "uncertain" });
@@ -529,7 +527,7 @@ describe("AC-19 bounded phase runner", () => {
 		let journalReads = 0;
 		const app = {
 			vault: {
-				getName: () => "obsidian-ai-bridge-dev-2",
+				getName: () => "vaultwire-dev-2",
 				adapter: { basePath: target, getBasePath: () => target },
 				getAbstractFileByPath: () => ({ path: "fixture" }),
 			},
@@ -584,7 +582,7 @@ describe("AC-19 bounded phase runner", () => {
 		};
 		const app = {
 			vault: {
-				getName: () => "obsidian-ai-bridge-dev-2",
+				getName: () => "vaultwire-dev-2",
 				adapter: { basePath: target, getBasePath: () => target },
 			},
 			plugins: { plugins: { vaultwire: plugin } },
@@ -706,7 +704,7 @@ describe("AC-19 bounded phase runner", () => {
 		const files = new Map<string, object>();
 		const app = {
 			vault: {
-				getName: () => "obsidian-ai-bridge-dev-2",
+				getName: () => "vaultwire-dev-2",
 				adapter: {
 					basePath: target,
 					getBasePath: () => target,
@@ -968,7 +966,7 @@ describe("AC-19 bounded phase runner", () => {
 		};
 		const app = {
 			vault: {
-				getName: () => "obsidian-ai-bridge-dev-2",
+				getName: () => "vaultwire-dev-2",
 				adapter: {
 					basePath: target,
 					getBasePath: () => target,

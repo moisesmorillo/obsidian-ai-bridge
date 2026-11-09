@@ -91,15 +91,12 @@ describe("F4 collection CLI", () => {
 	it("fetches the fixed owner route without following redirects and prints only the safe projection", async () => {
 		const context = dependencies(jsonResponse(measurementResponse));
 		const exitCode = await runF4CollectionCli(
-			[
-				"--cookie-file",
-				"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-			],
+			["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 			context.deps,
 		);
 		expect(exitCode).toBe(0);
 		expect(context.calls.url).toBe(
-			"https://obsidian-bridge.mmorillo.dev/owner/measurements",
+			"https://vaultwire.mmorillo.dev/owner/measurements",
 		);
 		expect(context.calls.init?.redirect).toBe("manual");
 		expect(context.calls.init?.headers).toMatchObject({
@@ -125,10 +122,7 @@ describe("F4 collection CLI", () => {
 		);
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				context.deps,
 			),
 		).resolves.toBe(0);
@@ -146,10 +140,7 @@ describe("F4 collection CLI", () => {
 		const partialContext = dependencies(jsonResponse(partialBounds));
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				partialContext.deps,
 			),
 		).resolves.toBe(0);
@@ -180,10 +171,7 @@ describe("F4 collection CLI", () => {
 		const context = dependencies(jsonResponse(feedOnlyResponse));
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				context.deps,
 			),
 		).resolves.toBe(0);
@@ -227,10 +215,7 @@ describe("F4 collection CLI", () => {
 		const context = dependencies(jsonResponse(rollbackResponse));
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				context.deps,
 			),
 		).resolves.toBe(0);
@@ -251,10 +236,7 @@ describe("F4 collection CLI", () => {
 		const context = dependencies(jsonResponse(response));
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				context.deps,
 			),
 		).resolves.toBe(0);
@@ -293,10 +275,7 @@ describe("F4 collection CLI", () => {
 		const context = dependencies(jsonResponse(unknown));
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				context.deps,
 			),
 		).resolves.toBe(0);
@@ -319,7 +298,7 @@ describe("F4 collection CLI", () => {
 				runF4CollectionCli(
 					[
 						"--cookie-file",
-						"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
+						"/synthetic/home/.config/vaultwire/f4/access.cookie",
 					],
 					context.deps,
 				),
@@ -336,10 +315,7 @@ describe("F4 collection CLI", () => {
 		);
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				context.deps,
 			),
 		).resolves.toBe(1);
@@ -356,10 +332,7 @@ describe("F4 collection CLI", () => {
 		);
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				redirect.deps,
 			),
 		).resolves.toBe(1);
@@ -374,10 +347,7 @@ describe("F4 collection CLI", () => {
 		);
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				large.deps,
 			),
 		).resolves.toBe(1);
@@ -396,10 +366,7 @@ describe("F4 collection CLI", () => {
 		);
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				context.deps,
 			),
 		).resolves.toBe(1);
@@ -412,10 +379,7 @@ describe("F4 collection CLI", () => {
 			"CF_Authorization=bad; other=secret";
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				malformed.deps,
 			),
 		).resolves.toBe(1);
@@ -426,10 +390,7 @@ describe("F4 collection CLI", () => {
 		});
 		await expect(
 			runF4CollectionCli(
-				[
-					"--cookie-file",
-					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
-				],
+				["--cookie-file", "/synthetic/home/.config/vaultwire/f4/access.cookie"],
 				failed.deps,
 			),
 		).resolves.toBe(1);

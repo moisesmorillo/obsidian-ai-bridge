@@ -22,7 +22,7 @@ bun run --filter @vaultwire/plugin build
 
 The branch command must report `main`. Record the revision from `git rev-parse HEAD` as the build revision. The build writes `apps/plugin/dist/main.js` and `apps/plugin/dist/manifest.json`.
 
-The supervisor creates `.obsidian/plugins/ai-bridge` in the real vault and copies those two files into it. The supervisor performs these steps for the owner. Do not install from this guide alone.
+The supervisor installs the Vaultwire plugin in the authorized test vault. The supervisor performs these steps for the owner. Do not install from this guide alone.
 
 Keep the plugin disabled until the supervisor confirms a safe activation sequence. That sequence must enable coexistence before any plugin sync effect. Do not enable or use the plugin while coexistence is off. If the approved build does not support this sequence, stop before trial use and ask the supervisor to resolve it. Do not infer control names or behavior from this guide.
 
@@ -40,7 +40,7 @@ Pause stops publishing and applying but retains queues and confirmation items. R
 
 ## Collect service measurements
 
-The supervisor creates `$HOME/.config/obsidian-ai-bridge/f4/access.cookie` outside the repository and vault. Keep the directory private with mode `700` and the file private with mode `600`. The reader rejects group or other permission bits on the credential root, its subdirectories, and the cookie file. It does not check permission modes on ancestors above the dedicated root.
+The supervisor creates `$HOME/.config/vaultwire/f4/access.cookie` outside the repository and vault. Keep the directory private with mode `700` and the file private with mode `600`. The reader rejects group or other permission bits on the credential root, its subdirectories, and the cookie file. It does not check permission modes on ancestors above the dedicated root.
 
 The file holds one line in this exact form, with an optional final line feed:
 
@@ -53,7 +53,7 @@ Use the `CF_Authorization` cookie value for the approved service. Do not add `Co
 Run the bounded collector from the repository root:
 
 ```sh
-bun run --filter @vaultwire/tooling collect:f4 -- --cookie-file "$HOME/.config/obsidian-ai-bridge/f4/access.cookie"
+bun run --filter @vaultwire/tooling collect:f4 -- --cookie-file "$HOME/.config/vaultwire/f4/access.cookie"
 ```
 
 The command sends one `GET` request to the fixed HTTPS origin at `/owner/measurements`. It rejects redirects and response bodies above 256 KiB. It validates the response with the public protocol schema. It prints only a safe summary. A 401 means Access did not authorize the request. A 403 means the configured owner check refused it. Other errors use static text.

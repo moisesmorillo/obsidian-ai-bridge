@@ -44,8 +44,8 @@ export class ObsidianCredentialStorage implements CredentialStorage {
 		deviceId: string,
 	) {
 		const canonicalDeviceId = deviceId.toLowerCase();
-		this.secretId = `oab-credential-${canonicalDeviceId}`;
-		this.localKey = `obsidian-ai-bridge:credential:${canonicalDeviceId}`;
+		this.secretId = `vaultwire-credential-${canonicalDeviceId}`;
+		this.localKey = `vaultwire:credential:${canonicalDeviceId}`;
 		this.warning = app.secretStorage
 			? null
 			: "tokens stored unencrypted on this device";

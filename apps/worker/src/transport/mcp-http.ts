@@ -46,17 +46,19 @@ const MCP_MAX_DEPTH = 64;
 const MCP_MAX_STRUCTURAL_TOKENS = 65_536;
 /** Bound comma separators within one individual container. */
 const MCP_MAX_CONTAINER_ITEMS = 16_384;
-let mcpEnvelopeActive = false;
+/** Maximum concurrent MCP envelopes before admission rejects a request. */
+const MCP_ENVELOPE_LIMIT = 8;
+let activeMcpEnvelopes = 0;
 
 /** Hold one MCP request across body demand, dispatch, response production, and cancellation. */
 function acquireMcpEnvelope(): (() => void) | undefined {
-	if (mcpEnvelopeActive) return undefined;
-	mcpEnvelopeActive = true;
+	if (activeMcpEnvelopes >= MCP_ENVELOPE_LIMIT) return undefined;
+	activeMcpEnvelopes += 1;
 	let released = false;
 	return () => {
 		if (released) return;
 		released = true;
-		mcpEnvelopeActive = false;
+		activeMcpEnvelopes -= 1;
 	};
 }
 
@@ -432,7 +434,7 @@ export async function handleMcpHttp(
 				release();
 				return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
 			}
-			releaseRead = tryAcquireReadSlot();
+			releaseRead = tryAcquireReadSlot("mcp");
 			deadlineLease = releaseRead;
 			if (!releaseRead) {
 				releaseEnvelope();

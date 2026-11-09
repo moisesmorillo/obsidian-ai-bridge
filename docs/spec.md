@@ -339,7 +339,7 @@ Unknown storage or authority results retain admission until its original deadlin
 
 ### 6.5 Request limits
 
-Four body-bearing mutations share synchronous slots across clients, vault hosts, and router instances in one Worker isolate. PUT, append, rename, and restore use this budget. The fifth request receives `429 admission_limited` and `Retry-After: 1`, without body demand or durable reservation.
+Eight body-bearing mutations share synchronous slots across clients, vault hosts, and router instances in one Worker isolate. PUT, append, rename, and restore use this budget. A request beyond this count receives `429 admission_limited` without body demand or durable reservation.
 
 A slot covers body handling, storage, authority calls, cleanup, and application-owned response preparation and production. Operation cleanup and response production must both settle before slot reuse. Response production ends after producer EOF or cancellation cleanup, not after the final chunk enters a stream.
 
@@ -349,9 +349,11 @@ Mutation failure responses preserve complete authorized text through bounded JSO
 
 Native body reads request at most 65,536 bytes at a time. Raw inline text bodies and decoded note text remain limited to 1,000,000 bytes. The REST heading-append JSON body has a separate 6,100,000-byte wire limit for JSON escaping. Inline readers allocate at most their per-request wire limit and do not retain borrowed chunks. Blob reads and writes use bounded native streams, without a complete blob buffer.
 
-Four authoritative reads share separate isolate-local slots across routes, clients, vault hosts, and router instances. The fifth read returns `429 admission_limited` and `Retry-After: 1` before metadata or R2 demand.
+REST reads use four isolate-local slots. MCP reads use a separate pool of eight slots. MCP reads cannot consume REST capacity. Each lease expires after 60,000 ms. Admission, completion checks, and capacity observations sweep overdue leases so stopped request timers cannot retain logical capacity. Expiry frees logical capacity but does not prove that physical source work stopped. REST reads beyond four and MCP reads beyond eight return bounded admission refusals before metadata or R2 demand.
 
-Each successful read keeps one durable admission through response production and cleanup. Metadata responses demand one bounded batch at a time. Response encoding never creates a complete escaped inline string or JSON page. Cancellation joins started RPC, storage reads, and cleanup before slot reuse. Unknown authority results keep the original admission deadline. Producer EOF does not prove client receipt or native release.
+Each successful read keeps one durable admission through response production and cleanup. Metadata responses demand one bounded batch at a time. Response encoding never creates a complete escaped inline string or JSON page. Cancellation joins started RPC, storage reads, and cleanup before physical ownership ends. Unknown authority results keep the original admission deadline. Producer EOF does not prove client receipt or native release.
+
+These count limits do not establish an aggregate memory bound. MCP envelopes and body operations do not yet reserve weighted byte allowances. Total V8 heap and native memory use remain unproven. A follow-up task must add byte admission before further concurrency increases.
 
 Body ≤ 26 MB (25 MB blob + headers). Manifest page ≤ 256 rows. Feed page ≤ 1,000 entries. Search ≤ 50 results. Range reads ≤ 1 MB per response. Concurrency per client: the plugin runs at most 4 in-flight requests; the Worker returns `429` with `Retry-After` above 16 concurrent requests per client.
 

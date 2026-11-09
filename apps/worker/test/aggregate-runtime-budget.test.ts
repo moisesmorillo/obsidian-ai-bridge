@@ -45,14 +45,21 @@ function holdReadSlot(): () => void {
 }
 
 describe("aggregate runtime budgets", () => {
-	it("keeps four body and four read slots independent in one isolate", () => {
-		const bodyReleases = Array.from({ length: 4 }, holdBodySlot);
-		const readReleases = Array.from({ length: 4 }, holdReadSlot);
+	it("keeps eight body, four REST, and eight MCP read slots independent", () => {
+		const bodyReleases = Array.from({ length: 8 }, holdBodySlot);
+		const restReleases = Array.from({ length: 4 }, holdReadSlot);
+		const mcpReleases = Array.from({ length: 8 }, () => {
+			const release = tryAcquireReadSlot("mcp");
+			if (!release) throw new Error("Expected an available MCP read slot");
+			return release;
+		});
 		try {
 			expect(tryAcquireBodySlot()).toBeUndefined();
 			expect(tryAcquireReadSlot()).toBeUndefined();
+			expect(tryAcquireReadSlot("mcp")).toBeUndefined();
 		} finally {
-			for (const release of readReleases) release();
+			for (const release of restReleases) release();
+			for (const release of mcpReleases) release();
 			for (const release of bodyReleases) release();
 		}
 	});

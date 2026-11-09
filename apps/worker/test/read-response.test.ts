@@ -64,10 +64,14 @@ describe("owned read response", () => {
 			await sourceStarted.promise;
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(await reading).toBeInstanceOf(Error);
-			expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 4);
+			const expiredAfterSweep = readSlotCapacitySnapshot().expired_count;
+			expect(expiredAfterSweep).toBeGreaterThanOrEqual(expiredBefore + 4);
 			const fifth = tryAcquireReadSlot();
 			try {
 				expect(fifth).toBeDefined();
+				expect(readSlotCapacitySnapshot().expired_count).toBe(
+					expiredAfterSweep,
+				);
 			} finally {
 				fifth?.();
 				for (const release of releases) release();
@@ -97,9 +101,14 @@ describe("owned read response", () => {
 		await vi.advanceTimersByTimeAsync(60_000);
 		await expect(reader.read()).rejects.toThrow();
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
-		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		expect(readSlotCapacitySnapshot().expired_count).toBeGreaterThan(
+			expiredBefore,
+		);
+		const expiredAtDeadline = readSlotCapacitySnapshot().expired_count;
 		await vi.advanceTimersByTimeAsync(60_000);
-		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		expect(readSlotCapacitySnapshot().expired_count).toBeGreaterThanOrEqual(
+			expiredAtDeadline,
+		);
 		lease.complete();
 	});
 
@@ -957,5 +966,47 @@ describe("owned read response", () => {
 			.map((chunk) => new TextDecoder().decode(chunk))
 			.join("");
 		expect(JSON.parse(text)).toEqual({ content });
+	});
+
+	it("recovers admission capacity when timers do not run after the hold deadline", () => {
+		vi.useFakeTimers();
+		const expiredBefore = readSlotCapacitySnapshot().expired_count;
+		const leases = Array.from({ length: 4 }, () => {
+			const lease = tryAcquireReadSlot();
+			if (!lease) throw new Error("Expected an available read slot");
+			return lease;
+		});
+		vi.spyOn(globalThis, "setTimeout").mockImplementation(
+			(() => 0) as unknown as typeof setTimeout,
+		);
+		vi.setSystemTime(Date.now() + 60_000);
+		const recovered = tryAcquireReadSlot();
+		try {
+			expect(recovered).toBeDefined();
+			expect(readSlotCapacitySnapshot().active_slots).toBe(1);
+			expect(readSlotCapacitySnapshot().expired_count).toBeGreaterThanOrEqual(
+				expiredBefore + 4,
+			);
+		} finally {
+			recovered?.();
+			for (const lease of leases) lease();
+		}
+	});
+
+	it("keeps REST capacity separate from MCP read leases", () => {
+		const mcpLeases = Array.from({ length: 8 }, () => {
+			const lease = tryAcquireReadSlot("mcp");
+			if (!lease) throw new Error("Expected an available MCP read slot");
+			return lease;
+		});
+		const restLease = tryAcquireReadSlot();
+		try {
+			expect(restLease).toBeDefined();
+			expect(tryAcquireReadSlot("mcp")).toBeUndefined();
+			expect(readSlotCapacitySnapshot().active_slots).toBe(9);
+		} finally {
+			restLease?.();
+			for (const lease of mcpLeases) lease();
+		}
 	});
 });

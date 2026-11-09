@@ -1,5 +1,6 @@
 /** Maximum body and response lifetimes shared by callers in this isolate. */
-const BODY_SLOT_LIMIT = 4;
+/** Maximum concurrent body-bearing operations in one Worker isolate. */
+const BODY_SLOT_LIMIT = 8;
 let activeBodySlots = 0;
 
 /**

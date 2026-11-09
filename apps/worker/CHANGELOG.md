@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/moisesmorillo/vaultwire/compare/worker-v0.6.0...worker-v1.0.0) (2026-11-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* complete Vaultwire rename and selectable OAuth consent ([#143](https://github.com/moisesmorillo/vaultwire/issues/143))
+
+### Features
+
+* complete Vaultwire rename and selectable OAuth consent ([#143](https://github.com/moisesmorillo/vaultwire/issues/143)) ([433c02f](https://github.com/moisesmorillo/vaultwire/commit/433c02f8f23d9398d3aeaee63b33069c14b9972f))
+
 ## [0.6.0](https://github.com/moisesmorillo/vaultwire/compare/worker-v0.5.0...worker-v0.6.0) (2026-11-09)
 
 

@@ -1,4 +1,4 @@
-import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
+import { MEASUREMENT_LIMITS } from "@vaultwire/protocol";
 
 /** Safe result freshness state retained from the service response. */
 export type MeasurementStatus = "observed" | "stale" | "unknown";

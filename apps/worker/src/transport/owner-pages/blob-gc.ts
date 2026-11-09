@@ -1,4 +1,4 @@
-import type { BlobGcPreview, BlobGcStatus } from "@obsidian-ai-bridge/protocol";
+import type { BlobGcPreview, BlobGcStatus } from "@vaultwire/protocol";
 import { formatBytes, formatCount } from "@worker/transport/owner-pages/format";
 import type { OwnerServiceMetadata } from "@worker/transport/owner-pages/shell";
 import { renderOwnerShell } from "@worker/transport/owner-pages/shell";

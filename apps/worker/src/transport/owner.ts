@@ -4,7 +4,7 @@ import type {
 	ExportOperationResult,
 	ExportSnapshot,
 	MeasurementResponse,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	BlobGcOperationFailureSchema,
 	BlobGcPreviewSchema,
@@ -13,7 +13,7 @@ import {
 	ExportSnapshotsSchema,
 	MeasurementResponseSchema,
 	OwnerExportRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type {
 	ClientRegistryGateway,
 	OwnerCleanupExternalCallBudget,

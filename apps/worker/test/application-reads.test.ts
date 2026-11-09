@@ -7,7 +7,7 @@ import {
 	type MetadataBatchRequest,
 	type MetadataManifestRow,
 	parseETag,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	openChangesRead,
 	openHistoryRead,

@@ -1,7 +1,7 @@
 import type {
 	AdmissionCompletion,
 	AuthorizationContext,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import type { TextVaultGateway } from "@worker/application/text-files";

@@ -16,8 +16,8 @@ import type {
 	TextPayload,
 	TextReadRequest,
 	TextReadResult,
-} from "@obsidian-ai-bridge/protocol";
-import { EMPTY_PAYLOAD_HASH } from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
+import { EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
 import type { BlobVaultGateway } from "@worker/application/blobs";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";

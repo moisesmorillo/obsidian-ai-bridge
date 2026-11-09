@@ -9,12 +9,12 @@ import {
 	SUPPORTED_PROTOCOL_VERSIONS,
 	type Transport,
 } from "@modelcontextprotocol/server";
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
 import {
 	encodeFileFailure,
 	type FileFailure,
 	McpToolErrorSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type {
 	McpNotesGateway,

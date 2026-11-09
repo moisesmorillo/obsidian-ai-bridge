@@ -3,7 +3,7 @@ import type {
 	ListClientGrantsResult,
 	ListClientsResult,
 	RegisterClientGrantRequest,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	BeginClientConsentResultSchema,
 	ListClientGrantsResultSchema,
@@ -11,7 +11,7 @@ import {
 	OwnerCsrfConsumeRequestSchema,
 	OwnerCsrfStateRequestSchema,
 	RegisterClientGrantRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { vaultSchema } from "@worker/infrastructure/sqlite/schema-model";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";

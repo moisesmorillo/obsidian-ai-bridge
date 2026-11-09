@@ -3,7 +3,7 @@ import type {
 	FileCommand,
 	OperationDescriptor,
 	RenameReservation,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AppendUnderHeadingBodySchema,
 	EpochSchema,
@@ -15,7 +15,7 @@ import {
 	RenameRequestSchema,
 	RenameReservationSchema,
 	RestoreRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { FileOperationDenied } from "@worker/application/files";
 import {
 	executeFileCommand,

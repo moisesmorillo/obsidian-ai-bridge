@@ -3,11 +3,8 @@ import type {
 	FileHttpFailureInput,
 	ManifestEntry,
 	ManifestPage,
-} from "@obsidian-ai-bridge/protocol";
-import {
-	encodeFileFailure,
-	ReadQuerySchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
+import { encodeFileFailure, ReadQuerySchema } from "@vaultwire/protocol";
 import {
 	type ReadSlotLease,
 	tryAcquireReadSlot,

@@ -1,4 +1,4 @@
-import type { DeviceState } from "@obsidian-ai-bridge/protocol";
+import type { DeviceState } from "@vaultwire/protocol";
 
 /** One validated journal attention item used to match a dismissal to exact evidence. */
 export type DeviceAttention = DeviceState["attention"][number];

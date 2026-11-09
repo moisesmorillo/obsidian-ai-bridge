@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { readViteAliases } from "@obsidian-ai-bridge/tooling/vite-aliases";
+import { readViteAliases } from "@vaultwire/tooling/vite-aliases";
 import { defineConfig } from "vitest/config";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));

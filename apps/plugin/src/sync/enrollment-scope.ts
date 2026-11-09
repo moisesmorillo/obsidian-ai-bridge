@@ -1,8 +1,4 @@
-import {
-	classifyFilePath,
-	PathSchema,
-	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+import { classifyFilePath, PathSchema, pathKey } from "@vaultwire/protocol";
 
 /** Per-device opt-in switches for the three supported Obsidian settings categories. */
 export interface SettingsSyncPolicy {
@@ -118,7 +114,7 @@ function settingsCategory(
 	return null;
 }
 
-/** Keeps workspace, AI Bridge, cache, graph, and dependency trees outside all categories. */
+/** Keeps workspace, Vaultwire plugin, cache, graph, and dependency trees outside all categories. */
 function isHardExcludedSettingsPath(segments: string[]): boolean {
 	const relative = segments.slice(1);
 	const first = relative[0] ?? "";

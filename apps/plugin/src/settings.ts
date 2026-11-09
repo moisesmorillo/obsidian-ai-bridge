@@ -72,13 +72,13 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		this.settingsGeneration += 1;
 		containerEl.empty();
 		this.authorizationElement = null;
-		containerEl.createEl("h2", { text: "AI Bridge" });
+		containerEl.createEl("h2", { text: "Vaultwire" });
 		new Setting(containerEl)
 			.setName("Server URL")
 			.setDesc("HTTPS service origin used for enrollment and requests.")
 			.addText((text) => {
 				text
-					.setPlaceholder("https://obsidian-bridge.mmorillo.dev")
+					.setPlaceholder("https://vaultwire.mmorillo.dev")
 					.setValue(this.settings.serverUrl);
 				text.inputEl.addEventListener("blur", async () => {
 					const nextUrl = text.getValue().trim();

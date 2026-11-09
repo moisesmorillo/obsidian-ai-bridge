@@ -7,7 +7,7 @@ import {
 	IdempotencyKeySchema,
 	pathKey,
 	TextMutationIntentSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { SearchVaultGateway } from "@worker/application/search";
 import { readSearch } from "@worker/application/search";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";

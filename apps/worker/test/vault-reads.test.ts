@@ -3,7 +3,7 @@ import {
 	type AuthorizationContext,
 	EMPTY_PAYLOAD_HASH,
 	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import { describe, expect, it } from "vitest";

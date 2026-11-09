@@ -2,13 +2,13 @@ import type {
 	AuthorizationContext,
 	FileHttpFailureInput,
 	SearchResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	encodeFileFailure,
 	SearchLimitSchema,
 	SearchRequestSchema,
 	searchQueryFailure,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	tryAcquireReadSlot,
 	waitForReadSlotWork,

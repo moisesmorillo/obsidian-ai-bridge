@@ -6,7 +6,7 @@ import {
 	RenameRequestSchema,
 	RenameReservationSchema,
 	RestoreRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 describe("canonical history contracts", () => {

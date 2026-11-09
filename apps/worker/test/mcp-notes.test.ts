@@ -1,4 +1,4 @@
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import { readMcpNote } from "@worker/application/mcp-notes";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";

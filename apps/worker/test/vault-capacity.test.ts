@@ -4,7 +4,7 @@ import {
 	formatETag,
 	IdempotencyKeySchema,
 	TextMutationIntentSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { BlobStore } from "@worker/application/blobs";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import {

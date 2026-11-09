@@ -5,14 +5,14 @@ import type {
 	OperationDescriptor,
 	OperationIntent,
 	VaultScope,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AdmissionSizeFailureKindSchema,
 	AuthorizationContextSchema,
 	DescriptorPreparationSchema,
 	OperationPreparationSchema,
 	parseETag,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 
 /**
  * A normalized immutable snapshot for reservation checks. The descriptor fingerprint binds client identity and reservation metadata.

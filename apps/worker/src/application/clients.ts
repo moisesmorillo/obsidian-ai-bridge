@@ -1,7 +1,7 @@
 import type {
 	ListClientGrantsResult,
 	ListClientsResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 
 /** Application capability for one selected vault's durable owner registry. */
 export interface ClientRegistryGateway {

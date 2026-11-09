@@ -5,7 +5,7 @@ import {
 	encodeFileFailure,
 	selectByteRange,
 	type TextReadRequest,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type {
 	BlobContentStore,
 	BlobVaultGateway,

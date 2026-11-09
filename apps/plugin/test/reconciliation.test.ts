@@ -4,7 +4,7 @@ import {
 	type PendingConflictCopy,
 	parseETag,
 	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
 import {

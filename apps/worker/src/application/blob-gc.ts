@@ -1,8 +1,5 @@
-import type { BlobGcPreview, BlobGcStatus } from "@obsidian-ai-bridge/protocol";
-import {
-	BlobGcPreviewSchema,
-	BlobGcStatusSchema,
-} from "@obsidian-ai-bridge/protocol";
+import type { BlobGcPreview, BlobGcStatus } from "@vaultwire/protocol";
+import { BlobGcPreviewSchema, BlobGcStatusSchema } from "@vaultwire/protocol";
 
 /** Maximum R2 pages read during one owner preview. */
 export const BLOB_GC_MAX_LIST_PAGES = 32;

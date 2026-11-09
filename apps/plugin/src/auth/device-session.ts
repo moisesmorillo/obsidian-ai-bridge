@@ -1,3 +1,11 @@
+import type {
+	CredentialStorage,
+	CredentialWriteTransaction,
+} from "@plugin/infrastructure/credential-storage";
+import type {
+	OAuthTransport,
+	OAuthTransportResponse,
+} from "@plugin/infrastructure/oauth-transport";
 import {
 	ClientIdSchema,
 	DEVICE_CALLBACK_URI,
@@ -8,15 +16,7 @@ import {
 	type DeviceTokenResponse,
 	DeviceTokenResponseSchema,
 	VaultScopeSchema,
-} from "@obsidian-ai-bridge/protocol";
-import type {
-	CredentialStorage,
-	CredentialWriteTransaction,
-} from "@plugin/infrastructure/credential-storage";
-import type {
-	OAuthTransport,
-	OAuthTransportResponse,
-} from "@plugin/infrastructure/oauth-transport";
+} from "@vaultwire/protocol";
 
 /** Permissions requested by a device during the approved enrollment flow. */
 const SCOPES = VaultScopeSchema.options;

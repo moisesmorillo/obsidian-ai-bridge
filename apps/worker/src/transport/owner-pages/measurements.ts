@@ -1,4 +1,4 @@
-import type { MeasurementResponse } from "@obsidian-ai-bridge/protocol";
+import type { MeasurementResponse } from "@vaultwire/protocol";
 import {
 	formatBytes,
 	formatCount,

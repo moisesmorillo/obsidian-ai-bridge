@@ -1,14 +1,3 @@
-import type {
-	DeviceBaseEntry,
-	DevicePrecondition,
-	PendingOperation,
-} from "@obsidian-ai-bridge/protocol";
-import {
-	DevicePayloadHashSchema,
-	PathSchema,
-	parseETag,
-	pathKey,
-} from "@obsidian-ai-bridge/protocol";
 import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import {
@@ -26,6 +15,17 @@ import type {
 	TextApplyEngine,
 	TextVault,
 } from "@plugin/sync/text-apply";
+import type {
+	DeviceBaseEntry,
+	DevicePrecondition,
+	PendingOperation,
+} from "@vaultwire/protocol";
+import {
+	DevicePayloadHashSchema,
+	PathSchema,
+	parseETag,
+	pathKey,
+} from "@vaultwire/protocol";
 
 /** Validated text authority returned for a pinned or current server read. */
 export type PublicationRead =

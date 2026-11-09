@@ -147,12 +147,12 @@ async function createPublicConsumerFixture(root: string): Promise<string> {
 	delete packageJson.imports;
 	await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
-	const moduleDirectory = join(root, "node_modules/@obsidian-ai-bridge");
+	const moduleDirectory = join(root, "node_modules/@vaultwire");
 	await mkdir(moduleDirectory, { recursive: true });
 	await symlink(fixturePackage, join(moduleDirectory, "protocol"), "dir");
 	await writeFile(
 		join(root, "consumer.ts"),
-		'import { PathSchema, formatETag, parseETag } from "@obsidian-ai-bridge/protocol";\n' +
+		'import { PathSchema, formatETag, parseETag } from "@vaultwire/protocol";\n' +
 			'const path = PathSchema.parse("Notes/example.md");\n' +
 			'if (path !== "Notes/example.md") throw new Error("Unexpected normalized path");\n' +
 			'const epoch = "a".repeat(32);\n' +
@@ -261,7 +261,7 @@ describe("workspace import aliases", () => {
 			const allowedPath = join(root, "allowed.ts");
 			await writeFile(
 				allowedPath,
-				'import worker from "@worker/index"; import { readFileSync } from "node:fs"; import { formatETag } from "@obsidian-ai-bridge/protocol"; void worker; void readFileSync; void formatETag;',
+				'import worker from "@worker/index"; import { readFileSync } from "node:fs"; import { formatETag } from "@vaultwire/protocol"; void worker; void readFileSync; void formatETag;',
 			);
 			const allowed = lint(allowedPath);
 			expect(allowed.status, allowed.stdout + allowed.stderr).toBe(0);

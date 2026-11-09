@@ -16,7 +16,7 @@ import {
 	DevicePreconditionSchema,
 	formatETag,
 	type PendingOperation,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
@@ -1312,11 +1312,11 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 
 	it("accepts only a canonical authorization URL without callback credentials", () => {
 		const url =
-			"https://obsidian-bridge.mmorillo.dev/authorize?response_type=code&client_id=public-client&state=random-state&code_challenge=challenge&code_challenge_method=S256";
+			"https://vaultwire.mmorillo.dev/authorize?response_type=code&client_id=public-client&state=random-state&code_challenge=challenge&code_challenge_method=S256";
 		expect(validateAuthorizationUrl(url)).toBe(url);
 		expect(() =>
 			validateAuthorizationUrl(
-				"https://obsidian-bridge.mmorillo.dev/authorize?code=callback-code",
+				"https://vaultwire.mmorillo.dev/authorize?code=callback-code",
 			),
 		).toThrow("Invalid authorization URL");
 		expect(() =>

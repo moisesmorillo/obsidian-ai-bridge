@@ -1,7 +1,4 @@
-import type {
-	AuthorizationContext,
-	FileCommand,
-} from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext, FileCommand } from "@vaultwire/protocol";
 import {
 	EMPTY_PAYLOAD_HASH,
 	FileCommandSchema,
@@ -11,7 +8,7 @@ import {
 	pathKey,
 	RenameReservationSchema,
 	TextMutationIntentSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	executeFileCommand,
 	prepareHistoryCommand,

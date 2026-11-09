@@ -2,7 +2,7 @@ import type {
 	AuthorizationContext,
 	OperationDescriptor,
 	OperationIntent,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AdmissionDenied,
 	assertAdmissionAllowed,

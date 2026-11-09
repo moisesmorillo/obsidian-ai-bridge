@@ -2,7 +2,7 @@ import {
 	type AuthorizationContext,
 	EMPTY_PAYLOAD_HASH,
 	type TextReadRequest,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import type { BlobContentStore } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";

@@ -1,9 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
-import {
-	DEVICE_CALLBACK_URI,
-	VaultScopeSchema,
-} from "@obsidian-ai-bridge/protocol";
+import { DEVICE_CALLBACK_URI, VaultScopeSchema } from "@vaultwire/protocol";
 import type { Env } from "@worker/env";
 import productionWorker from "@worker/index";
 import {

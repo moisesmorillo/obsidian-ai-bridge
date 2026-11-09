@@ -1,10 +1,7 @@
-import {
-	type TextPayload,
-	TextPayloadSchema,
-} from "@obsidian-ai-bridge/protocol";
+import { type TextPayload, TextPayloadSchema } from "@vaultwire/protocol";
 import { FileOperationDenied } from "@worker/application/files";
 
-export type { TextPayload } from "@obsidian-ai-bridge/protocol";
+export type { TextPayload } from "@vaultwire/protocol";
 
 /** Decodes valid bounded UTF-8 and hashes the exact source bytes. */
 export async function prepareTextPayload(

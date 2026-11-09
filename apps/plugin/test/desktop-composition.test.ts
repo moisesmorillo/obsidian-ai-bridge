@@ -1,4 +1,4 @@
-import type { DeviceState } from "@obsidian-ai-bridge/protocol";
+import type { DeviceState } from "@vaultwire/protocol";
 import { TFile, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import type { DeviceSession } from "../src/auth/device-session";

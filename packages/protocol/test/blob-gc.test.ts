@@ -4,7 +4,7 @@ import {
 	BlobGcStatusSchema,
 	encodeFileFailure,
 	FileFailureSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 describe("blob garbage collection contracts", () => {

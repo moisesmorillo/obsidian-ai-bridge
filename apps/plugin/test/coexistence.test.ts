@@ -1,4 +1,4 @@
-import { DeviceStateSchema } from "@obsidian-ai-bridge/protocol";
+import { DeviceStateSchema } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 import { CoexistenceController } from "../src/sync/coexistence";
 import { CoexistenceEffectFence } from "../src/sync/coexistence-effect-fence";

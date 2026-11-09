@@ -1,8 +1,3 @@
-import {
-	DevicePayloadHashSchema,
-	PathSchema,
-	pathKey,
-} from "@obsidian-ai-bridge/protocol";
 import { withPluginVaultMutation } from "@plugin/infrastructure/vault-events";
 import { TFile } from "@plugin/obsidian-api";
 import {
@@ -12,6 +7,11 @@ import {
 	shouldTraverseSettingsDirectory,
 } from "@plugin/sync/enrollment-scope";
 import type { TextVault } from "@plugin/sync/text-apply";
+import {
+	DevicePayloadHashSchema,
+	PathSchema,
+	pathKey,
+} from "@vaultwire/protocol";
 import type { Vault } from "obsidian";
 
 /** Confines hidden recovery bytes to one hash-addressed directory outside the Vault index. */

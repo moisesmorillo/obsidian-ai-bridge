@@ -1,5 +1,5 @@
 import { env, runInDurableObject } from "cloudflare:test";
-import { ExportManifestSchema } from "@obsidian-ai-bridge/protocol";
+import { ExportManifestSchema } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import {
 	PackedExportService,

@@ -1,4 +1,8 @@
 import {
+	getAttentionKey,
+	isInformationalAttention,
+} from "@plugin/sync/attention";
+import {
 	ChangeEntrySchema,
 	type CoexistenceConfirmation,
 	CoexistenceConfirmationSchema,
@@ -15,11 +19,7 @@ import {
 	PendingOperationSchema,
 	parseETag,
 	pathKey,
-} from "@obsidian-ai-bridge/protocol";
-import {
-	getAttentionKey,
-	isInformationalAttention,
-} from "@plugin/sync/attention";
+} from "@vaultwire/protocol";
 
 /** User-safe attention text used when local journal storage cannot be verified. */
 export const DEVICE_JOURNAL_ATTENTION_REASON =

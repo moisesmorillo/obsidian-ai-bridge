@@ -1,4 +1,4 @@
-import type { OperationDescriptor } from "@obsidian-ai-bridge/protocol";
+import type { OperationDescriptor } from "@vaultwire/protocol";
 import { FileOperationDenied } from "@worker/application/files";
 import type { VaultTransaction } from "@worker/infrastructure/sqlite/admission";
 import {

@@ -3,7 +3,7 @@ import type {
 	HistoryRequest,
 	OperationIntent,
 	TextMutationResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	classifyFilePath,
 	EpochSchema,
@@ -13,7 +13,7 @@ import {
 	HistoryResultSchema,
 	OperationIntentSchema,
 	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import {

@@ -1,7 +1,4 @@
-import {
-	type PendingConflictCopy,
-	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+import { type PendingConflictCopy, pathKey } from "@vaultwire/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
 import { DeviceJournal } from "../src/sync/device-journal";

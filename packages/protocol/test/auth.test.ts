@@ -1,7 +1,4 @@
-import {
-	OwnerClientSchema,
-	OwnerGrantSchema,
-} from "@obsidian-ai-bridge/protocol";
+import { OwnerClientSchema, OwnerGrantSchema } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 describe("owner client authority schemas", () => {

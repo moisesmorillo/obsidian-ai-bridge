@@ -1,7 +1,7 @@
 import type {
 	FileHttpFailure,
 	FileHttpFailureInput,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AdmissionFailureSchema,
 	CurrentEpochRequestSchema,
@@ -23,7 +23,7 @@ import {
 	TextReadResponseSchema,
 	TextReadResultSchema,
 	VaultIdSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { ZodType } from "zod";
 

@@ -1,5 +1,5 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
-import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
+import { MEASUREMENT_LIMITS } from "@vaultwire/protocol";
 import type { ClientRegistryGateway } from "@worker/application/clients";
 import { createOwnerHandler } from "@worker/transport/owner";
 import { WORKER_VERSION } from "@worker/transport/owner-pages/version";

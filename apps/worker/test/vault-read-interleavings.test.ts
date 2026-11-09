@@ -8,7 +8,7 @@ import {
 	IdempotencyKeySchema,
 	pathKey,
 	TextMutationIntentSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	openChangesRead,
 	openManifestRead,

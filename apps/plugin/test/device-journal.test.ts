@@ -1,7 +1,7 @@
 import type {
 	PendingConflictCopy,
 	PendingOperation,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getAttentionKey } from "../src/sync/attention";
 import {

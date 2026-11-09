@@ -53,10 +53,19 @@ describe("Release Please configuration", () => {
 		expect(config["bootstrap-sha"]).toBe(
 			"eec41e68778e0d9e674d8e40c80b7c28e9ef80ed",
 		);
+		expect(config["last-release-sha"]).toBe(
+			"7ed19cca1e566e9a6975c19c4c576213f4bb79ab",
+		);
 		expect(config["separate-pull-requests"]).toBe(true);
 		expectVersionAlignment(releaseManifest, pluginManifest, workerPackage);
+		expect(
+			`${config.packages["apps/plugin"].component}-v${releaseManifest["apps/plugin"]}`,
+		).toBe("vaultwire-v0.2.1");
+		expect(
+			`${config.packages["apps/worker"].component}-v${releaseManifest["apps/worker"]}`,
+		).toBe("worker-v0.5.0");
 		expect(config.packages["apps/plugin"]).toMatchObject({
-			component: "ai-bridge",
+			component: "vaultwire",
 			"release-type": "node",
 			"include-component-in-tag": true,
 			"tag-separator": "-",
@@ -66,6 +75,10 @@ describe("Release Please configuration", () => {
 			"release-type": "node",
 			"include-component-in-tag": true,
 			"tag-separator": "-",
+		});
+		expect(releaseManifest).toEqual({
+			"apps/plugin": "0.2.1",
+			"apps/worker": "0.5.0",
 		});
 		// Release Please resolves extra-file paths relative to the package path.
 		expect(config.packages["apps/plugin"]["extra-files"]).toContainEqual({
@@ -168,6 +181,7 @@ describe("Release Please configuration", () => {
 		);
 		expect(workflow).toContain("uses: ./.github/workflows/release.yml");
 		expect(workflow).toContain("uses: ./.github/workflows/deploy.yml");
+		expect(workflowText("release.yml")).toContain("'vaultwire-v*'");
 		expect(workflow).not.toContain("sync-plugin-compatibility:");
 		expect(workflow).not.toContain("release-versions.ts");
 	});

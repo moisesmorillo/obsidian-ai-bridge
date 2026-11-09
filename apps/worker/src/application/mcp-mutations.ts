@@ -12,7 +12,7 @@ import {
 	OperationDescriptorSchema,
 	parseETag,
 	TextMutationDescriptorSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import {
 	executeFileCommand,

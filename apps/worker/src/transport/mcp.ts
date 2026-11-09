@@ -10,7 +10,7 @@ import type {
 	McpListNotesInput,
 	McpReadNoteInput,
 	McpSearchNotesInput,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AppendUnderHeadingRequestSchema,
 	AppendUnderHeadingToolSchema,
@@ -39,7 +39,7 @@ import {
 	McpToolErrorSchema,
 	McpUpdateNoteInputSchema,
 	McpUpdateNoteToolSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type {
 	McpMutationGateway,
@@ -198,7 +198,7 @@ export function createMcpServer(
 	reportBoundaryFailure: (kind: string) => void = () => {},
 ): McpServer {
 	const server = new McpServer(
-		{ name: "obsidian-ai-bridge", version: "1.0.0" },
+		{ name: "vaultwire", version: "1.0.0" },
 		{ instructions: MCP_INSTRUCTIONS },
 	);
 	const mutationGateway: McpMutationGateway = gateway;

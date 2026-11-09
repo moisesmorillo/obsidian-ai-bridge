@@ -1,5 +1,5 @@
 {
-	"name": "obsidian-ai-bridge-worker",
+	"name": "vaultwire-development",
 	"compatibility_date": "2025-07-12",
 	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],
 	"main": "src/index.ts",
@@ -8,8 +8,13 @@
 		"bindings": [{ "name": "VAULTS", "class_name": "Vault" }]
 	},
 	"r2_buckets": [
-		{ "binding": "R2_BUCKET", "bucket_name": "oab-immutable-blobs" },
-		{ "binding": "BACKUP_BUCKET", "bucket_name": "oab-backups" }
+		{ "binding": "R2_BUCKET", "bucket_name": "vaultwire-development-blobs" },
+		{
+			"binding": "BACKUP_BUCKET",
+			"bucket_name": "vaultwire-development-backups"
+		}
 	],
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]
+	"migrations": [
+		{ "tag": "vaultwire-development-v1", "new_sqlite_classes": ["Vault"] }
+	]
 }

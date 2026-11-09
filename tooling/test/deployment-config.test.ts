@@ -27,17 +27,23 @@ describe("production Worker configuration", () => {
 		expect(workflow).toContain(
 			"bun run --filter '@obsidian-ai-bridge/worker' preflight",
 		);
+		expect(workflow).toContain("VAULTWIRE_CUTOVER_AUTHORIZED");
+		expect(workflow).toContain("OAB-50.6 must approve it");
+		expect(workflow).toContain("PENDING_S17_VAULTWIRE_");
+		expect(workflow).toContain(
+			"https://vaultwire.mmorillo.dev/.well-known/oauth-protected-resource",
+		);
+		expect(workflow).toContain("CLOUDFLARE_DEPLOY_TOKEN");
 	});
 	it("uses the production Worker name, canonical origin, and disabled alternate routes", () => {
-		expect(productionConfig.name).toBe("obsidian-ai-bridge");
+		expect(productionConfig.name).toBe("vaultwire");
 		expect(productionConfig.account_id).toBe(
 			"cb1688e69610249def9ac8e0448d5040",
 		);
 		expect(productionConfig.vars).toEqual({
-			SERVICE_ORIGIN: "https://obsidian-bridge.mmorillo.dev",
+			SERVICE_ORIGIN: "https://vaultwire.mmorillo.dev",
 			ACCESS_TEAM_DOMAIN: "https://mmorillo.cloudflareaccess.com",
-			ACCESS_AUDIENCE:
-				"814c82665e70c64298202c81873612c44297520b8947a9b08ac2742206b5a377",
+			ACCESS_AUDIENCE: "PENDING_S17_VAULTWIRE_ACCESS_AUDIENCE",
 		});
 		expect(productionConfig.vars).not.toHaveProperty("OWNER_SUBJECT");
 		const authVars = productionConfig.vars as Record<string, string>;
@@ -67,18 +73,54 @@ describe("production Worker configuration", () => {
 		expect(config.kv_namespaces).toEqual([
 			{
 				binding: "OAUTH_KV",
-				id: "afb1eaa5d1e444e98fd3b7c705d26d5f",
+				id: "PENDING_S17_VAULTWIRE_OAUTH_KV_ID",
 			},
 		]);
 		expect(config.r2_buckets).toEqual([
-			{ binding: "R2_BUCKET", bucket_name: "oab-blobs" },
-			{ binding: "BACKUP_BUCKET", bucket_name: "oab-backups" },
+			{ binding: "R2_BUCKET", bucket_name: "vaultwire-blobs" },
+			{ binding: "BACKUP_BUCKET", bucket_name: "vaultwire-backups" },
 		]);
 		expect(config.triggers?.crons).toEqual(["0 * * * *"]);
-		expect(config.migrations).toContainEqual({
-			tag: "v1",
-			new_sqlite_classes: ["Vault"],
-		});
+		expect(config.migrations).toEqual([
+			{
+				tag: "vaultwire-transfer-v1",
+				transferred_classes: [
+					{
+						from: "Vault",
+						from_script: "obsidian-ai-bridge",
+						to: "Vault",
+					},
+				],
+			},
+		]);
+		expect(config.migrations?.[0]).not.toHaveProperty("new_sqlite_classes");
+	});
+
+	it("uses isolated development scripts and local namespace creation", () => {
+		const development = JSON.parse(
+			readFileSync(
+				new URL("../../apps/worker/wrangler.jsonc", import.meta.url),
+				"utf8",
+			),
+		) as { name: string; migrations: Array<Record<string, unknown>> };
+		const f2 = JSON.parse(
+			readFileSync(
+				new URL("../../apps/worker/wrangler.f2.jsonc", import.meta.url),
+				"utf8",
+			),
+		) as { name: string; migrations: Array<Record<string, unknown>> };
+
+		expect(development.name).toBe("vaultwire-development");
+		expect(f2.name).toBe("vaultwire-f2-tests");
+		expect(development.name).not.toBe(productionConfig.name);
+		expect(f2.name).not.toBe(productionConfig.name);
+		for (const config of [development, f2]) {
+			expect(config.migrations).toHaveLength(1);
+			expect(config.migrations[0]).toHaveProperty("new_sqlite_classes", [
+				"Vault",
+			]);
+			expect(config.migrations[0]).not.toHaveProperty("transferred_classes");
+		}
 	});
 
 	it("contains no local or synthetic authentication fixtures", () => {

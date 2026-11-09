@@ -21,6 +21,7 @@ import {
 	createLocalWorkerLaunch,
 	createTemporaryRoot,
 	filterLocalCompatibilityFlags,
+	localizeDurableObjectMigrations,
 	safePreflightFailure,
 	startLocalWorker,
 	stopLocalWorker,
@@ -54,6 +55,17 @@ async function main(): Promise<void> {
 			"nodejs_compat",
 		]),
 		["nodejs_compat"],
+	);
+	assert.deepEqual(
+		localizeDurableObjectMigrations([
+			{
+				tag: "vaultwire-transfer-v1",
+				transferred_classes: [
+					{ from: "Vault", from_script: "obsidian-ai-bridge", to: "Vault" },
+				],
+			},
+		]),
+		[{ tag: "preflight-local-v1", new_sqlite_classes: ["Vault"] }],
 	);
 	assert.deepEqual(classifyWranglerFailure("ordinary Wrangler error"), [
 		"unknown_wrangler_failure",

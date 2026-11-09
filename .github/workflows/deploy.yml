@@ -1,4 +1,4 @@
-name: Deploy F2 Worker
+name: Deploy Vaultwire Worker
 
 on:
   workflow_call:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: f2-production-deploy
+  group: vaultwire-production-deploy
   cancel-in-progress: false
 
 jobs:
@@ -26,16 +26,25 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Run Worker preflight
         run: bun run --filter '@obsidian-ai-bridge/worker' preflight
-      - name: Deploy Worker
+      - name: Deploy Vaultwire Worker
         working-directory: apps/worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_TOKEN }}
           OWNER_SUBJECT: ${{ secrets.OWNER_SUBJECT }}
+          VAULTWIRE_CUTOVER_AUTHORIZED: ${{ secrets.VAULTWIRE_CUTOVER_AUTHORIZED }}
         shell: bash
         run: |
           set +x
           set -eu
 
+          if [ "${VAULTWIRE_CUTOVER_AUTHORIZED:-}" != "true" ]; then
+            echo "Vaultwire production cutover is not authorized. OAB-50.6 must approve it." >&2
+            exit 1
+          fi
+          if grep -Eq 'PENDING_S17_VAULTWIRE_(OAUTH_KV_ID|ACCESS_AUDIENCE)' wrangler.production.jsonc; then
+            echo "Vaultwire production configuration contains unresolved S17 placeholders." >&2
+            exit 1
+          fi
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
             echo "CLOUDFLARE_DEPLOY_TOKEN is missing." >&2
             exit 1
@@ -73,12 +82,12 @@ jobs:
           fi
 
           printf "Deployed Worker version: %s\n" "$version_ids"
-          printf "F2 Worker deployed from source revision %s as version %s.\n" "$GITHUB_SHA" "$version_ids" >>"$GITHUB_STEP_SUMMARY"
+          printf "Vaultwire Worker deployed from source revision %s as version %s.\n" "$GITHUB_SHA" "$version_ids" >>"$GITHUB_STEP_SUMMARY"
       - name: Check public resource metadata
         shell: bash
         run: |
           set -eu
-          if status="$(curl --silent --show-error --output /dev/null --connect-timeout 10 --max-time 30 --write-out "%{http_code}" "https://obsidian-bridge.mmorillo.dev/.well-known/oauth-protected-resource")"; then
+          if status="$(curl --silent --show-error --output /dev/null --connect-timeout 10 --max-time 30 --write-out "%{http_code}" "https://vaultwire.mmorillo.dev/.well-known/oauth-protected-resource")"; then
             :
           else
             echo "Public resource metadata request failed." >&2

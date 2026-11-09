@@ -7,8 +7,8 @@ import type {
 	SearchRequest,
 	SearchResponse,
 	SearchResult,
-} from "@obsidian-ai-bridge/protocol";
-import { EMPTY_PAYLOAD_HASH } from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
+import { EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
 import type { SearchVaultGateway } from "@worker/application/search";
 import { readSearch } from "@worker/application/search";
 import { describe, expect, it, vi } from "vitest";

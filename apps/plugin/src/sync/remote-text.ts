@@ -1,4 +1,4 @@
-import type { FileHttpFailure } from "@obsidian-ai-bridge/protocol";
+import type { FileHttpFailure } from "@vaultwire/protocol";
 
 /** HTTP response class retained without its exact status number. */
 export type HttpStatusClass = "1xx" | "2xx" | "3xx" | "4xx" | "5xx" | "other";

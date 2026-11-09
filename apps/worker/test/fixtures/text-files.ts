@@ -1,6 +1,6 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
-import { pathKey } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
+import { pathKey } from "@vaultwire/protocol";
 import type { BlobStore } from "@worker/application/blobs";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";

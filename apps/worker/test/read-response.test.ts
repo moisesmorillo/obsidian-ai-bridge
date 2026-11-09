@@ -1,4 +1,4 @@
-import type { AdmissionCompletion } from "@obsidian-ai-bridge/protocol";
+import type { AdmissionCompletion } from "@vaultwire/protocol";
 import {
 	readSlotCapacitySnapshot,
 	tryAcquireReadSlot,

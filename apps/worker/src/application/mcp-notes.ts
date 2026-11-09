@@ -8,8 +8,8 @@ import type {
 	McpReadNoteInput,
 	McpReadNoteResult,
 	McpSearchNotesResult,
-} from "@obsidian-ai-bridge/protocol";
-import { EMPTY_PAYLOAD_HASH } from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
+import { EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import { ReadAborted } from "@worker/application/read-demand";

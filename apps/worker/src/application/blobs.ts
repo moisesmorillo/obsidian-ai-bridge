@@ -10,8 +10,8 @@ import type {
 	TextMutationIntent,
 	TextMutationResult,
 	TextReadRequest,
-} from "@obsidian-ai-bridge/protocol";
-import { classifyFilePath } from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
+import { classifyFilePath } from "@vaultwire/protocol";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
 import type { TextVaultGateway } from "@worker/application/text-files";

@@ -1,7 +1,4 @@
-import type {
-	AuthorizationContext,
-	FileCommand,
-} from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext, FileCommand } from "@vaultwire/protocol";
 import {
 	type PreparedHistoryCommand,
 	prepareHistoryCommand,

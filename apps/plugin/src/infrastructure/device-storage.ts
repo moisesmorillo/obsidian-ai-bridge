@@ -1,10 +1,10 @@
+import type { DeviceJournalStorage } from "@plugin/sync/device-journal";
 import {
 	DEVICE_PAYLOAD_DIRECTORY,
 	DevicePayloadReferenceSchema,
 	type DeviceState,
 	DeviceStateSchema,
-} from "@obsidian-ai-bridge/protocol";
-import type { DeviceJournalStorage } from "@plugin/sync/device-journal";
+} from "@vaultwire/protocol";
 import type { App } from "obsidian";
 
 /** Stable localStorage key for the single device-only journal document. */

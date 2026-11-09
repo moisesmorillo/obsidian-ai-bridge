@@ -17,7 +17,7 @@ Use a checkout updated to the current `main` branch. Do not build from this feat
 ```sh
 git branch --show-current
 git rev-parse HEAD
-bun run --filter @obsidian-ai-bridge/plugin build
+bun run --filter @vaultwire/plugin build
 ```
 
 The branch command must report `main`. Record the revision from `git rev-parse HEAD` as the build revision. The build writes `apps/plugin/dist/main.js` and `apps/plugin/dist/manifest.json`.
@@ -53,7 +53,7 @@ Use the `CF_Authorization` cookie value for the approved service. Do not add `Co
 Run the bounded collector from the repository root:
 
 ```sh
-bun run --filter @obsidian-ai-bridge/tooling collect:f4 -- --cookie-file "$HOME/.config/obsidian-ai-bridge/f4/access.cookie"
+bun run --filter @vaultwire/tooling collect:f4 -- --cookie-file "$HOME/.config/obsidian-ai-bridge/f4/access.cookie"
 ```
 
 The command sends one `GET` request to the fixed HTTPS origin at `/owner/measurements`. It rejects redirects and response bodies above 256 KiB. It validates the response with the public protocol schema. It prints only a safe summary. A 401 means Access did not authorize the request. A 403 means the configured owner check refused it. Other errors use static text.

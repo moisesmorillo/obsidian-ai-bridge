@@ -1,5 +1,5 @@
 {
-	"name": "@obsidian-ai-bridge/worker",
+	"name": "@vaultwire/worker",
 	"version": "0.5.0",
 	"private": true,
 	"type": "module",
@@ -13,7 +13,7 @@
 	"dependencies": {
 		"@cloudflare/workers-oauth-provider": "1.2.4",
 		"@modelcontextprotocol/server": "2.4.0",
-		"@obsidian-ai-bridge/protocol": "workspace:*",
+		"@vaultwire/protocol": "workspace:*",
 		"drizzle-orm": "0.45.4",
 		"hono": "4.9.6",
 		"jose": "6.2.13"
@@ -21,7 +21,7 @@
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "1.4.0",
 		"@cloudflare/workers-types": "4.20251014.0",
-		"@obsidian-ai-bridge/tooling": "workspace:*",
+		"@vaultwire/tooling": "workspace:*",
 		"drizzle-kit": "0.31.11",
 		"fflate": "0.8.2",
 		"wrangler": "4.45.0"

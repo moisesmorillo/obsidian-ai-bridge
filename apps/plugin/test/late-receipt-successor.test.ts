@@ -1,7 +1,4 @@
-import type {
-	DevicePrecondition,
-	PendingOperation,
-} from "@obsidian-ai-bridge/protocol";
+import type { DevicePrecondition, PendingOperation } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 import {
 	DeviceJournal,

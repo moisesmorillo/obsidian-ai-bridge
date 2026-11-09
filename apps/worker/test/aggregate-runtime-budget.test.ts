@@ -4,7 +4,7 @@ import {
 	EMPTY_PAYLOAD_HASH,
 	encodeFileFailure,
 	encodeFileFailureBodyChunks,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";

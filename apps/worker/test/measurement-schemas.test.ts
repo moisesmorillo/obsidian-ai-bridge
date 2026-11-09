@@ -3,7 +3,7 @@ import {
 	MeasurementAggregateSchema,
 	MeasurementResponseSchema,
 	RequestObservationSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 describe("measurement schemas", () => {

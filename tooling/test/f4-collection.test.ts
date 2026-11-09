@@ -1,5 +1,5 @@
-import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
 import { collectF4Measurements, formatF4Summary } from "@tooling/f4-collection";
+import { MEASUREMENT_LIMITS } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 const snapshot = {

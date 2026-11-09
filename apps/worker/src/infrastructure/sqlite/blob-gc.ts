@@ -1,4 +1,4 @@
-import type { BlobGcStatus } from "@obsidian-ai-bridge/protocol";
+import type { BlobGcStatus } from "@vaultwire/protocol";
 import type {
 	BlobGcObject,
 	BlobGcRepository,

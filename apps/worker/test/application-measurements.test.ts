@@ -2,7 +2,7 @@ import {
 	MEASUREMENT_LIMITS,
 	type MeasurementAggregate,
 	MeasurementAggregateSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	createMeasurementGateway,
 	type MeasurementStore,

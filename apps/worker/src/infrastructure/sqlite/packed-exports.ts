@@ -1,12 +1,9 @@
-import type {
-	ExportFailure,
-	ExportOperationResult,
-} from "@obsidian-ai-bridge/protocol";
+import type { ExportFailure, ExportOperationResult } from "@vaultwire/protocol";
 import {
 	ExportFailureSchema,
 	ExportManifestSchema,
 	ExportOperationResultSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { BlobContentStore, BlobEvidence } from "@worker/application/blobs";
 import type {
 	PackedExportFile,

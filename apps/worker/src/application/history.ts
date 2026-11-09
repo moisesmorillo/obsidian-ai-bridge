@@ -19,7 +19,7 @@ import {
 	RenameReservationSchema,
 	type TextMutationBeginResult,
 	type TextMutationResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AdmissionDenied,
 	type PreparedOperation,

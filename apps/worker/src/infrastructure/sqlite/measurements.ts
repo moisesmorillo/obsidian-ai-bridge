@@ -1,7 +1,7 @@
 import {
 	type MeasurementAggregate,
 	MeasurementAggregateSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type {
 	MeasurementStorage,
 	MeasurementStore,

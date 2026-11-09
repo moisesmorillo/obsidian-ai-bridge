@@ -1,4 +1,4 @@
-import type { DeviceCredential } from "@obsidian-ai-bridge/protocol";
+import type { DeviceCredential } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 import {
 	DeviceSession,

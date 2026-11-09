@@ -1,7 +1,7 @@
 import {
 	type DeviceCredential,
 	DeviceCredentialSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { App } from "obsidian";
 
 /** Credential persistence capability with a safe UI warning for localStorage fallback. */

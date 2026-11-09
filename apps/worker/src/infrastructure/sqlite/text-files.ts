@@ -12,7 +12,7 @@ import type {
 	TextReadRequest,
 	TextReadResponse,
 	TextReadResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	BlobDeclarationSchema,
 	BlobMetadataSchema,
@@ -26,7 +26,7 @@ import {
 	TextMutationIntentSchema,
 	TextReadRequestSchema,
 	TextReadResponseSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AdmissionDenied,
 	type PreparedOperation,

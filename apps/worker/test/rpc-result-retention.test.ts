@@ -2,7 +2,7 @@ import { env, runInDurableObject } from "cloudflare:test";
 import {
 	EMPTY_PAYLOAD_HASH,
 	type TextMutationResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { Env } from "@worker/env";
 import type { Vault } from "@worker/infrastructure/durable-object/vault";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";

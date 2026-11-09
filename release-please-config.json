@@ -1,14 +1,15 @@
 {
 	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
 	"bootstrap-sha": "eec41e68778e0d9e674d8e40c80b7c28e9ef80ed",
+	"last-release-sha": "7ed19cca1e566e9a6975c19c4c576213f4bb79ab",
 	"separate-pull-requests": true,
 	"packages": {
 		"apps/plugin": {
-			"component": "ai-bridge",
+			"component": "vaultwire",
 			"release-type": "node",
 			"include-component-in-tag": true,
 			"tag-separator": "-",
-			"package-name": "@obsidian-ai-bridge/plugin",
+			"package-name": "@vaultwire/plugin",
 			"extra-files": [
 				{
 					"type": "json",
@@ -22,7 +23,7 @@
 			"release-type": "node",
 			"include-component-in-tag": true,
 			"tag-separator": "-",
-			"package-name": "@obsidian-ai-bridge/worker"
+			"package-name": "@vaultwire/worker"
 		}
 	}
 }

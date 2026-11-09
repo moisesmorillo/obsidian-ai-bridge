@@ -1,4 +1,4 @@
-import { parseETag } from "@obsidian-ai-bridge/protocol";
+import { parseETag } from "@vaultwire/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
 	AC19_PHASES,

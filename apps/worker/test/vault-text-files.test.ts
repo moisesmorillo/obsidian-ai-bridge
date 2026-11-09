@@ -1,11 +1,11 @@
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
 import {
 	EMPTY_PAYLOAD_HASH,
 	FileCommandSchema,
 	formatETag,
 	IdempotencyKeySchema,
 	TextMutationIntentSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { executeFileCommand } from "@worker/application/history";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import type { TextStoreFixture } from "@worker/test-fixtures/text-files";

@@ -68,5 +68,5 @@ export function renderOwnerShell(
 				]
 			: []),
 	].join("");
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Owner console</title><style>${OWNER_CONSOLE_CSS}</style></head><body><div class="owner-layout"><aside class="owner-sidebar"><div class="brand"><span class="brand-mark" aria-hidden="true">◇</span>AI Bridge</div><p class="owner-eyebrow">Owner console</p><nav class="owner-nav" aria-label="Owner navigation">${nav}</nav><section class="owner-service"><h2>Service</h2>${facts}</section></aside><main class="owner-main">${content}</main></div></body></html>`;
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Vaultwire · Owner console</title><style>${OWNER_CONSOLE_CSS}</style></head><body><div class="owner-layout"><aside class="owner-sidebar"><div class="brand"><span class="brand-mark" aria-hidden="true">◇</span>Vaultwire</div><p class="owner-eyebrow">Owner console</p><nav class="owner-nav" aria-label="Owner navigation">${nav}</nav><section class="owner-service"><h2>Service</h2>${facts}</section></aside><main class="owner-main">${content}</main></div></body></html>`;
 }

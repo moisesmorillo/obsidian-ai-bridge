@@ -1,7 +1,4 @@
-import {
-	EMPTY_PAYLOAD_HASH,
-	IdempotencyKeySchema,
-} from "@obsidian-ai-bridge/protocol";
+import { EMPTY_PAYLOAD_HASH, IdempotencyKeySchema } from "@vaultwire/protocol";
 import { assertIdempotencyWindow } from "@worker/application/idempotency";
 import {
 	changeLogicalPayloadBytes,

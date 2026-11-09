@@ -10,7 +10,7 @@ import {
 	DEVICE_CALLBACK_URI,
 	LocalAuthConfigurationSchema,
 	VaultScopeSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type {
 	OwnerCleanupExternalCallBudget,
 	ProviderGrantCleanup,
@@ -104,7 +104,7 @@ export function createOAuthOptions(
 			if (hasUnapprovedPrivateRedirectUri(clientMetadata.redirect_uris))
 				return {
 					code: "invalid_client_metadata",
-					description: "Only the Obsidian AI Bridge callback is supported",
+					description: "Only the configured plugin callback is supported",
 				};
 			const grants = clientMetadata.grant_types;
 			const responses = clientMetadata.response_types;
@@ -124,11 +124,12 @@ export function createOAuthOptions(
 		},
 		scopesSupported: [...SCOPES],
 		requiredScopes: SCOPES.filter(
-			(scope) => scope === "vault:read" || scope === "vault:write",
+			(scope: (typeof SCOPES)[number]) =>
+				scope === "vault:read" || scope === "vault:write",
 		),
 		resourceMetadata: {
 			resource: serviceOrigin,
-			resource_name: "Obsidian AI Bridge",
+			resource_name: "Vaultwire",
 		},
 		accessTokenTTL: 3600,
 		refreshTokenTTL: 2_592_000,

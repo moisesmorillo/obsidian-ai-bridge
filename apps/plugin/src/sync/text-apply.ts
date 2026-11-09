@@ -1,3 +1,12 @@
+import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
+import type { DeviceJournal } from "@plugin/sync/device-journal";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+	settingsConflictExtension,
+} from "@plugin/sync/enrollment-scope";
+import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
 import {
 	type ChangeEntry,
 	ChangeEntrySchema,
@@ -9,16 +18,7 @@ import {
 	type PendingConflictCopy,
 	parseETag,
 	pathKey,
-} from "@obsidian-ai-bridge/protocol";
-import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
-import type { DeviceJournal } from "@plugin/sync/device-journal";
-import {
-	classifyEnrollmentPath,
-	DEFAULT_SETTINGS_SYNC_POLICY,
-	type SettingsSyncPolicy,
-	settingsConflictExtension,
-} from "@plugin/sync/enrollment-scope";
-import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
+} from "@vaultwire/protocol";
 
 /** Application-owned guarded text and byte effects without Obsidian SDK types. */
 export interface TextVault {

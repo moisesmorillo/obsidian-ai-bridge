@@ -3,14 +3,14 @@ import type {
 	CurrentEpochOperation,
 	TextMutationDescriptor,
 	TextReadRequest,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	EpochSchema,
 	IdempotencyKeySchema,
 	parseETag,
 	TextMutationDescriptorSchema,
 	TextReadRequestSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	type BlobContentStore,
 	executeBlobPut,

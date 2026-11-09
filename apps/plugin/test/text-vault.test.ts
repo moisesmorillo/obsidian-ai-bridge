@@ -1,4 +1,4 @@
-import type { DeviceState } from "@obsidian-ai-bridge/protocol";
+import type { DeviceState } from "@vaultwire/protocol";
 import { type EventRef, TFile, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import { ObsidianTextVault } from "../src/infrastructure/text-vault";

@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import type { BlobDeclaration } from "@obsidian-ai-bridge/protocol";
+import type { BlobDeclaration } from "@vaultwire/protocol";
 import { FileOperationDenied } from "@worker/application/files";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { describe, expect, it, vi } from "vitest";

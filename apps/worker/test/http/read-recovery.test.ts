@@ -12,7 +12,7 @@ import {
 	formatETag,
 	type HistoryPage,
 	type ManifestPage,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";

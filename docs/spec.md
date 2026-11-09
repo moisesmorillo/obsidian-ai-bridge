@@ -1,4 +1,6 @@
-# Obsidian AI Bridge — Specification v1.3
+# Vaultwire — Specification v1.3
+
+Self-hosted vault sync and storage, with MCP tools for AI agents.
 
 **Status:** design specification, approved for planning once the owner reviews it. It is the single current contract. Earlier documents (PRD, Rewrite Brief, Contraste de análisis §1–§11) are history; where they differ from this document, this document wins.
 
@@ -27,6 +29,13 @@ End-to-end encryption; sync while iOS/iPadOS suspends Obsidian; automatic text m
 
 | Decision | Value |
 | --- | --- |
+| Product | Vaultwire |
+| Tagline | Self-hosted vault sync and storage, with MCP tools for AI agents |
+| Worker script | `vaultwire` |
+| Service hostname | `vaultwire.mmorillo.dev` |
+| R2 buckets | `vaultwire-blobs` and `vaultwire-backups` |
+| OAuth KV namespace | `vaultwire-oauth` |
+| Deploy token | `vaultwire-github-deploy` |
 | Current sync | iCloud Drive; vault at `iCloud~md~obsidian/Documents/Vault` |
 | Scope of v1 | Both agent access and iCloud replacement |
 | First MCP client | ChatGPT; OAuth is generic (2.1 + PKCE + discovery + DCR), nothing client-specific |
@@ -34,7 +43,7 @@ End-to-end encryption; sync while iOS/iPadOS suspends Obsidian; automatic text m
 | Plan | Workers Paid accepted |
 | Legacy | Repo and git history restarted from scratch; worker `obsidian-bridge.mmorillo.dev`, bucket `obsidian-ai-bridge` and KV wiped; nothing migrated |
 | Conflict policy | **Option B**: the confirmed remote operation stands; pending local content is preserved as a conflict copy at a new path; nothing is resurrected automatically |
-| Backup destination | Hourly packed current-file snapshots in the dedicated `oab-backups` R2 bucket. Infra deletes `backups/` objects after 15 days (§11) |
+| Backup destination | Hourly packed current-file snapshots in the dedicated `vaultwire-backups` R2 bucket. Infra deletes `backups/` objects after 15 days (§11) |
 | Phase F4 | Kept: real vault on the Mac with iCloud still active, plugin only on the Mac, max two weeks, in *coexistence mode* (§7.10) |
 | Tracking | Backlog.md for tasks and deferred items (label `deferred`); no milestones, no separate roadmap |
 | Agent instructions | One `AGENTS.md` at the repo root; no `CLAUDE.md`, Claude Code reads `AGENTS.md` natively |
@@ -547,7 +556,7 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 11. Backup and restore
 
-The Access-protected owner console starts packed current-file snapshots. A Workers Cron Trigger also starts one export each hour at `0 * * * *`. Both write archives to the dedicated R2 bucket `oab-backups`; blob payloads remain in `oab-immutable-blobs`. The `cloudflare-infra` lifecycle rule deletes objects under `backups/` after 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune archives. The separate `exports` table remains reserved for the former GitHub design. `packed_exports`, `packed_export_files`, and `export_pins` store resumable baseline work.
+The Access-protected owner console starts packed current-file snapshots. A Workers Cron Trigger also starts one export each hour at `0 * * * *`. Both write archives to the dedicated R2 bucket `vaultwire-backups`; blob payloads remain in `vaultwire-blobs`. The `cloudflare-infra` lifecycle rule deletes objects under `backups/` after 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune archives. The separate `exports` table remains reserved for the former GitHub design. `packed_exports`, `packed_export_files`, and `export_pins` store resumable baseline work.
 
 ### 11.1 Consistent current-file cut
 
@@ -602,7 +611,7 @@ The service holds one vault per host name (`idFromName(host)`), shared by every 
 | R2 blobs | 10 GB free tier | Alert at 4 GB; GC trigger at 1 GB unreferenced (§16) |
 | Worker memory | 128 MB | No full-vault materialization anywhere; exports and hydration stream per file |
 | Polling | §7.4 | *measure* in F4: requests/day per device, p95 feed latency |
-| Packed baseline | 2 GB exact encoded archive, 10,000 current files, 1 MiB output and source-byte step, 16 source ranges per alarm | Owner-started or scheduled hourly. Archives use `oab-backups`; infra removes `backups/` objects after 15 days. R2 multipart faults resume from the stored cursor. Terminal limit or source faults block download. |
+| Packed baseline | 2 GB exact encoded archive, 10,000 current files, 1 MiB output and source-byte step, 16 source ranges per alarm | Owner-started or scheduled hourly. Archives use `vaultwire-backups`; infra removes `backups/` objects after 15 days. R2 multipart faults resume from the stored cursor. Terminal limit or source faults block download. |
 
 Cloudflare lists 10 GB per SQLite Durable Object on Workers Paid and 1 GB on Workers Free. Its [Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/) give these limits. We read this page on 2026-10-17.
 
@@ -731,7 +740,7 @@ Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotoc
 
 ## 16. Deferred (tracked in Backlog.md, label `deferred`)
 
-Hourly current-file backups use the `oab-backups` R2 bucket. The infra lifecycle rule retains `backups/` objects for 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune this bucket.
+Hourly current-file backups use the `vaultwire-backups` R2 bucket. The infra lifecycle rule retains `backups/` objects for 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune this bucket.
 
 | Item | Why not now | Trigger to reopen | Seam preserved in v1 |
 | --- | --- | --- | --- |
@@ -739,7 +748,7 @@ Hourly current-file backups use the `oab-backups` R2 bucket. The infra lifecycle
 | WebSocket push from DO | 15–60 s polling is enough for one owner | Measured latency complaint or request cost > 50% of allowance | Feed is `seq`-based; push only says "new seq", pull unchanged |
 | Embeddings / semantic search | FTS covers the current vault | Agents miss notes by synonym in real use | `search_notes` returns `rev` and snippets; a second backend plugs behind it |
 | `.obsidian/` settings categories | Triggered 2026-11-06 because manual re-configuration became a daily cost | Device proof: device available and BRAT release plugin-v0.1.0 published. Current code target: 0.1.4, with no release authorization. | Implemented in §7.1. Consent and hydration duties stay device-local. The master switch defaults off. Guarded writes retain the documented unobserved-version race. Device proof remains open. |
-| Historical backup history | Packed baselines contain current files only | Owner requires retained revisions or service-side historical restore | Hourly current-file archives use `oab-backups` for 15 days. Incomplete multipart uploads expire after seven days. Service-side import and historical export remain unbuilt. |
+| Historical backup history | Packed baselines contain current files only | Owner requires retained revisions or service-side historical restore | Hourly current-file archives use `vaultwire-backups` for 15 days. Incomplete multipart uploads expire after seven days. Service-side import and historical export remain unbuilt. |
 | Windows / Linux | No device | A device exists | No Node/Electron APIs in the plugin |
 | E2E encryption | Would break server-side search and append | Owner requirement changes | None; would be a redesign |
 

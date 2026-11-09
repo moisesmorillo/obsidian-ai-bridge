@@ -5,7 +5,7 @@ import type {
 	AuthorizationContext,
 	OperationDescriptor,
 	OperationIntent,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	formatETag,
 	IdempotencyKeySchema,
@@ -13,7 +13,7 @@ import {
 	OperationTicketSchema,
 	pathKey,
 	TextPayloadSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	prepareDescriptor,
 	prepareOperation,

@@ -1,6 +1,6 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { EpochSchema } from "@obsidian-ai-bridge/protocol";
+import { EpochSchema } from "@vaultwire/protocol";
 import {
 	generateEpoch,
 	initializeVaultStorage,

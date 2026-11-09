@@ -1,4 +1,4 @@
-import { PathSchema } from "@obsidian-ai-bridge/protocol";
+import { PathSchema } from "@vaultwire/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { classifyEnrollmentPath } from "../src/sync/enrollment-scope";

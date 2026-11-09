@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
-import { readViteAliases } from "@obsidian-ai-bridge/tooling/vite-aliases";
+import { readViteAliases } from "@vaultwire/tooling/vite-aliases";
 import type { ViteUserConfig as UserConfig } from "vitest/config";
 
 /** Build an official Workers test configuration for one Worker entry and test subset. */

@@ -3,7 +3,7 @@ import type {
 	MetadataBatchRequest,
 	MetadataBatchResult,
 	VaultReadResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	classifyFilePath,
 	EMPTY_PAYLOAD_HASH,
@@ -13,7 +13,7 @@ import {
 	PathSchema,
 	parseETag,
 	VaultReadResultSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { prepareOperation } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import type {

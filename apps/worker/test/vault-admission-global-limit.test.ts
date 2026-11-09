@@ -7,7 +7,7 @@ import type {
 	OperationIntent,
 	RequestAdmissionResult,
 	TextMutationBeginResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	prepareDescriptor,
 	prepareOperation,

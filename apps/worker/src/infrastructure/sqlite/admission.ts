@@ -9,7 +9,7 @@ import type {
 	OperationDescriptor,
 	OperationIntent,
 	RequestAdmissionResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	AuthorizationContextSchema,
 	CurrentEpochRequestSchema,
@@ -20,7 +20,7 @@ import {
 	OperationTicketSchema,
 	parseETag,
 	pathKey,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type {
 	PreparedDescriptor,
 	PreparedOperation,

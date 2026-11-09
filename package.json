@@ -1,5 +1,5 @@
 {
-	"name": "obsidian-ai-bridge",
+	"name": "vaultwire",
 	"private": true,
 	"type": "module",
 	"workspaces": [
@@ -9,9 +9,9 @@
 	],
 	"scripts": {
 		"lint": "biome check .",
-		"typecheck": "bun run --filter '@obsidian-ai-bridge/*' typecheck",
-		"test": "bun run --filter '@obsidian-ai-bridge/*' test",
-		"build": "bun run --filter '@obsidian-ai-bridge/*' build",
+		"typecheck": "bun run --filter '@vaultwire/*' typecheck",
+		"test": "bun run --filter '@vaultwire/*' test",
+		"build": "bun run --filter '@vaultwire/*' build",
 		"docs:check": "bun tooling/check-documentation.ts",
 		"check": "bun run lint && bun run docs:check && bun run typecheck && bun run test && bun run build"
 	},

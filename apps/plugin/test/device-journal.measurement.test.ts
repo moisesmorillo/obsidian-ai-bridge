@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { DeviceState } from "@obsidian-ai-bridge/protocol";
+import type { DeviceState } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 import type { DeviceJournalStorage } from "../src/sync/device-journal";
 import { DeviceJournal } from "../src/sync/device-journal";

@@ -1,7 +1,7 @@
 import type {
 	AdmissionCompletion,
 	AdmissionFinishResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import type { ReadSlotLease } from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import {

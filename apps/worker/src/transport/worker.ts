@@ -1,4 +1,4 @@
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type { AuthorizationContext } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import type { MeasurementGateway } from "@worker/application/measurements";

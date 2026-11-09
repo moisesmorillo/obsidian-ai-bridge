@@ -4,7 +4,7 @@ import {
 	IdempotencyKeySchema,
 	RenameReservationSchema,
 	TextMutationIntentSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import {
 	PublicationQueryObserver,

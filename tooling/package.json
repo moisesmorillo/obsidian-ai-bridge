@@ -1,5 +1,5 @@
 {
-	"name": "@obsidian-ai-bridge/tooling",
+	"name": "@vaultwire/tooling",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -11,6 +11,6 @@
 		"test": "vitest run --config vitest.config.ts"
 	},
 	"dependencies": {
-		"@obsidian-ai-bridge/protocol": "workspace:*"
+		"@vaultwire/protocol": "workspace:*"
 	}
 }

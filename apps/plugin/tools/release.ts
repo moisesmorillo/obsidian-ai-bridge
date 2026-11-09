@@ -15,8 +15,8 @@ function requireExactVersion(value: unknown, label: string): string {
 }
 
 /**
- * Validates that the owner-created tag, plugin manifest, and compatibility map
- * describe one mobile-capable release. The return value is the exact input tag.
+ * Validates a Vaultwire tag, the plugin manifest, and the compatibility map.
+ * The return value is the exact input tag.
  */
 export function validatePluginRelease(
 	tag: string,
@@ -24,9 +24,9 @@ export function validatePluginRelease(
 	versions: unknown,
 ): string {
 	const tagMatch =
-		/^ai-bridge-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(tag);
+		/^vaultwire-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(tag);
 	if (!tagMatch)
-		throw new Error("Tag must match ai-bridge-v<major>.<minor>.<patch>");
+		throw new Error("Tag must match vaultwire-v<major>.<minor>.<patch>");
 
 	const metadata = objectValue(manifest, "Plugin manifest");
 	const version = requireExactVersion(metadata.version, "Manifest version");
@@ -91,7 +91,7 @@ async function runReleaseValidator(): Promise<void> {
 	const tag = process.argv[2];
 	if (!tag || process.argv.length !== 3) {
 		throw new Error(
-			"Usage: bun apps/plugin/tools/release.ts <ai-bridge-v<version>>",
+			"Usage: bun apps/plugin/tools/release.ts <vaultwire-v<version>>",
 		);
 	}
 	console.log(await validateRepositoryRelease(tag));

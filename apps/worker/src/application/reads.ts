@@ -15,14 +15,14 @@ import type {
 	OperationIntent,
 	VaultReadResponse,
 	VaultReadResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	decodeReadCursor,
 	EMPTY_PAYLOAD_HASH,
 	encodeReadCursor,
 	formatETag,
 	parseETag,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";

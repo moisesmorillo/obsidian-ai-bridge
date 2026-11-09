@@ -3,7 +3,7 @@ import type {
 	AuthorizationContext,
 	BlobDeclaration,
 	TextMutationDescriptor,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	type BlobPutGateway,
 	type BlobStore,

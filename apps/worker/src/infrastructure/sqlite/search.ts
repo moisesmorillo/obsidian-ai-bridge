@@ -2,13 +2,13 @@ import type {
 	AuthorizationContext,
 	SearchRequest,
 	SearchResult,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import {
 	EMPTY_PAYLOAD_HASH,
 	formatETag,
 	SearchRequestSchema,
 	SearchResultSchema,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { prepareOperation } from "@worker/application/admission";
 import type { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { assertPolicyInTransaction } from "@worker/infrastructure/sqlite/admission";

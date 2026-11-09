@@ -5,7 +5,7 @@ import {
 	SearchResponseSchema,
 	SearchResultSchema,
 	searchQueryFailure,
-} from "@obsidian-ai-bridge/protocol";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 describe("search protocol", () => {

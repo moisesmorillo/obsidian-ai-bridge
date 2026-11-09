@@ -114,7 +114,7 @@ describe("bounded read HTTP routes", () => {
 			env,
 		);
 		expect(fifth.status).toBe(429);
-		expect(fifth.headers.get("Retry-After")).toBe("1");
+		expect(fifth.headers.get("Retry-After")).toBe("2");
 		await fifth.text();
 		for (const response of held) await response.body?.cancel();
 		const next = await testWorker.fetch(

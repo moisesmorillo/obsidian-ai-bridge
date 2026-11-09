@@ -1,4 +1,9 @@
 import type { MeasurementResponse } from "@vaultwire/protocol";
+import {
+	type AdmissionByteReservation,
+	REST_READ_BYTE_ALLOWANCE,
+	tryReserveAdmissionBytes,
+} from "@worker/application/admission-budget";
 
 /** Maximum concurrent authoritative REST read responses in one Worker isolate. */
 export const REST_READ_SLOT_LIMIT = 4;
@@ -17,7 +22,7 @@ let isolateId: string | undefined;
 /** Pool whose capacity an acquisition reserves. */
 export type ReadSlotClass = "rest" | "mcp";
 
-/** Mutable lease state retained only while its deadline can affect admission. */
+/** Logical lease state retained until response completion or absolute expiry. */
 interface ReadSlotLeaseState {
 	leaseClass: ReadSlotClass;
 	expiresAt: number;
@@ -35,11 +40,11 @@ function currentIsolateId(): string {
 export interface ReadSlotLease {
 	/** Release local capacity once without clearing response expiry. */
 	(): void;
-	/** True after the fixed deadline, including when source completion freed capacity first. */
+	/** True when an unfinished lease reaches its deadline. Reading this property recovers overdue leases. */
 	readonly expired: boolean;
 	/** Resolves at the fixed acquisition deadline. */
 	readonly expiration: Promise<void>;
-	/** Stop deadline observation after the response completed before expiry. */
+	/** Stop deadline observation and release bytes after response work ends. */
 	complete(): void;
 	/** Subscribe to deadline expiry, with immediate notification if already expired. */
 	onExpire(listener: () => void): () => void;
@@ -63,21 +68,36 @@ export type ReadSlotCapacitySnapshot = NonNullable<
 >;
 
 /** Expire overdue leases before admission or observation, even if timers did not run. */
-function sweepExpiredReadSlots(now = Date.now()): void {
+export function sweepExpiredReadSlots(now = Date.now()): void {
 	for (const lease of activeLeases.values())
 		if (now >= lease.expiresAt) lease.expire();
 }
 
-/** Race preparation work against lease expiry without claiming native work stopped. */
+/**
+ * Race preparation against absolute expiry. Late work keeps its bytes until discard cleanup settles.
+ * The discard callback owns returned sources and must not publish a late response.
+ */
 export async function waitForReadSlotWork<T>(
 	lease: ReadSlotLease,
 	work: Promise<T>,
+	discard?: (value: T) => Promise<void>,
 ): Promise<ReadSlotWorkResult<T> | ReadSlotExpiredResult> {
-	if (lease.expired) return { kind: "expired" };
-	return Promise.race([
-		work.then((value) => ({ kind: "completed" as const, value })),
-		lease.expiration.then(() => ({ kind: "expired" as const })),
-	]);
+	const result = lease.expired
+		? { kind: "expired" as const }
+		: await Promise.race([
+				work.then((value) =>
+					lease.expired
+						? { kind: "expired" as const }
+						: { kind: "completed" as const, value },
+				),
+				lease.expiration.then(() => ({ kind: "expired" as const })),
+			]);
+	if (result.kind === "expired")
+		void work
+			.then(discard, () => {})
+			.finally(() => lease.complete())
+			.catch(() => {});
+	return result;
 }
 
 /** Return an isolate-local aggregate snapshot after recovering overdue leases. */
@@ -107,6 +127,11 @@ export function tryAcquireReadSlot(
 		(lease) => lease.leaseClass === leaseClass && !lease.released,
 	).length;
 	if (activeClass >= classLimit) return undefined;
+	const byteReservation: AdmissionByteReservation | undefined =
+		leaseClass === "rest"
+			? tryReserveAdmissionBytes("rest_read", REST_READ_BYTE_ALLOWANCE)
+			: undefined;
+	if (leaseClass === "rest" && !byteReservation) return undefined;
 	const id = ++nextLeaseId;
 	let released = false;
 	let expired = false;
@@ -128,6 +153,7 @@ export function tryAcquireReadSlot(
 		if (completed || expired) return;
 		expired = true;
 		clearTimeout(timer);
+		activeLeases.delete(id);
 		signalExpiration();
 		expiredReadSlots += 1;
 		release();
@@ -141,14 +167,21 @@ export function tryAcquireReadSlot(
 		listeners.clear();
 	};
 	Object.defineProperties(release, {
-		expired: { get: () => expired },
+		expired: {
+			get: () => {
+				sweepExpiredReadSlots();
+				return expired;
+			},
+		},
 		expiration: { value: expiration },
 	});
 	release.complete = () => {
 		if (completed) return;
+		sweepExpiredReadSlots();
 		completed = true;
 		clearTimeout(timer);
 		activeLeases.delete(id);
+		byteReservation?.release();
 		listeners.clear();
 	};
 	release.onExpire = (listener) => {

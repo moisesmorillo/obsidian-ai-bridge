@@ -538,11 +538,7 @@ describe("executeBlobPut", () => {
 			);
 			await entered.promise;
 			abort.abort();
-			const held = [
-				tryAcquireBodySlot(),
-				tryAcquireBodySlot(),
-				tryAcquireBodySlot(),
-			];
+			const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 			try {
 				expect(held.every((release) => release !== undefined)).toBe(true);
 				expect(tryAcquireBodySlot()).toBeUndefined();
@@ -714,11 +710,7 @@ describe("executeBlobPut", () => {
 				Date.now() - 1,
 			);
 		});
-		const held = [
-			tryAcquireBodySlot(),
-			tryAcquireBodySlot(),
-			tryAcquireBodySlot(),
-		];
+		const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 		try {
 			expect(held.every((release) => release !== undefined)).toBe(true);
 			expect(tryAcquireBodySlot()).toBeUndefined();

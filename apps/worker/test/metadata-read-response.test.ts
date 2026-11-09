@@ -2,9 +2,10 @@ import type {
 	AdmissionCompletion,
 	AuthorizationContext,
 } from "@vaultwire/protocol";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import type { ReadVaultGateway } from "@worker/application/reads";
 import type { Env } from "@worker/env";
+import { acquireTestReadSlot as tryAcquireReadSlot } from "@worker/test-fixtures/read-slot";
 import { createReadRouter } from "@worker/transport/reads";
 import { describe, expect, it } from "vitest";
 
@@ -399,9 +400,8 @@ describe("metadata HTTP response demand", () => {
 			expect(fixture.state.finished).toEqual([]);
 			fixture.release.resolve();
 			await finishing.promise;
-			const slotAfterSourceWork = tryAcquireReadSlot();
-			expect(slotAfterSourceWork).toBeTypeOf("function");
-			slotAfterSourceWork?.();
+			expect(readSlotCapacitySnapshot().active_slots).toBe(3);
+			expect(tryAcquireReadSlot()).toBeUndefined();
 			cleanup.resolve();
 			await failed;
 			const free = tryAcquireReadSlot();
@@ -544,9 +544,8 @@ describe("metadata HTTP response demand", () => {
 			expect(fixture.state.finished).toEqual([]);
 			fixture.release.resolve();
 			await finishing.promise;
-			const slotAfterSourceWork = tryAcquireReadSlot();
-			expect(slotAfterSourceWork).toBeTypeOf("function");
-			slotAfterSourceWork?.();
+			expect(readSlotCapacitySnapshot().active_slots).toBe(3);
+			expect(tryAcquireReadSlot()).toBeUndefined();
 			cleanup.resolve();
 			await Promise.all([drain, cancelled]);
 			const free = tryAcquireReadSlot();

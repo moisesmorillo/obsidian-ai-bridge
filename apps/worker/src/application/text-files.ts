@@ -18,6 +18,11 @@ import type {
 	TextReadResult,
 } from "@vaultwire/protocol";
 import { EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
+import {
+	type AdmissionByteReservation,
+	LOCAL_ADMISSION_RETRY_SECONDS,
+	REST_BODY_BYTE_ALLOWANCE,
+} from "@worker/application/admission-budget";
 import type { BlobVaultGateway } from "@worker/application/blobs";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
@@ -165,13 +170,21 @@ export async function executeTextMutation(
 	readPayload: () => Promise<TextPayload>,
 	declaration?: BlobDeclaration,
 	responseProduction?: Promise<void>,
+	byteReservation?: AdmissionByteReservation,
 ): Promise<TextMutationResult> {
 	if (descriptor.op === "put") {
-		const release = tryAcquireBodySlot(responseProduction);
+		const release = tryAcquireBodySlot(
+			responseProduction,
+			REST_BODY_BYTE_ALLOWANCE,
+			byteReservation,
+		);
 		if (release === undefined)
 			return {
 				ok: false,
-				failure: { kind: "admission_limited", retry_after_seconds: 1 },
+				failure: {
+					kind: "admission_limited",
+					retry_after_seconds: LOCAL_ADMISSION_RETRY_SECONDS,
+				},
 			};
 		try {
 			return await executeTextMutationWithSlot(

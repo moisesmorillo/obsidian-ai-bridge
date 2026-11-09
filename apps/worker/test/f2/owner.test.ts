@@ -211,8 +211,8 @@ describe("production owner console", () => {
 			worker_isolate: {
 				isolate_id: expect.any(String),
 				active_slots: 0,
-				available_slots: 4,
-				limit: 4,
+				available_slots: 12,
+				limit: 12,
 				expired_count: expect.any(Number),
 				deadline_ms: 60_000,
 			},
@@ -270,7 +270,10 @@ describe("production owner console", () => {
 		);
 		expect(emptySummaryHtml).toContain("No observed clients.");
 		expect(emptySummaryHtml).toContain("Responding Worker isolate");
-		expect(emptySummaryHtml).toContain("limit 4. Hold deadline: 60000 ms.");
+		expect(emptySummaryHtml).toContain("limit 12. Hold deadline: 60000 ms.");
+		expect(emptySummaryHtml).toContain("Held 0 of 12");
+		expect(emptySummaryHtml).toContain('aria-label="0 of 12 read slots held"');
+		expect(emptySummaryHtml.match(/class="slot-segment"/g)).toHaveLength(12);
 		expect(emptySummaryHtml).toContain(
 			"does not describe other isolates or prove physical source work stopped.",
 		);

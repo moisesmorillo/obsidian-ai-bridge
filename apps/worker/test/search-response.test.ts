@@ -5,9 +5,9 @@ import type {
 	SearchRequest,
 	SearchResponse,
 } from "@vaultwire/protocol";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { Env } from "@worker/env";
+import { acquireTestReadSlot as tryAcquireReadSlot } from "@worker/test-fixtures/read-slot";
 import {
 	encodeJsonChunks,
 	jsonReadSource,

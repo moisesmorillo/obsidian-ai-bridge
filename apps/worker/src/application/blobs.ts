@@ -12,6 +12,10 @@ import type {
 	TextReadRequest,
 } from "@vaultwire/protocol";
 import { classifyFilePath } from "@vaultwire/protocol";
+import {
+	LOCAL_ADMISSION_RETRY_SECONDS,
+	REST_BODY_BYTE_ALLOWANCE,
+} from "@worker/application/admission-budget";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
 import type { TextVaultGateway } from "@worker/application/text-files";
@@ -96,11 +100,17 @@ export async function executeBlobPut(
 	signal: AbortSignal,
 	responseProduction?: Promise<void>,
 ): Promise<TextMutationResult> {
-	const release = tryAcquireBodySlot(responseProduction);
+	const release = tryAcquireBodySlot(
+		responseProduction,
+		REST_BODY_BYTE_ALLOWANCE,
+	);
 	if (!release)
 		return {
 			ok: false,
-			failure: { kind: "admission_limited", retry_after_seconds: 1 },
+			failure: {
+				kind: "admission_limited",
+				retry_after_seconds: LOCAL_ADMISSION_RETRY_SECONDS,
+			},
 		};
 	try {
 		const reservation = await gateway.beginMutation(context, descriptor, key);

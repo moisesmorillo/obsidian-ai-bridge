@@ -31,8 +31,8 @@ function expectOneFree() {
 }
 
 describe("mutation response production", () => {
-	it("holds_four_completed_operations_through_final_chunk_until_EOF", async () => {
-		const ends = Array.from({ length: 4 }, gate);
+	it("holds_eight_completed_operations_through_final_chunk_until_EOF", async () => {
+		const ends = Array.from({ length: 8 }, gate);
 		const responses = await Promise.all(
 			ends.map((end) =>
 				withMutationResponse(async (done) => {
@@ -78,7 +78,7 @@ describe("mutation response production", () => {
 	it.each([false, true])(
 		"waits_for_pending_read_and_cancel_cleanup_%s",
 		async (failCleanup) => {
-			const held = Array.from({ length: 3 }, () => tryAcquireBodySlot());
+			const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 			const entered = gate();
 			const finishRead = gate();
 			const finishCancel = gate();
@@ -128,7 +128,7 @@ describe("mutation response production", () => {
 	);
 
 	it("releases_after_response_construction_failure", async () => {
-		const held = Array.from({ length: 3 }, () => tryAcquireBodySlot());
+		const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 		try {
 			await expect(
 				withMutationResponse(async (done) => {
@@ -149,7 +149,7 @@ describe("mutation response production", () => {
 
 describe("mutation response terminal paths", () => {
 	it("releases_after_a_producer_error_and_keeps_the_error_visible", async () => {
-		const held = Array.from({ length: 3 }, () => tryAcquireBodySlot());
+		const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 		try {
 			const response = await withMutationResponse(async (done) => {
 				const release = tryAcquireBodySlot(done);
@@ -172,7 +172,7 @@ describe("mutation response terminal paths", () => {
 	});
 
 	it("completes_a_response_without_a_body", async () => {
-		const held = Array.from({ length: 3 }, () => tryAcquireBodySlot());
+		const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 		try {
 			const response = await withMutationResponse(async (done) => {
 				const release = tryAcquireBodySlot(done);
@@ -246,7 +246,7 @@ describe("mutation response backpressure", () => {
 
 describe("mutation response preparation", () => {
 	it("holds_capacity_between_operation_return_and_response_creation", async () => {
-		const held = Array.from({ length: 3 }, () => tryAcquireBodySlot());
+		const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 		const operationDone = gate();
 		const prepare = gate();
 		const response = withMutationResponse(async (done) => {

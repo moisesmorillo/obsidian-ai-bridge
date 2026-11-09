@@ -153,9 +153,11 @@ describe("resource router measurement hooks", () => {
 
 	it("does not record a zero latency sample after wall-clock rollback", async () => {
 		const clockValues = [1_700_000_000_000, 1_699_999_999_000];
+		const rollbackTime = clockValues[1];
+		if (rollbackTime === undefined) throw new Error("Expected rollback time");
 		const clock = vi
 			.spyOn(Date, "now")
-			.mockImplementation(() => clockValues.shift() ?? 1_700_000_000_000);
+			.mockImplementation(() => clockValues.shift() ?? rollbackTime);
 		const samples: unknown[] = [];
 		const pending: Promise<unknown>[] = [];
 		const gateway = emptyFeedGateway();

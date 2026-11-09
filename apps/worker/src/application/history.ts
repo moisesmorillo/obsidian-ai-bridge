@@ -25,6 +25,11 @@ import {
 	type PreparedOperation,
 	prepareOperation,
 } from "@worker/application/admission";
+import type { AdmissionByteReservation } from "@worker/application/admission-budget";
+import {
+	LOCAL_ADMISSION_RETRY_SECONDS,
+	REST_BODY_BYTE_ALLOWANCE,
+} from "@worker/application/admission-budget";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
 
@@ -117,12 +122,21 @@ export async function executeFileCommand(
 	key: string | undefined,
 	readCommand: () => Promise<FileCommand>,
 	responseProduction?: Promise<void>,
+	byteReservation?: AdmissionByteReservation,
+	byteAllowance = REST_BODY_BYTE_ALLOWANCE,
 ): Promise<TextMutationResult> {
-	const release = tryAcquireBodySlot(responseProduction);
+	const release = tryAcquireBodySlot(
+		responseProduction,
+		byteAllowance,
+		byteReservation,
+	);
 	if (release === undefined)
 		return {
 			ok: false,
-			failure: { kind: "admission_limited", retry_after_seconds: 1 },
+			failure: {
+				kind: "admission_limited",
+				retry_after_seconds: LOCAL_ADMISSION_RETRY_SECONDS,
+			},
 		};
 	try {
 		return await executeFileCommandWithSlot(

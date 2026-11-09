@@ -5,6 +5,7 @@ import {
 	encodeFileFailure,
 	encodeFileFailureBodyChunks,
 } from "@vaultwire/protocol";
+import { admissionByteSnapshot } from "@worker/application/admission-budget";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
@@ -41,7 +42,10 @@ function holdBodySlot(): () => void {
 function holdReadSlot(): () => void {
 	const release = tryAcquireReadSlot();
 	if (!release) throw new Error("Expected an available read slot");
-	return release;
+	return () => {
+		release();
+		release.complete();
+	};
 }
 
 describe("aggregate runtime budgets", () => {
@@ -54,14 +58,26 @@ describe("aggregate runtime budgets", () => {
 			return release;
 		});
 		try {
+			expect(admissionByteSnapshot()).toMatchObject({
+				shared_bytes: 64_000_000,
+				rest_read_bytes: 18_000_000,
+			});
 			expect(tryAcquireBodySlot()).toBeUndefined();
 			expect(tryAcquireReadSlot()).toBeUndefined();
 			expect(tryAcquireReadSlot("mcp")).toBeUndefined();
 		} finally {
 			for (const release of restReleases) release();
-			for (const release of mcpReleases) release();
+			for (const release of mcpReleases) {
+				release();
+				release.complete();
+			}
 			for (const release of bodyReleases) release();
 		}
+		expect(admissionByteSnapshot()).toMatchObject({
+			shared_bytes: 0,
+			rest_read_bytes: 0,
+			active_reservations: 0,
+		});
 	});
 
 	it("routes request seventeen to the same real DO after sixteen mixed durable grants", async () => {
@@ -155,7 +171,7 @@ describe("aggregate runtime budgets", () => {
 
 	it("derives an application-owned subtotal from bounded failure encoder chunks", () => {
 		const maximumTextBytes = 1_000_000;
-		const bodySlots = 4;
+		const bodySlots = 8;
 		const utf16UnitBytes = 2;
 		// Match the protocol encoder window and the response owner's bounded BYOB read.
 		const maximumWindowUnits = 8_192;
@@ -214,6 +230,6 @@ describe("aggregate runtime budgets", () => {
 		expect(pendingRpcUtf16Bytes).toBe(4_000_000);
 		expect(encoderWorkingBytes).toBe(327_684);
 		expect(responsePhaseBytes).toBe(2_327_684);
-		expect(derivedOwnedValueBytes).toBe(16_000_000);
+		expect(derivedOwnedValueBytes).toBe(32_000_000);
 	});
 });

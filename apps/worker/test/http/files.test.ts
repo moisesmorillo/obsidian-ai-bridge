@@ -1460,8 +1460,8 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(state.revisions).toHaveLength(1);
 	});
 
-	it("refuses a fifth body before it reads or reserves admission", async () => {
-		const pending = Array.from({ length: 5 }, (_, index) =>
+	it("refuses a ninth body before it reads or reserves admission", async () => {
+		const pending = Array.from({ length: 9 }, (_, index) =>
 			createPendingBody(`pending-${index}`),
 		);
 		const requests = pending.map((body, index) =>
@@ -1476,26 +1476,26 @@ describe("conditional text HTTP lifecycle", () => {
 			} as RequestInit),
 		);
 		try {
-			await Promise.all(pending.slice(0, 4).map((body) => body.ready));
+			await Promise.all(pending.slice(0, 8).map((body) => body.ready));
 			await Promise.resolve();
-			expect(pending.slice(0, 4).every((body) => body.wasReadRequested())).toBe(
+			expect(pending.slice(0, 8).every((body) => body.wasReadRequested())).toBe(
 				true,
 			);
-			expect(pending[4]?.wasReadRequested()).toBe(false);
+			expect(pending[8]?.wasReadRequested()).toBe(false);
 		} finally {
 			for (const body of pending) body.send();
 		}
 		const responses = await Promise.all(requests);
 		expect(responses.map((response) => response.status).sort()).toEqual(
-			[201, 201, 201, 201, 429].sort(),
+			[201, 201, 201, 201, 201, 201, 201, 201, 429].sort(),
 		);
 		for (const response of responses) await response.text();
 	});
 
 	it.each([32, 1_000_000])(
-		"characterizes four ordinary HTTP inline operations with %i source bytes each",
+		"characterizes eight ordinary HTTP inline operations with %i source bytes each",
 		async (size) => {
-			const bodies = Array.from({ length: 4 }, (_, index) =>
+			const bodies = Array.from({ length: 8 }, (_, index) =>
 				createPendingBody(String(index).repeat(size)),
 			);
 			const requests = bodies.map((pending, index) =>
@@ -1521,7 +1521,7 @@ describe("conditional text HTTP lifecycle", () => {
 				expect(response.status).toBe(201);
 				await response.text();
 			}
-			for (let index = 0; index < 4; index++) {
+			for (let index = 0; index < 8; index++) {
 				const read = await SELF.fetch(
 					`https://worker.invalid/v1/files/retention-${index}.md`,
 				);
@@ -1535,7 +1535,7 @@ describe("conditional text HTTP lifecycle", () => {
 			console.info(
 				"HTTP_INLINE_RETENTION",
 				JSON.stringify({
-					operations: 4,
+					operations: 8,
 					sourceBytes: size,
 					contentUnits: size,
 				}),
@@ -1579,7 +1579,7 @@ describe("conditional text HTTP lifecycle", () => {
 	it("characterizes slow escaped failure responses and cancellation without caller gates", async () => {
 		const expectedSizes: number[] = [];
 		const expectedDigests: ArrayBuffer[] = [];
-		for (let index = 0; index < 4; index++) {
+		for (let index = 0; index < 8; index++) {
 			const created = await SELF.fetch(
 				`https://worker.invalid/v1/files/escaped-${index}.canvas`,
 				{
@@ -1606,10 +1606,10 @@ describe("conditional text HTTP lifecycle", () => {
 			);
 			expectedDigests.push(await escapedFailureDigest(emptyBody, index));
 		}
-		/** Start four real HTTP mutations without a result wait or an actor gate. */
-		const failFour = () =>
+		/** Start eight real HTTP mutations without a result wait or an actor gate. */
+		const failEight = () =>
 			Promise.all(
-				Array.from({ length: 4 }, (_, index) =>
+				Array.from({ length: 8 }, (_, index) =>
 					SELF.fetch(
 						`https://worker.invalid/v1/files/escaped-${index}.canvas`,
 						{
@@ -1618,12 +1618,12 @@ describe("conditional text HTTP lifecycle", () => {
 								"If-None-Match": "*",
 								"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
 							},
-							body: String(index + 4).repeat(1_000_000),
+							body: String(index).repeat(1_000_000),
 						},
 					),
 				),
 			);
-		const first = await failFour();
+		const first = await failEight();
 		const second: Response[] = [];
 		const retry: Response[] = [];
 		try {
@@ -1632,12 +1632,12 @@ describe("conditional text HTTP lifecycle", () => {
 				expect(response.bodyUsed).toBe(false);
 			}
 			// The test consumer reads no first-wave body before the second HTTP wave completes.
-			second.push(...(await failFour()));
+			second.push(...(await failEight()));
 			// Native transport can consume a producer before the client reads its body.
 			// This schedule observes refusal now, not a general rule about unread remote bodies.
 			for (const response of second) {
 				expect(response.status).toBe(429);
-				expect(response.headers.get("Retry-After")).toBe("1");
+				expect(response.headers.get("Retry-After")).toBe("2");
 				expect(await response.json()).toMatchObject({
 					error: "admission_limited",
 				});
@@ -1645,7 +1645,7 @@ describe("conditional text HTTP lifecycle", () => {
 			const unreadFirstWaveAtSecondCompletion = first.filter(
 				(response) => !response.bodyUsed,
 			).length;
-			expect(unreadFirstWaveAtSecondCompletion).toBe(4);
+			expect(unreadFirstWaveAtSecondCompletion).toBe(8);
 			const completedBytes: number[] = [];
 			for (let index = 0; index < first.length; index++) {
 				const response = first[index];
@@ -1675,7 +1675,7 @@ describe("conditional text HTTP lifecycle", () => {
 				completedBytes.push(total);
 			}
 			// After complete production, repeat the failures and retain bounded client cancellation coverage.
-			retry.push(...(await failFour()));
+			retry.push(...(await failEight()));
 			for (const response of retry) {
 				expect(response.status).toBe(412);
 				if (!response.body)
@@ -1700,7 +1700,7 @@ describe("conditional text HTTP lifecycle", () => {
 					.toArray(),
 			}));
 			expect(rows.admissions).toBe(0);
-			expect(rows.files).toHaveLength(4);
+			expect(rows.files).toHaveLength(8);
 			expect(
 				rows.files.every((row) => row.rev === 1 && row.size === 1_000_000),
 			).toBe(true);

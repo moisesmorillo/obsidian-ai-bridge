@@ -21,7 +21,7 @@ The command keeps the old folder unchanged. If it fails during the first backup 
 4. The command refuses while AI Bridge remains enabled, while Vaultwire is connected or active, or when Vaultwire already has settings. It copies the old `data.json` and creates a verified backup. It does not change journal state or payloads.
 5. The Vaultwire settings page becomes available. Keep AI Bridge disabled. Check the imported service address and local state. Click Connect and complete OAuth only when the new service is ready.
 
-Use BRAT for the plugin files. Do not use Files to open the hidden `.obsidian/plugins` directory. The iOS procedure uses Obsidian adapter access and the explicit command above. Do not remove either plugin folder during this task.
+Use BRAT for the plugin files. In BRAT, add the repository `moisesmorillo/vaultwire` as a beta plugin. Do not use Files to open the hidden `.obsidian/plugins` directory. The iOS procedure uses Obsidian adapter access and the explicit command above. Do not remove either plugin folder during this task.
 
 ## Device-only state
 

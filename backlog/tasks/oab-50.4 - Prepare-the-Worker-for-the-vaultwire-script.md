@@ -4,7 +4,7 @@ title: Prepare the Worker for the vaultwire script
 status: In Progress
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:16:00Z'
+updated_date: '2026-11-09T16:27:00Z'
 labels:
   - rename
   - worker
@@ -85,4 +85,10 @@ GREEN evidence: bun run docs:check passed. bun run check passed lint, documentat
 Remote rehearsal: an initial run failed to read the source Workers.dev endpoint with curl exit 56. Both named scripts were deleted successfully. A retry deployed vaultwire-rehearsal-a with an isolated SQLite Vault create migration, seeded synthetic cursor and file rows under vaultwire-rehearsal-stable-object, then transferred Vault to vaultwire-rehearsal-b without a destination create migration. The object ID, cursor, and file rows matched before and after. Wrangler deletion succeeded for both named scripts. No production deploy, zone request, R2/KV resource operation, or personal vault access occurred.
 
 The earlier hostname-derived identity blocker is resolved by the approved stable binding. AC1 is now supported by the synthetic rehearsal. Keep this task In Progress pending parent review and publication. S17 placeholders and the production cutover guard remain unchanged.
+
+Task review of approved object-name extension at 383ff04 returned APPROVE WITH NOTES. Production and development object-name selection, missing-name guards, transfer rehearsal and deletion evidence satisfy scope. One non-blocking test gap remains for final branch review: add explicit callback non-empty object-name drift and outer Worker fetch missing-name cases. Existing tests cover missing/empty callback names and direct consent. Runtime guards exist. Final review must assess this bounded gap before publication.
+
+Final-review finding closure: added the requested callback object-name drift case with a different non-empty name. The callback returns invalid_grant, and the namespace spy confirms zero idFromName selections. Added outer Worker fetch checks for missing and empty names. Each asserts status 503, exact body `Vault object name is not configured`, cache-control `no-store`, and zero namespace selections.
+
+Validation for this bounded test-only change: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts -t 'fails closed at the Worker entry|rejects other provider identities'` passed 2 tests, exit 0. `bun run docs:check` passed, exit 0. `bun run check` passed, exit 0. It reported 54 Worker test files with 774 tests, 19 protocol files with 314 tests, 30 plugin files with 844 passed and 1 skipped, and 9 tooling files with 102 tests. The Worker F2 suite passed 145 tests.\n\nRehearsal version clarification: the remote rehearsal used Wrangler CLI 4.156.2. This repository pins Wrangler 4.45.0. The remote rehearsal does not directly qualify transfer behavior with the pinned CLI. Do not rerun the rehearsal in this test-only fix wave.
 <!-- SECTION:NOTES:END -->

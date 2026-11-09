@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/moisesmorillo/vaultwire/compare/worker-v0.5.0...worker-v0.6.0) (2026-11-09)
+
+
+### Features
+
+* **worker:** one Vaultwire mark across console, consent and README ([#139](https://github.com/moisesmorillo/vaultwire/issues/139)) ([92edc22](https://github.com/moisesmorillo/vaultwire/commit/92edc22b0f152037d901813f4b042bc90bbaf495))
+
 ## [0.5.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/worker-v0.4.1...worker-v0.5.0) (2026-11-08)
 
 

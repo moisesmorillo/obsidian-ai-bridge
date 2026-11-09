@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:08:00Z'
+updated_date: '2026-11-09T16:24:00Z'
 labels:
   - rename
 dependencies: []
@@ -70,25 +70,31 @@ Document sibling cutover names without changing historical records or the curren
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Owner brief S16 and common rename rules authorize unattended execution without Plannotator. OAB-50.4 owns .github/workflows/deploy.yml. Its old package selector must become @vaultwire/worker when the sibling branch merges. This branch cannot edit that file. Existing GitHub repository links stay until OAB-50.5.
+Owner brief S16 and common rename rules authorize execution without Plannotator. OAB-50.4 owns `.github/workflows/deploy.yml`. Its package selector must become `@vaultwire/worker` when that sibling change lands. This branch does not edit that file. Current repository links stay until OAB-50.5.
 
 Implementation and validation evidence:
 - Baseline `bun run check` passed before edits. It reported 131 test files, 2,305 passed tests, and 1 skipped test.
-- RED: `bun run --filter '@obsidian-ai-bridge/tooling' test -- test/release-please-config.test.ts test/product-labels.test.ts` failed as expected. It reported 5 failed tests and 6 passed tests.
-- RED: `bun run --filter '@obsidian-ai-bridge/plugin' test -- test/release.test.ts` failed as expected. It reported 2 failed tests and 23 passed tests.
-- GREEN: renamed tooling tests passed 16 tests across 3 files. Protocol import tests passed 8 tests. Plugin release, lifecycle, and acceptance tests passed 188 tests. Owner and consent page tests passed 20 tests.
+- Initial RED tests failed as expected. Tooling reported 5 failed and 6 passed tests. Plugin release tests reported 2 failed and 23 passed tests.
+- GREEN targeted tests passed: tooling passed 17 tests across 3 files. Protocol import tests passed 8 tests. Plugin release, lifecycle, and acceptance tests passed 188 tests. Owner and consent page tests passed 20 tests.
 - Updated 6 HTML snapshots. The snapshot diff changes brand text and the owner page title only.
-- `bun install --frozen-lockfile`, `bun run docs:check`, `bun run check`, and `bun run --filter '@vaultwire/worker' preflight` passed after edits.
-- Full check passed 132 test files with 2,309 passed tests and 1 skipped test. Worker fault-injection tests printed expected failure logs.
+- `bun install --frozen-lockfile`, `bun run docs:check`, `bun run check`, and `bun run --filter '@vaultwire/worker' preflight` passed after the rebrand.
+- Review round 1 found that a Worker-only release PR could permit early removal of the shared root pin while the plugin still had only legacy tags.
+- RED for the corrective test: `bun run --filter '@vaultwire/tooling' test -- test/release-please-config.test.ts` reported 1 failed and 8 passed tests because the release guide allowed removal after any post-rename release PR.
+- GREEN for the corrected policy: `bun run --filter '@vaultwire/tooling' test -- test/release-please-config.test.ts test/product-labels.test.ts test/deployment-config.test.ts` passed 17 tests across 3 files.
+- Final `bun run docs:check` passed. Final `bun run check` passed 132 test files, 2,310 tests, and 1 skipped test. A formatting issue in an earlier run was fixed with Biome before this check.
+- Final `bun run --filter '@vaultwire/worker' preflight` passed. Worker fault-injection tests printed expected failure logs.
 
-Release baseline:
-- The official Release Please manifest guide supports root `last-release-sha`. It never ignores this setting.
-- The pin at `7ed19cca1e566e9a6975c19c4c576213f4bb79ab` limits the next release calculation to changes after the existing release baseline.
-- Remove or advance the pin after the first post-rename release PR merges. The pinned value applies to every run until then.
-- Package paths and versions stay unchanged. Plugin tags use `vaultwire-v`. Worker tags use `worker-v`. No tag or release changed.
+Release baseline policy:
+- The official Release Please manifest guide says root `last-release-sha` is top-level only and never ignored. The shared pin applies to both release components.
+- The test covers a Worker-first state with `worker-v0.5.1` and only legacy plugin tag `ai-bridge-v0.2.1`. The pin stays configured in this state.
+- The pin can be removed only after a `vaultwire-v*` plugin release is published. A Worker-only release PR does not meet this condition.
+- The pin remains `7ed19cca1e566e9a6975c19c4c576213f4bb79ab`. Package paths and versions stay unchanged. Worker tags stay `worker-v`. No tag or release changed.
 
 Sibling-owned follow-up:
-- OAB-50.4 owns `.github/workflows/deploy.yml`. Its `@obsidian-ai-bridge/worker` filter stays unchanged here. `tooling/test/deployment-config.test.ts` keeps its matching expectation until that sibling change lands.
-- OAB-50.4 also owns `apps/worker/wrangler*.jsonc`. OAB-50.3 owns `apps/plugin/manifest.json` and plugin storage identifiers and paths. OAB-50.2 owns Cloudflare resource names.
+- OAB-50.4 owns `.github/workflows/deploy.yml` and `apps/worker/wrangler*.jsonc`. The deploy selector and its test expectation stay unchanged here.
+- OAB-50.3 owns `apps/plugin/manifest.json` and plugin storage identifiers and paths. OAB-50.2 owns Cloudflare resource names.
 - Current repository links stay unchanged until OAB-50.5. Historical plans, tasks, changelogs, tags, releases, plugin IDs, storage paths, provider identity, and synthetic vault paths stay unchanged. No live service or real vault was used.
+
+Root pin source check:
+- The official manifest guide says `last-release-sha` applies only at the root and is never ignored. `src/manifest.ts` passes this root value to shared manifest options, then stops commit collection at that SHA. Both components use this shared baseline. See https://github.com/googleapis/release-please/blob/main/docs/manifest-releaser.md and https://github.com/googleapis/release-please/blob/main/src/manifest.ts.
 <!-- SECTION:NOTES:END -->

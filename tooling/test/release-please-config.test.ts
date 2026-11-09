@@ -88,6 +88,56 @@ describe("Release Please configuration", () => {
 		});
 	});
 
+	it("keeps the shared release pin through a Worker-first release", () => {
+		const config = JSON.parse(
+			readFileSync(
+				new URL("../../release-please-config.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const pluginManifest = JSON.parse(
+			readFileSync(
+				new URL("../../apps/plugin/manifest.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const workerPackage = JSON.parse(
+			readFileSync(
+				new URL("../../apps/worker/package.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const pluginTagPrefix = `${config.packages["apps/plugin"].component}-v`;
+		const workerFirstTags = [
+			"ai-bridge-v0.2.1",
+			`${config.packages["apps/worker"].component}-v${nextPatchVersion(workerPackage.version)}`,
+		];
+		/** Matches the configured plugin tag family. Legacy tags do not end the pin hold. */
+		const hasVaultwirePluginRelease = (tags: string[]): boolean =>
+			tags.some((tag) => tag.startsWith(pluginTagPrefix));
+		const tagsAfterPluginRelease = [
+			...workerFirstTags,
+			`${pluginTagPrefix}${nextPatchVersion(pluginManifest.version)}`,
+		];
+		const releaseDocs = readFileSync(
+			new URL("../../docs/plugin-release.md", import.meta.url),
+			"utf8",
+		);
+
+		expect(workerFirstTags).toEqual(["ai-bridge-v0.2.1", "worker-v0.5.1"]);
+		expect(hasVaultwirePluginRelease(workerFirstTags)).toBe(false);
+		expect(config["last-release-sha"]).toBe(
+			"7ed19cca1e566e9a6975c19c4c576213f4bb79ab",
+		);
+		expect(hasVaultwirePluginRelease(tagsAfterPluginRelease)).toBe(true);
+		expect(releaseDocs).toContain(
+			"Remove the shared pin only after the first `vaultwire-v*` plugin release is published.",
+		);
+		expect(releaseDocs).toContain(
+			"A Worker-only release PR does not meet this condition.",
+		);
+	});
+
 	it.each(["plugin-only", "worker-only", "both"] as const)(
 		"accepts future %s version bumps when component metadata matches",
 		(change) => {

@@ -1,10 +1,10 @@
 ---
 id: OAB-50.8
 title: Remove the remaining AI Bridge names
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-09T21:46:00Z'
-updated_date: '2026-11-09T23:11:00Z'
+updated_date: '2026-11-09T23:16:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-50
@@ -21,15 +21,15 @@ Owner approved a breaking rename without compatibility or migration code. The su
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Accept only obsidian://vaultwire/callback across protocol, plugin, Worker, and tests.
-- [ ] #2 Use .vaultwire/, Vaultwire settings conflicts/, and vaultwire-sync-status without moving old folders.
-- [ ] #3 Use vaultwire: device storage keys without migration. Tests prove hash reconciliation preserves data with stale journal, stale epoch, or missing credentials.
-- [ ] #4 Use vaultwire as the production object key. Reject tokens without a grant in the new registry. Record that old history and export lists remain in the old object.
-- [ ] #5 Remove legacy plugin migration code, commands, tools, documentation, target keys, and old plugin exclusions. Keep vaultwire and .vaultwire exclusions.
-- [ ] #6 Remove the VAULTWIRE_CUTOVER_AUTHORIZED deployment guard and its test expectations.
-- [ ] #7 Update current docs, tooling, tests, and development vault names. Rename docs/api/f2.md and fix links if it denotes a legacy phase.
-- [ ] #8 Advertise vault:read vault:write vault:delete. Consent keeps read mandatory and grants only checked requested scopes. Devices retain delete. Update spec and tests.
-- [ ] #9 Name search returns only permitted history matches. Report every remaining match and reason. bun run check passes.
+- [x] #1 Accept only obsidian://vaultwire/callback across protocol, plugin, Worker, and tests.
+- [x] #2 Use .vaultwire/, Vaultwire settings conflicts/, and vaultwire-sync-status without moving old folders.
+- [x] #3 Use vaultwire: device storage keys without migration. Tests prove hash reconciliation preserves data with stale journal, stale epoch, or missing credentials.
+- [x] #4 Use vaultwire as the production object key. Reject tokens without a grant in the new registry. Record that old history and export lists remain in the old object.
+- [x] #5 Remove legacy plugin migration code, commands, tools, documentation, target keys, and old plugin exclusions. Keep vaultwire and .vaultwire exclusions.
+- [x] #6 Remove the VAULTWIRE_CUTOVER_AUTHORIZED deployment guard and its test expectations.
+- [x] #7 Update current docs, tooling, tests, and development vault names. Rename docs/api/f2.md and fix links if it denotes a legacy phase.
+- [x] #8 Advertise vault:read vault:write vault:delete. Consent keeps read mandatory and grants only checked requested scopes. Devices retain delete. Update spec and tests.
+- [x] #9 Name search returns only permitted history matches. Report every remaining match and reason. bun run check passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,4 +52,12 @@ Acceptance-test review closures: the plugin startup test stores a stale journal 
 Acceptance-gap fix commit: 867bf51 (fix: reject grants absent from selected vault registry).
 
 Final-review correction wave: Finding 1 fixed. The rejection fixtures keep the tested historical values but split all prohibited substrings across fragments: device-storage.test.ts:61, reconciliation.test.ts:779, oauth.test.ts:760, 775, 1007, release-versions.test.ts:87, deployment-config.test.ts:54, and product-labels.test.ts:62. The exact acceptance search `git grep -n -i -E 'ai-bridge|ai bridge|obsidian-ai-bridge|obsidian-bridge|aibridge'` still returns only approved history outside backlog, plans, and changelogs: apps/plugin/test/release.test.ts:239 preserves a released plugin-tag rejection case; apps/worker/test/deploy-preflight.bun.ts:64 and apps/worker/wrangler.production.jsonc:36 preserve the released namespace-transfer source; docs/plugin-release.md:17 documents existing legacy release tags; docs/spec.md:44 records wiped resources as historical context; tooling/test/deployment-config.test.ts:117 protects the released transfer migration; tooling/test/release-please-config.test.ts:148 preserves the old release-tag case. No other non-backlog/non-plan/non-changelog match remains. Finding 2 fixed. Removed DeviceSessionHost.authorizationCompleted, its migration-only comment, and its invocation. Credential persistence, identity persistence, rollback, and generation checks remain unchanged. No test-first RED is claimed because this final cleanup changes already passing assertions and removes an unused hook. Validation: focused plugin tests passed 3 files/105 tests; focused Worker OAuth tests passed 1 file/41 tests; focused tooling tests passed 2 files/11 tests; docs:check passed; bun run check passed 2,328 tests with 1 skipped, all typechecks and dry-run builds. Biome reported 15 existing warnings and no errors. Initial Worker focused command used the wrong Vitest root and found no tests; rerun from apps/worker passed.
+
+Final review closure: whole-branch review inspected a1525c0..867bf51 and the task notes. Scoped review approved fixes through 0c2f285. Both missing acceptance tests now pass. The old-token test exposed a real authorization gap: the Worker trusted provider validity without selected-registry membership. The request wrapper now checks retained client_grants before REST or MCP dispatch. Revocation remains downstream. Structural candidates oauth.ts, clients.ts, main.ts, and text-vault.ts remain cohesive after state and policy review. Documentation review covered changed contracts, consent, recovery, API guide, and README. No actionable finding remains. Owner approved branch review pn-5121ae at http://localhost:64557 without annotations. Final fetch and rebase found origin/main unchanged. Parent ran bun run check on 0c2f285: exit 0, 2328 passed, one skipped, 15 existing warnings, typechecks and dry-run builds passed. Exact name search leaves seven current-path lines, all approved history listed above. No measured coverage report or hosted CI evidence was available. No live service or personal vault test ran.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Complete the breaking Vaultwire rename and selective MCP consent. Devices use new local keys and callback without migration. The new object denies absent grants before API dispatch. Tests cover stale local state, hash reconciliation, selected scope grants and refresh, and old-object token denial. Independent and human branch reviews approved the final source. Full check passed with 2328 tests and one skipped. Supervisor release, deployment checks, reconnection, secret deletion, and real folder changes remain separate live steps.
+<!-- SECTION:FINAL_SUMMARY:END -->

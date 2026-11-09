@@ -20,7 +20,7 @@ The release workflow uses its token to push the chore commit or create the fallb
 
 ## Install from BRAT
 
-BRAT installs releases from `moisesmorillo/obsidian-ai-bridge`. The plugin needs the Obsidian version in its manifest. In BRAT, add the repository as a beta plugin and select the required release if BRAT does not select it automatically. Enable Vaultwire after installation.
+BRAT installs releases from `moisesmorillo/vaultwire`. The plugin needs the Obsidian version in its manifest. In BRAT, add the repository as a beta plugin and select the required release if BRAT does not select it automatically. Enable Vaultwire after installation.
 
 ## Mobile trial gate
 

@@ -21,6 +21,7 @@ import {
 	createLocalWorkerLaunch,
 	createTemporaryRoot,
 	filterLocalCompatibilityFlags,
+	localizeDurableObjectMigrations,
 	safePreflightFailure,
 	startLocalWorker,
 	stopLocalWorker,
@@ -54,6 +55,17 @@ async function main(): Promise<void> {
 			"nodejs_compat",
 		]),
 		["nodejs_compat"],
+	);
+	assert.deepEqual(
+		localizeDurableObjectMigrations([
+			{
+				tag: "vaultwire-transfer-v1",
+				transferred_classes: [
+					{ from: "Vault", from_script: "obsidian-ai-bridge", to: "Vault" },
+				],
+			},
+		]),
+		[{ tag: "preflight-local-v1", new_sqlite_classes: ["Vault"] }],
 	);
 	assert.deepEqual(classifyWranglerFailure("ordinary Wrangler error"), [
 		"unknown_wrangler_failure",
@@ -191,10 +203,18 @@ async function main(): Promise<void> {
 			),
 		) as {
 			account_id?: string;
-			vars: { SERVICE_ORIGIN: string; OWNER_SUBJECT: string };
+			vars: {
+				SERVICE_ORIGIN: string;
+				VAULT_OBJECT_NAME: string;
+				OWNER_SUBJECT: string;
+			};
 		};
 		assert.equal(localConfig.account_id, undefined);
 		assert.equal(localConfig.vars.SERVICE_ORIGIN, `https://127.0.0.1:${port}`);
+		assert.equal(
+			localConfig.vars.VAULT_OBJECT_NAME,
+			"vaultwire-preflight-test",
+		);
 		assert.deepEqual((await readdir(localConfigDirectory)).sort(), [
 			".env",
 			"wrangler.local.jsonc",

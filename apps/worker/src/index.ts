@@ -28,15 +28,24 @@ async function resolveIdentity(
 	return identity ? AuthorizationContextSchema.parse(identity) : null;
 }
 
-/** Select the vault named by the request host after identity validation. */
+/** Return the stable namespace key or fail before any Durable Object lookup. */
+function configuredVaultObjectName(env: Env): string {
+	const name = env.VAULT_OBJECT_NAME;
+	if (!name) throw new Error("Vault object name is not configured");
+	return name;
+}
+
+/** Select the configured stable Vault object after identity validation. */
 function resolveVault(
 	env: Env,
-	request: Request,
+	_request: Request,
 ): TextVaultGateway &
 	HistoryVaultGateway &
 	ReadVaultGateway &
 	SearchVaultGateway {
-	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	const stub = env.VAULTS.get(
+		env.VAULTS.idFromName(configuredVaultObjectName(env)),
+	);
 	return {
 		getCurrentEpoch: async (...args: Parameters<typeof stub.getCurrentEpoch>) =>
 			await stub.getCurrentEpoch(...args),
@@ -80,12 +89,14 @@ function resolveVault(
 	};
 }
 
-/** Select bounded service measurement RPCs for the host-selected Vault. */
+/** Select bounded service measurement RPCs for the configured Vault object. */
 function resolveMeasurements(
 	env: Env,
-	request: Request,
+	_request: Request,
 ): Pick<MeasurementGateway, "recordRequest" | "recordFeedPreparation"> {
-	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	const stub = env.VAULTS.get(
+		env.VAULTS.idFromName(configuredVaultObjectName(env)),
+	);
 	return {
 		recordRequest: async (...args) =>
 			await stub.recordMeasurementRequest(...args),
@@ -94,12 +105,14 @@ function resolveMeasurements(
 	};
 }
 
-/** Expose only owner registry capabilities for the host-selected canonical vault. */
+/** Expose only owner registry capabilities for the configured canonical Vault object. */
 function resolveClientRegistry(
 	env: Env,
-	request: Request,
+	_request: Request,
 ): ClientRegistryGateway {
-	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	const stub = env.VAULTS.get(
+		env.VAULTS.idFromName(configuredVaultObjectName(env)),
+	);
 	return {
 		beginClientConsent: async (...args) =>
 			await stub.beginClientConsent(...args),
@@ -127,12 +140,14 @@ function resolveClientRegistry(
 	};
 }
 
-/** Expose only owner snapshot operations for the host-selected canonical vault. */
+/** Expose only owner snapshot operations for the configured canonical Vault object. */
 function resolveExports(
 	env: Env,
-	request: Request,
+	_request: Request,
 ): ReturnType<OwnerExportResolver> {
-	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	const stub = env.VAULTS.get(
+		env.VAULTS.idFromName(configuredVaultObjectName(env)),
+	);
 	return {
 		start: async (...args) => await stub.startPackedExport(...args),
 		list: async (...args) => await stub.listPackedExports(...args),
@@ -163,9 +178,11 @@ function canonicalServiceHost(origin: string | undefined): string | null {
 /** Expose only owner-authenticated bounded garbage-collection operations. */
 function resolveBlobGc(
 	env: Env,
-	request: Request,
+	_request: Request,
 ): ReturnType<OwnerBlobGcResolver> {
-	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	const stub = env.VAULTS.get(
+		env.VAULTS.idFromName(configuredVaultObjectName(env)),
+	);
 	return {
 		preview: async (...args) => await stub.previewBlobGc(...args),
 		status: async (...args) => await stub.readBlobGcStatus(...args),
@@ -178,9 +195,9 @@ function createLocalAuthHandler(): ExportedHandler<Env> {
 	const consent = createAuthorizeHandler();
 	const owner = createOwnerHandler(
 		resolveClientRegistry,
-		(env, request) => {
+		(env, _request) => {
 			const stub = env.VAULTS.get(
-				env.VAULTS.idFromName(new URL(request.url).host),
+				env.VAULTS.idFromName(configuredVaultObjectName(env)),
 			);
 			return {
 				readMeasurements: async (ownerSubject) =>
@@ -221,6 +238,13 @@ const worker = {
 		) {
 			return Promise.resolve(new Response("Not found", { status: 404 }));
 		}
+		if (!env.VAULT_OBJECT_NAME)
+			return Promise.resolve(
+				new Response("Vault object name is not configured", {
+					status: 503,
+					headers: { "cache-control": "no-store" },
+				}),
+			);
 		const executionContext =
 			context ??
 			({
@@ -243,12 +267,16 @@ const worker = {
 					}),
 				);
 	},
-	/** Start one timestamp-keyed export on the canonical host Vault only. */
+	/** Start one timestamp-keyed export only for the canonical service origin. */
 	async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-		const host = canonicalServiceHost(env.SERVICE_ORIGIN);
-		if (!host || !Number.isSafeInteger(controller.scheduledTime)) return;
+		if (
+			!env.VAULT_OBJECT_NAME ||
+			!canonicalServiceHost(env.SERVICE_ORIGIN) ||
+			!Number.isSafeInteger(controller.scheduledTime)
+		)
+			return;
 		const createdAt = new Date(controller.scheduledTime).toISOString();
-		const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME));
 		const result = await stub.startScheduledPackedExport(createdAt);
 		if (!result)
 			console.info(

@@ -346,7 +346,7 @@ async function createLegacyAuthorizationCode(
 		}),
 		consent.handle,
 	);
-	const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+	const vault = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 	const fence = await vault.beginClientConsent(
 		"synthetic-owner",
 		clientId,
@@ -497,6 +497,180 @@ afterEach(() => {
 });
 
 describe("production OAuth entry", () => {
+	it("routes REST, owner, consent, and grant work through the configured object name", async () => {
+		const selectedNames: string[] = [];
+		const vaults = new Proxy(env.VAULTS, {
+			/** Preserve the namespace while recording every selected object name. */
+			get(target, property) {
+				if (property === "idFromName")
+					return (name: string) => {
+						selectedNames.push(name);
+						return target.idFromName(name);
+					};
+				const value = Reflect.get(target, property, target);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
+		const bindings = new Proxy(env, {
+			/** Replace only the namespace binding for routing observation. */
+			get(target, property) {
+				return property === "VAULTS"
+					? vaults
+					: Reflect.get(target, property, target);
+			},
+		}) as Env;
+		const client = await registerPublicClient();
+		const assertion = await ownerAssertion();
+		const token = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const rest = await productionWorker.fetch(
+			new Request("https://service.test/v1/vault", {
+				headers: { authorization: `Bearer ${token.access_token}` },
+			}),
+			bindings,
+		);
+		expect(rest.status).toBe(200);
+		await rest.text();
+		for (const path of [
+			"/owner/clients",
+			"/owner/measurements?format=json",
+			"/owner/exports",
+			"/owner/blob-gc",
+		]) {
+			const response = await productionWorker.fetch(
+				new Request(`https://service.test${path}`, {
+					headers: { "Cf-Access-Jwt-Assertion": await ownerAssertion() },
+				}),
+				bindings,
+			);
+			expect(response.status).toBe(200);
+			await response.text();
+		}
+		const { verifier, challenge } = createPkce();
+		const query = new URLSearchParams({
+			response_type: "code",
+			client_id: client.client_id,
+			redirect_uri: "https://flow.test/callback",
+			scope: "vault:read",
+			state: "object-name-consent",
+			code_challenge: await challenge,
+			code_challenge_method: "S256",
+			resource: "https://service.test",
+		});
+		const consentHandler = createAuthorizeHandler();
+		const consentPage = await consentHandler.fetch?.(
+			new Request(`https://service.test/authorize?${query}`, {
+				headers: { "Cf-Access-Jwt-Assertion": assertion },
+			}) as Parameters<NonNullable<typeof consentHandler.fetch>>[0],
+			bindings,
+			{} as ExecutionContext,
+		);
+		expect(consentPage?.status).toBe(200);
+		const cookie = consentPage?.headers.get("set-cookie")?.split(";")[0] ?? "";
+		const handle = (await consentPage?.text())?.match(
+			/name="handle" value="([^"]+)"/,
+		)?.[1];
+		const consent = await consentHandler.fetch?.(
+			new Request("https://service.test/authorize/consent", {
+				method: "POST",
+				headers: {
+					"Cf-Access-Jwt-Assertion": assertion,
+					cookie,
+					"content-type": "application/x-www-form-urlencoded",
+				},
+				body: new URLSearchParams({
+					handle: handle ?? "",
+					decision: "approve",
+				}),
+			}) as Parameters<NonNullable<typeof consentHandler.fetch>>[0],
+			bindings,
+			{} as ExecutionContext,
+		);
+		expect(consent?.status).toBe(302);
+		const location = consent?.headers.get("location");
+		const authorizationCode = location
+			? new URL(location).searchParams.get("code")
+			: null;
+		expect(authorizationCode).toBeTruthy();
+		const tokenResponse = await productionWorker.fetch(
+			new Request("https://service.test/oauth/token", {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					grant_type: "authorization_code",
+					client_id: client.client_id,
+					code: authorizationCode ?? "",
+					redirect_uri: "https://flow.test/callback",
+					code_verifier: verifier,
+					resource: "https://service.test",
+				}),
+			}),
+			bindings,
+		);
+		expect(tokenResponse.status).toBe(200);
+		await tokenResponse.text();
+		expect(selectedNames.length).toBeGreaterThan(0);
+		expect(selectedNames).toEqual(
+			Array.from({ length: selectedNames.length }, () => "vaultwire-f2-tests"),
+		);
+		expect(selectedNames).not.toContain("service.test");
+	});
+
+	it("fails closed at the Worker entry when the object name is missing or empty", async () => {
+		for (const objectName of [undefined, ""] as const) {
+			const idFromName = vi.fn();
+			const bindings = new Proxy(env, {
+				/** Override object selection to test the Worker entry guard. */
+				get(target, property) {
+					if (property === "VAULT_OBJECT_NAME") return objectName;
+					if (property === "VAULTS")
+						return { idFromName } as unknown as Env["VAULTS"];
+					return Reflect.get(target, property, target);
+				},
+			}) as Env;
+			const response = await productionWorker.fetch(
+				new Request("https://service.test/v1/vault"),
+				bindings,
+			);
+			expect(response.status).toBe(503);
+			expect(await response.text()).toBe("Vault object name is not configured");
+			expect(response.headers.get("cache-control")).toBe("no-store");
+			expect(idFromName).not.toHaveBeenCalled();
+		}
+	});
+
+	it("rejects consent requests without an object name before namespace access", async () => {
+		const idFromName = vi.fn();
+		const missingName = new Proxy(env, {
+			/** Hide object selection while leaving OAuth and Access fixtures intact. */
+			get(target, property) {
+				if (property === "VAULT_OBJECT_NAME") return undefined;
+				if (property === "VAULTS")
+					return { idFromName } as unknown as Env["VAULTS"];
+				return Reflect.get(target, property, target);
+			},
+		}) as Env;
+		const assertion = await ownerAssertion();
+		const handler = createAuthorizeHandler();
+		for (const [path, method] of [
+			["/authorize", "GET"],
+			["/authorize/consent", "POST"],
+		] as const) {
+			const response = await handler.fetch?.(
+				new Request(`https://service.test${path}`, {
+					method,
+					headers: { "Cf-Access-Jwt-Assertion": assertion },
+				}) as Parameters<NonNullable<typeof handler.fetch>>[0],
+				missingName,
+				{} as ExecutionContext,
+			);
+			expect(response?.status).toBe(401);
+		}
+		expect(idFromName).not.toHaveBeenCalled();
+	});
 	it("publishes configured issuer, grant types, and origin resource", async () => {
 		const response = await SELF.fetch(
 			"https://service.test/.well-known/oauth-authorization-server",
@@ -576,9 +750,15 @@ describe("production OAuth entry", () => {
 
 	it("rejects other provider identities and invalid callback configuration before registration", async () => {
 		let registrations = 0;
+		let namespaceSelections = 0;
 		const vaults = new Proxy(env.VAULTS, {
-			/** Wrap the real stub and count only grant registration calls. */
+			/** Count namespace selection and wrap stubs for grant registration. */
 			get(target, property) {
+				if (property === "idFromName")
+					return (name: string) => {
+						namespaceSelections += 1;
+						return target.idFromName(name);
+					};
 				const value = Reflect.get(target, property, target);
 				if (property !== "get")
 					return typeof value === "function" ? value.bind(target) : value;
@@ -642,7 +822,12 @@ describe("production OAuth entry", () => {
 				} as Parameters<typeof callback>[0]),
 			).rejects.toMatchObject({ code: "invalid_grant" });
 		}
-		const invalidConfigurations: Partial<Env>[] = [
+		const invalidConfigurations: Array<
+			Partial<Env> & { VAULT_OBJECT_NAME?: string }
+		> = [
+			{ VAULT_OBJECT_NAME: undefined },
+			{ VAULT_OBJECT_NAME: "other-stable-object-name" },
+			{ VAULT_OBJECT_NAME: "" },
 			{ OWNER_SUBJECT: undefined },
 			{ SERVICE_ORIGIN: "http://service.test" },
 			{ OWNER_SUBJECT: "synthetic-other-owner" },
@@ -674,6 +859,21 @@ describe("production OAuth entry", () => {
 			).rejects.toMatchObject({ code: "invalid_grant" });
 		}
 		expect(registrations).toBe(0);
+		expect(namespaceSelections).toBe(0);
+		expect(
+			createOAuthOptions(
+				new Proxy(env, {
+					/** Hide the required object-name binding for configuration validation. */
+					get(target, property) {
+						return property === "VAULT_OBJECT_NAME"
+							? undefined
+							: Reflect.get(target, property, target);
+					},
+				}) as Env,
+				createAuthorizeHandler(),
+				createAuthorizeHandler(),
+			),
+		).toBeNull();
 	});
 
 	it("denies unauthenticated owner and REST requests before durable work", async () => {
@@ -1507,7 +1707,7 @@ describe("production OAuth entry", () => {
 			assertion,
 			"vault:read",
 		);
-		const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+		const vault = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 		const grant = (
 			await vault.listClientGrants("synthetic-owner", client.client_id)
 		).grants[0]?.grant_id;
@@ -1707,7 +1907,7 @@ describe("production OAuth entry", () => {
 		expect(tracked.counts.delete).toBe(0);
 		expect(tracked.counts.registry + tracked.counts.kv).toBeLessThanOrEqual(48);
 		const grants = await env.VAULTS.get(
-			env.VAULTS.idFromName("service.test"),
+			env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!),
 		).listClientGrants("synthetic-owner", client.client_id);
 		expect(grants.grants[0]).toMatchObject({
 			revoked: true,

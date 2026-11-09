@@ -93,7 +93,7 @@ async function note(token: string, path: string) {
 
 /** Capture immutable publication evidence without changing authoritative storage. */
 async function published(path: string) {
-	const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+	const vault = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 	return runInDurableObject(vault, (_instance, state) => ({
 		revisions: state.storage.sql
 			.exec(
@@ -462,7 +462,7 @@ describe("production MCP mutation safety", () => {
 		);
 		const result = await receipt(response);
 		expect(result.epoch).toBe(epoch);
-		const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+		const vault = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 		const stored = await runInDurableObject(vault, (_instance, state) =>
 			state.storage.sql
 				.exec(
@@ -667,10 +667,9 @@ describe("production MCP mutation safety", () => {
 			await call(writer.token, "create_note", { path, epoch, content }),
 		);
 		const before = await published(path);
-		await env.VAULTS.get(env.VAULTS.idFromName("service.test")).revokeClient(
-			"synthetic-owner",
-			revoked.clientId,
-		);
+		await env.VAULTS.get(
+			env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!),
+		).revokeClient("synthetic-owner", revoked.clientId);
 		for (const { input } of MISSING_APPEND_ARGUMENTS) {
 			for (const [token, status, code] of [
 				["", 401, "unauthorized"],
@@ -1129,7 +1128,9 @@ describe("production MCP mutation safety", () => {
 			expect(response.status).toBe(403);
 			expect(response.headers.get("www-authenticate")).toContain("Bearer");
 			expect(await response.text()).not.toContain("protected");
-			const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+			const vault = env.VAULTS.get(
+				env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!),
+			);
 			await vault.revokeClient("synthetic-owner", allowed.clientId);
 			const revoked = await call(allowed.token, name, args);
 			expect(revoked.status).toBe(401);
@@ -1151,7 +1152,7 @@ describe("production MCP mutation safety", () => {
 			const reached = gate();
 			const resume = gate();
 			const get = env.VAULTS.get.bind(env.VAULTS);
-			const rawVault = get(env.VAULTS.idFromName("service.test"));
+			const rawVault = get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 			vi.spyOn(env.VAULTS, "get").mockImplementation(
 				(...args) =>
 					new Proxy(get(...args), {
@@ -1205,7 +1206,7 @@ describe("production MCP mutation safety", () => {
 					state: seam === "beginMutation" ? "reserved" : "active",
 					expires_at: expect.any(Number),
 				});
-				await get(env.VAULTS.idFromName("service.test")).revokeClient(
+				await get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!)).revokeClient(
 					"synthetic-owner",
 					clientId,
 				);
@@ -1347,10 +1348,9 @@ describe("production MCP mutation safety", () => {
 		};
 		await receipt(await call(token, "append_to_note", args));
 		const before = await published(path);
-		await env.VAULTS.get(env.VAULTS.idFromName("service.test")).revokeClient(
-			"synthetic-owner",
-			clientId,
-		);
+		await env.VAULTS.get(
+			env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!),
+		).revokeClient("synthetic-owner", clientId);
 		const retry = await call(token, "append_to_note", args);
 		expect(retry.status).toBe(401);
 		expect(await retry.text()).toContain("revoked");

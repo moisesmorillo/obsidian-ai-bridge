@@ -6,6 +6,8 @@ interface WorkerBindings {
 	R2_BUCKET: R2Bucket;
 	BACKUP_BUCKET: R2Bucket;
 	OAUTH_KV?: KVNamespace;
+	/** Stable Durable Object key shared across Worker scripts that transfer the Vault namespace. */
+	VAULT_OBJECT_NAME?: string;
 	SERVICE_ORIGIN?: string;
 	ACCESS_TEAM_DOMAIN?: string;
 	ACCESS_AUDIENCE?: string;

@@ -115,7 +115,7 @@ export async function issueToken(
 export async function activeAdmissionStates(
 	clientId: string,
 ): Promise<string[]> {
-	const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+	const vault = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 	return runInDurableObject(vault, (_instance, state) =>
 		state.storage.sql
 			.exec(

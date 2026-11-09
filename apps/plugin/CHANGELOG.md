@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v0.2.1...vaultwire-v0.3.0) (2026-11-09)
+
+
+### Features
+
+* **plugin:** publish the plugin as Vaultwire ([#136](https://github.com/moisesmorillo/vaultwire/issues/136)) ([edf379e](https://github.com/moisesmorillo/vaultwire/commit/edf379ed8a7a8086b43e2ababed9f5261a39f408))
+
 ## [0.2.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/ai-bridge-v0.2.0...ai-bridge-v0.2.1) (2026-11-08)
 
 

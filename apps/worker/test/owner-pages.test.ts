@@ -1,5 +1,6 @@
 import { renderBlobGcPage } from "@worker/transport/owner-pages/blob-gc";
 import { renderClientsPage } from "@worker/transport/owner-pages/clients";
+import { renderConsentPage } from "@worker/transport/owner-pages/consent";
 import { renderExportsPage } from "@worker/transport/owner-pages/exports";
 import {
 	formatBytes,
@@ -129,6 +130,22 @@ describe("owner page rendering", () => {
 		expect(html).toContain('<span class="label">Worker</span> 1.2.3&lt;');
 		expect(html).toContain('<span class="label">Vault epoch</span> epoch-1');
 		expect(html).not.toContain("Service metadata unknown");
+	});
+
+	it("uses the Vaultwire wave mark in the shell and the consent page", () => {
+		const shell = renderOwnerShell("clients", "<h1>Connected clients</h1>");
+		const consent = renderConsentPage({
+			clientName: "Synthetic client",
+			host: "service.test",
+			redirectUri: "https://client.test/callback",
+			requestedOn: null,
+			scopes: ["vault:read"],
+			handle: "consent-handle",
+		});
+		for (const html of [shell, consent]) {
+			expect(html).toContain('<path d="M4 12h6l2-6 4 12 2-6h2"/>');
+			expect(html).not.toContain("◇");
+		}
 	});
 
 	it("omits the Worker line when the handler passes no version", () => {

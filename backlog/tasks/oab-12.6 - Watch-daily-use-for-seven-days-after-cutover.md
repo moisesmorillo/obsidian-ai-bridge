@@ -1,10 +1,10 @@
 ---
 id: OAB-12.6
 title: Watch daily use for seven days after cutover
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-07T00:15:00Z'
-updated_date: '2026-11-09T03:05:00Z'
+updated_date: '2026-11-09T21:26:00Z'
 labels:
   - F6
 dependencies: []
@@ -60,4 +60,12 @@ All criteria stay unchecked.
 Keep In Progress.
 
 Owner decision 2026-11-08: the three-device convergence check in AC #8 is covered by the F5 real-use evidence in OAB-12 notes (iPad note reaches Mac and iPhone, iPhone attachment and offline edit, Mac daily use). No new scripted check is needed. The supervisor records daily Mac checks and the owner reports mobile observations. Days 1 to 3 (2026-11-06 to 2026-11-08): no attention, no confirmations, no failures on Mac. Cursor 268, 47 files, hourly backups present.
+
+Owner decision 2026-11-09: the owner closed the seven-day watch before day seven. The owner reports problems directly instead of daily supervisor checks. The Vaultwire cutover on 2026-11-09 replaced the watched service. Unchecked criteria were not proven and stay unchecked. No stop condition and no rollback occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed by owner decision on 2026-11-09 without seven daily entries. No stop condition or rollback occurred. The owner reports later problems directly.
+<!-- SECTION:FINAL_SUMMARY:END -->

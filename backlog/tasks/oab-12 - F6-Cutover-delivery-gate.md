@@ -1,10 +1,10 @@
 ---
 id: OAB-12
 title: F6 Cutover delivery gate
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-09T21:26:00Z'
 labels:
   - phase-gate
   - F6
@@ -138,4 +138,12 @@ AC1 is checked under the owner waiver and backup choice.
 AC2 stays unchecked for OAB-12.6.
 
 One day does not prove seven successful days.
+
+Owner decision 2026-11-09: close the F6 gate. The watch in OAB-12.6 closed by owner decision. The Vaultwire cutover (OAB-50.6) moved all clients to vaultwire.mmorillo.dev with verified data. Criterion 2 stays unchecked because the seven-day watch did not complete.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+F6 closed by owner decision. Production runs on Vaultwire with Mac, iPhone, iPad and ChatGPT connected.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -205,13 +205,14 @@ exit 2
 
 describe("plugin release metadata validation", () => {
 	const manifest = {
+		id: "vaultwire",
 		version: "0.1.0",
 		minAppVersion: "1.13.0",
 		isDesktopOnly: false,
 	};
 	const versions = { "0.1.0": "1.13.0" };
 
-	it("accepts a tag after the tag manifest writes its missing compatibility entry", () => {
+	it("accepts a Vaultwire tag after the manifest writes its missing compatibility entry", () => {
 		const root = createMetadataDirectory(manifest, {});
 		try {
 			const result = spawnSync(
@@ -233,7 +234,8 @@ describe("plugin release metadata validation", () => {
 	});
 
 	it.each([
-		["wrong prefix", "release-v0.1.0", manifest, versions],
+		["wrong prefix", "product-v0.1.0", manifest, versions],
+		["legacy release prefix", "release-v0.1.0", manifest, versions],
 		["old component prefix", "ai-bridge-v0.1.0", manifest, versions],
 		["malformed tag version", "vaultwire-v01.0.0", manifest, versions],
 		["manifest version mismatch", "vaultwire-v0.2.0", manifest, versions],
@@ -373,7 +375,11 @@ exit 23
 		mkdirSync(join(seed, "apps/plugin"), { recursive: true });
 		writeFileSync(
 			join(seed, "apps/plugin/manifest.json"),
-			JSON.stringify({ version: "0.1.0", minAppVersion: "1.13.0" }),
+			JSON.stringify({
+				id: "vaultwire",
+				version: "0.1.0",
+				minAppVersion: "1.13.0",
+			}),
 		);
 		writeFileSync(join(seed, "apps/plugin/versions.json"), "{}\n");
 		mkdirSync(join(seed, "apps/plugin/tools"), { recursive: true });
@@ -530,7 +536,11 @@ exit 2
 		);
 		writeFileSync(
 			join(seed, "apps/plugin/manifest.json"),
-			JSON.stringify({ version: "0.1.0", minAppVersion: "1.13.0" }),
+			JSON.stringify({
+				id: "vaultwire",
+				version: "0.1.0",
+				minAppVersion: "1.13.0",
+			}),
 		);
 		writeFileSync(join(seed, "apps/plugin/versions.json"), "{}\n");
 		runGit(seed, "add", ".");

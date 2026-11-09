@@ -122,7 +122,8 @@ function isHardExcludedSettingsPath(segments: string[]): boolean {
 		/^workspace.*\.json$/i.test(first) ||
 		first === "graph.json" ||
 		first.startsWith("cache") ||
-		(relative[0] === "plugins" && relative[1] === "ai-bridge") ||
+		(relative[0] === "plugins" &&
+			["ai-bridge", "vaultwire"].includes(relative[1] ?? "")) ||
 		relative.includes("node_modules")
 	);
 }

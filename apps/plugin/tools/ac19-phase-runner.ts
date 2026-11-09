@@ -136,7 +136,7 @@ function createPhaseSource(
 const v=app.vault,adapter=v.adapter;
 if(v.getName()!=="obsidian-ai-bridge-dev-2"||typeof adapter.basePath!=="string"||!adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2")||adapter.getBasePath()!==${targetValue})throw Error("AC19P6_TARGET");
 const phase=${phaseValue},phases=${phaseList},source=${sourceValue},placeholder=${placeholderValue},key="__oabAc19P6",now=Date.now();
-const plugin=app.plugins.plugins?.["ai-bridge"];
+const plugin=app.plugins.plugins?.["vaultwire"];
 const safe=(status,flags={})=>({phase,status,at:now,clientId:plugin?.journal?.snapshot?.().client_id??null,counts:counts(),attentionHash:s?.private?.attentionHash??null,flags,...(s?.taskState==="admission_limited"&&Number.isFinite(s.retryAfterUntil)?{retryAfterMs:Math.max(0,s.retryAfterUntil-now)}:{})});
 const counts=()=>{const j=plugin?.journal?.snapshot?.();return j?{operations:j.pending_ops.length,applies:j.pending_apply.length,attention:j.attention.length,confirmations:j.coexistence_confirmations.length}:{operations:0,applies:0,attention:0,confirmations:0};};
 const emit=(value)=>"OAB8AC19P6:"+JSON.stringify(value);

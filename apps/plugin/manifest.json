@@ -1,9 +1,9 @@
 {
-	"id": "ai-bridge",
-	"name": "AI Bridge",
+	"id": "vaultwire",
+	"name": "Vaultwire",
 	"version": "0.2.1",
 	"author": "Moisés Morillo",
-	"description": "Private vault synchronization and authorized AI access.",
+	"description": "Self-hosted vault sync and storage, with MCP tools for AI agents.",
 	"minAppVersion": "1.13.0",
 	"isDesktopOnly": false
 }

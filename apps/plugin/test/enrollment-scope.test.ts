@@ -99,6 +99,7 @@ describe("settings category enrollment", () => {
 		".obsidian/workspace.json",
 		".obsidian/workspace-mobile.json",
 		".obsidian/plugins/ai-bridge/data.json",
+		".obsidian/plugins/vaultwire/data.json",
 		".obsidian/cache/cache.db",
 		".obsidian/cache2/cache.db",
 		".obsidian/graph.json",

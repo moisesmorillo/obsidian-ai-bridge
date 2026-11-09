@@ -792,7 +792,7 @@ export function dispatchCapturedCallback(
 	};
 	const script = `(async () => {
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(authorizedVaults()[id])}) return "OAB8CALLBACK:blocked";
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.session?.callback) return "OAB8CALLBACK:blocked";
 		try {
 			await plugin.session.callback(${JSON.stringify(callback)});
@@ -890,7 +890,7 @@ export async function captureAuthorizationUrl(
 ): Promise<string> {
 	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
 	const script = `(async () => {
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.session?.host?.openBrowser) throw Error("Device session is unavailable");
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw Error("Vault path mismatch");
 		const host = plugin.session.host;
@@ -1571,7 +1571,7 @@ export function inspectAc02ServiceRevision(
 		const target = ${JSON.stringify(target)};
 		const path = ${JSON.stringify(canonicalPath)};
 		if (app.vault.adapter.getBasePath() !== target) throw Error("Vault path mismatch");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.session?.requestResponse) throw Error("Plugin session unavailable");
 		let statusClass = "other";
 		try {
@@ -1642,7 +1642,7 @@ export function createAc04BaselineScript(
 	const path = "oab-8.8/ac-04/shared.md";
 	return `(async () => {
 		if (app.vault.adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.session?.requestResponse) throw Error("Plugin session unavailable");
 		const path = ${JSON.stringify(path)};
 		try {
@@ -1697,7 +1697,7 @@ export function inspectAc20Vault(
 	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
 	const script = `(async () => {
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("Vault path mismatch");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin?.syncStatus) throw new Error("Plugin state unavailable");
 		const journal = plugin.journal.snapshot();
 		const status = plugin.syncStatus();
@@ -1799,7 +1799,7 @@ export function createAc20FixtureScript(
 		const target = ${JSON.stringify(target)};
 		const adapter = app.vault.adapter;
 		if (adapter.getBasePath() !== target) throw new Error("Vault path mismatch");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		const journal = plugin?.journal?.snapshot?.();
 		if (!journal) throw new Error("Device journal unavailable");
 		const fixtures = ${JSON.stringify(fixtures)};
@@ -1851,7 +1851,7 @@ export function createAc19CaseScripts(
 	const action = `
 		const adapter = app.vault.adapter;
 		if (app.vault.getName() !== "obsidian-ai-bridge-dev-2" || typeof adapter.basePath !== "string" || !adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2") || adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.composition?.publication || !plugin.settingsTab?.syncActions?.pause || !plugin.settingsTab?.syncActions?.resume || !plugin.settingsValue?.coexistenceMode) throw new Error("AC19_ASSERT_PLUGIN_CONTROLS");
 		if (plugin.sessionStatus !== "connected" || plugin.desktopSync.isBusy || plugin.syncPaused || plugin.syncActive || !plugin.composition) throw new Error("AC19_ASSERT_INITIAL_STATE");
 		const source = ${JSON.stringify(fixture.source)};
@@ -1941,7 +1941,7 @@ export function createAc19CaseScripts(
 	`;
 	const cleanup = `
 		if (app.vault.getName() !== "obsidian-ai-bridge-dev-2" || typeof app.vault.adapter.basePath !== "string" || !app.vault.adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2") || app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
 		if (ac19Cleanup.started && ac19Cleanup.sourceCreated && !plugin.syncPaused) {
 			plugin.settingsTab.syncActions.pause();
@@ -2008,7 +2008,7 @@ export function createAc19CaptureReloadScripts(
 	const baselinePath = ".ai-bridge/oab-10.1-dev-1-baseline.json";
 	const capture = `
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CAPTURE_ASSERT_TARGET_VAULT");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-1") throw new Error("AC19_CAPTURE_ASSERT_PLUGIN_CONTROLS");
 		if (plugin.sessionStatus !== "connected" || !plugin.syncPaused || plugin.syncStatus?.().state !== "paused" || plugin.desktopSync.isBusy || plugin.syncActive) throw new Error("AC19_CAPTURE_ASSERT_PAUSED");
 		const source = ${JSON.stringify(fixture.source)};
@@ -2048,7 +2048,7 @@ export function createAc19CaptureReloadScripts(
 	`;
 	const prepareReloadVerification = `
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_BASELINE_ASSERT_TARGET_VAULT");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-1" || !plugin.syncPaused || plugin.syncStatus?.().state !== "paused" || plugin.syncActive) throw new Error("AC19_BASELINE_ASSERT_PAUSED");
 		const source = ${JSON.stringify(fixture.source)};
 		const placeholder = ${JSON.stringify(fixture.placeholder)};
@@ -2072,7 +2072,7 @@ export function createAc19CaptureReloadScripts(
 		let baseline;
 		try { baseline = JSON.parse(await adapter.read(baselinePath)); } catch { throw new Error("AC19_RELOAD_ASSERT_BASELINE_INVALID"); }
 		if (!baseline || baseline.version !== 1 || baseline.source !== ${JSON.stringify(fixture.source)} || baseline.placeholder !== ${JSON.stringify(fixture.placeholder)} || !/^[a-f0-9]{64}$/.test(baseline.historyFingerprint) || !/^[a-f0-9]{64}$/.test(baseline.confirmationFingerprint) || !baseline.counts || !Number.isSafeInteger(baseline.counts.pendingOperations) || !Number.isSafeInteger(baseline.counts.pendingApplies) || !Number.isSafeInteger(baseline.counts.attention) || !Number.isSafeInteger(baseline.counts.confirmations)) throw new Error("AC19_RELOAD_ASSERT_BASELINE_INVALID");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-1") throw new Error("AC19_RELOAD_ASSERT_PLUGIN_CONTROLS");
 		const waitFor = async (test) => {
 			const deadline = Date.now() + 15000;
@@ -2310,7 +2310,7 @@ function cancelPendingAuthorization(
 	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
 	const script = `(async () => {
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) return "OAB8CANCEL:blocked";
-		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const plugin = app.plugins.plugins?.["vaultwire"];
 		if (!plugin?.session?.cancel) return "OAB8CANCEL:failed";
 		plugin.session.cancel();
 		return plugin.session.pending ? "OAB8CANCEL:failed" : "OAB8CANCEL:passed";
@@ -2512,7 +2512,7 @@ export async function installScopedPlugin(
 		!manifest ||
 		typeof manifest !== "object" ||
 		!("id" in manifest) ||
-		manifest.id !== "ai-bridge" ||
+		manifest.id !== "vaultwire" ||
 		!("version" in manifest) ||
 		typeof manifest.version !== "string"
 	)
@@ -2636,7 +2636,7 @@ export function createInstallPayloadScripts(
 		!manifest ||
 		typeof manifest !== "object" ||
 		!("id" in manifest) ||
-		manifest.id !== "ai-bridge" ||
+		manifest.id !== "vaultwire" ||
 		!("version" in manifest) ||
 		typeof manifest.version !== "string"
 	)
@@ -2719,7 +2719,7 @@ export function createInstallScript(
 		!manifest ||
 		typeof manifest !== "object" ||
 		!("id" in manifest) ||
-		manifest.id !== "ai-bridge" ||
+		manifest.id !== "vaultwire" ||
 		!("version" in manifest) ||
 		typeof manifest.version !== "string"
 	)
@@ -2740,7 +2740,7 @@ export function createInstallScript(
 /** Builds shared host-side file preservation and plugin activation steps. */
 function createInstallScriptCore(expectedVersion: string): string {
 	return `
-		const id = "ai-bridge";
+		const id = "vaultwire";
 		const directory = ".obsidian/plugins/" + id;
 		const manifest = JSON.parse(manifestText);
 		if (manifest.id !== id) throw Error("Plugin ID mismatch");
@@ -2861,7 +2861,7 @@ export function createAc30CaseScripts(
 	return {
 		action: `
 if(app.vault.adapter.getBasePath()!==__AUTHORIZED_TARGET__)throw Error("AC30_ASSERT_TARGET_VAULT");
-const plugin=app.plugins.plugins?.["ai-bridge"];
+const plugin=app.plugins.plugins?.["vaultwire"];
 if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC30_ASSERT_PLUGIN_CONTROLS");
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot();
@@ -3070,7 +3070,7 @@ export function createAc31CaseScripts(
 	return {
 		action: `
 if(app.vault.adapter.getBasePath()!==__AUTHORIZED_TARGET__)throw Error("AC31_ASSERT_TARGET_VAULT");
-const plugin=app.plugins.plugins?.["ai-bridge"];
+const plugin=app.plugins.plugins?.["vaultwire"];
 if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC31_ASSERT_PLUGIN_CONTROLS");
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot();
@@ -3157,7 +3157,7 @@ export function createAc1032CaseScripts(
 	return {
 		preflight: `
 if(app.vault.adapter.getBasePath()!==${JSON.stringify(authorizedVaults()["dev-2"])})throw Error("AC1032_ASSERT_TARGET_VAULT");
-const plugin=app.plugins.plugins?.["ai-bridge"];
+const plugin=app.plugins.plugins?.["vaultwire"];
 if(!plugin?.composition?.publication)throw Error("AC1032_ASSERT_REMOTE_CAPABILITIES");
 const path=${JSON.stringify(safeFixturePath)},remote=Reflect.get(plugin.composition.publication,"remote");
 if(!remote?.readCurrentAuthority)throw Error("AC1032_ASSERT_REMOTE_CAPABILITIES");
@@ -3168,7 +3168,7 @@ if(localExists||serviceExists)throw Error("AC1032_ASSERT_FIXTURE_ABSENT");
 `.trim(),
 		action: `
 if(app.vault.adapter.getBasePath()!==${JSON.stringify(authorizedVaults()["dev-2"])})throw Error("AC1032_ASSERT_TARGET_VAULT");
-const plugin=app.plugins.plugins?.["ai-bridge"];
+const plugin=app.plugins.plugins?.["vaultwire"];
 if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC1032_ASSERT_PLUGIN_CONTROLS");
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot();
@@ -3226,7 +3226,7 @@ export function createAc33CaseScripts(
 	return {
 		action: `
 if(app.vault.adapter.getBasePath()!==${JSON.stringify(target)})throw Error("AC33_ASSERT_TARGET_VAULT");
-const plugin=app.plugins.plugins?.["ai-bridge"],reconciliation=plugin?.composition?.reconciliation;
+const plugin=app.plugins.plugins?.["vaultwire"],reconciliation=plugin?.composition?.reconciliation;
 if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!reconciliation?.reconcile||!reconciliation?.replay||!reconciliation?.resume||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC33_ASSERT_PLUGIN_CONTROLS");
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot(),observedEpoch=stateBefore.epoch;
@@ -3353,7 +3353,7 @@ export function createAc13CaseScripts(
 	return {
 		action: `
 if(app.vault.adapter.getBasePath()!==${JSON.stringify(target)})throw Error("AC13_ASSERT_TARGET_VAULT");
-const plugin=app.plugins.plugins?.["ai-bridge"],reconciliation=plugin?.composition?.reconciliation;
+const plugin=app.plugins.plugins?.["vaultwire"],reconciliation=plugin?.composition?.reconciliation;
 if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!reconciliation?.reconcile||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC13_ASSERT_PLUGIN_CONTROLS");
 await plugin.desktopSync.waitForIdle();
 const remote=Reflect.get(plugin.composition.publication,"remote"),stateBefore=plugin.journal.snapshot(),expectedExcludedPaths=new Set(${JSON.stringify(excludedPaths)}),expectedExcludedLocal=${JSON.stringify(excludedLocalFiles)},localOnlyExcludedPaths=${JSON.stringify(localOnlyExcludedPaths)};

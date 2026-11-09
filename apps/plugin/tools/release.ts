@@ -29,6 +29,8 @@ export function validatePluginRelease(
 		throw new Error("Tag must match vaultwire-v<major>.<minor>.<patch>");
 
 	const metadata = objectValue(manifest, "Plugin manifest");
+	if (metadata.id !== "vaultwire")
+		throw new Error("Plugin manifest id must be vaultwire");
 	const version = requireExactVersion(metadata.version, "Manifest version");
 	const minimumAppVersion = requireExactVersion(
 		metadata.minAppVersion,

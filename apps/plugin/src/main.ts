@@ -7,8 +7,10 @@ import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-sto
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
 import {
+	hasCopiedLegacyPluginSettings,
 	hasLegacyPluginSettingsToMigrate,
 	migrateLegacyPluginSettings,
+	readLegacyPluginSettings,
 } from "@plugin/infrastructure/plugin-settings-migration";
 import {
 	readSettingsSyncConfiguration,
@@ -101,6 +103,10 @@ export default class AIBridgePlugin extends Plugin {
 	private settingsHydrationPending = false;
 	/** Blocks credential restore until the owner copies old shared plugin settings. */
 	private legacySettingsMigrationPending = false;
+	/** Blocks restore and sync until copied settings receive successful OAuth approval. */
+	private migrationConfirmationPending = false;
+	/** Retains device-local storage for the journal and migration target approval. */
+	private deviceStorage: ObsidianDeviceStorage | null = null;
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
 	/** Fences asynchronous journal opens when unload or a newer load occurs. */
@@ -146,9 +152,12 @@ export default class AIBridgePlugin extends Plugin {
 			const localSettings = readSettingsSyncConfiguration(this.app);
 			Object.assign(this.settingsValue.settingsSync, localSettings.policy);
 			this.settingsHydrationPending = localSettings.hydrationPending;
-			const journal = await DeviceJournal.open(
-				new ObsidianDeviceStorage(this.app),
-			);
+			this.deviceStorage = new ObsidianDeviceStorage(this.app);
+			const migrationTarget = await this.deviceStorage.readMigrationTarget();
+			this.migrationConfirmationPending =
+				(await hasCopiedLegacyPluginSettings(this.app)) &&
+				migrationTarget !== this.settingsValue.serverUrl;
+			const journal = await DeviceJournal.open(this.deviceStorage);
 			if (generation !== this.lifecycleGeneration) {
 				journal.close();
 				return;
@@ -164,7 +173,10 @@ export default class AIBridgePlugin extends Plugin {
 				journal.snapshot().device_id,
 			);
 			const session = this.createSession();
-			if (!this.legacySettingsMigrationPending)
+			if (
+				!this.legacySettingsMigrationPending &&
+				!this.migrationConfirmationPending
+			)
 				await session.restore().catch(() => undefined);
 			if (generation !== this.lifecycleGeneration) {
 				session.close();
@@ -344,13 +356,24 @@ export default class AIBridgePlugin extends Plugin {
 			this.notice("No old plugin settings migration is pending");
 			return;
 		}
+		let importedSession: DeviceSession | null = null;
 		try {
-			const migration = await migrateLegacyPluginSettings(this.app, {
-				sessionStatus: this.sessionStatus,
-				syncActive: this.syncActive,
-				syncControllerActive:
-					this.desktopSync !== null || this.composition !== null,
-			});
+			const source = await readLegacyPluginSettings(this.app);
+			const importedServerUrl =
+				typeof source.settings.serverUrl === "string"
+					? source.settings.serverUrl
+					: DEFAULT_SERVER_URL;
+			importedSession = this.buildSession(importedServerUrl);
+			const migration = await migrateLegacyPluginSettings(
+				this.app,
+				{
+					sessionStatus: this.sessionStatus,
+					syncActive: this.syncActive,
+					syncControllerActive:
+						this.desktopSync !== null || this.composition !== null,
+				},
+				source.data,
+			);
 			if (typeof migration.settings.serverUrl === "string")
 				this.settingsValue.serverUrl = migration.settings.serverUrl;
 			this.settingsValue.deviceName = resolveDeviceName(
@@ -358,12 +381,19 @@ export default class AIBridgePlugin extends Plugin {
 			);
 			this.settingsValue.coexistenceMode =
 				migration.settings.coexistenceMode === true;
+			const previousSession = this.session;
+			this.session = importedSession;
+			importedSession = null;
+			previousSession?.close();
+			this.sessionStatus = "disconnected";
+			this.migrationConfirmationPending = true;
 			this.legacySettingsMigrationPending = false;
 			if (this.settingsTab) this.addSettingTab(this.settingsTab);
 			this.notice(
 				"Settings copied. Vaultwire remains disconnected. Check the service address before reconnecting.",
 			);
 		} catch (error) {
+			importedSession?.close();
 			this.notice(
 				error instanceof Error
 					? error.message
@@ -840,11 +870,21 @@ export default class AIBridgePlugin extends Plugin {
 				if (!this.journal) throw new Error("Device journal is unavailable");
 				return journal.setClientId(clientId, isCurrent);
 			},
+			authorizationCompleted: async () => {
+				if (!this.migrationConfirmationPending) return;
+				if (!this.deviceStorage)
+					throw new Error("Device storage is unavailable");
+				await this.deviceStorage.confirmMigrationTarget(serverUrl);
+				this.migrationConfirmationPending = false;
+			},
 			statusChanged: (status) => {
 				this.sessionStatus = status;
 				if (status === "connected") {
 					this.syncRevoked = false;
-					if (this.sessionRestoreComplete) {
+					if (
+						this.sessionRestoreComplete &&
+						!this.migrationConfirmationPending
+					) {
 						if (!this.desktopSync) this.startSync();
 						else if (!this.syncPaused)
 							this.runSyncAction(() => this.resumeSync());
@@ -857,7 +897,13 @@ export default class AIBridgePlugin extends Plugin {
 
 	/** Creates one retained controller and starts recovery only when sync is not paused. */
 	private startSync(): void {
-		if (this.desktopSync || !this.journal || !this.session) return;
+		if (
+			this.desktopSync ||
+			!this.journal ||
+			!this.session ||
+			this.migrationConfirmationPending
+		)
+			return;
 		this.composition = this.createSyncComposition();
 		this.coexistence = new CoexistenceController(
 			this.journal,

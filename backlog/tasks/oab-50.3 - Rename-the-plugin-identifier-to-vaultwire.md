@@ -4,7 +4,7 @@ title: Rename the plugin identifier to vaultwire
 status: In Progress
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:17:00Z'
+updated_date: '2026-11-09T16:39:00Z'
 labels:
   - rename
   - plugin
@@ -60,4 +60,6 @@ Implemented Vaultwire manifest metadata, release validation, compatibility check
 Review finding closures: MAJOR startup-order risk closed. The desktop procedure disables AI Bridge before restart. The offline command refuses when community-plugins.json enables either plugin ID. Vaultwire blocks credential restore and hides its settings page until its explicit migration action completes. That action refuses an enabled old plugin, connected or active Vaultwire, and existing Vaultwire data. MINOR iOS access gap closed. The guide uses BRAT and the explicit in-plugin migration command, not Files access to hidden folders. MINOR first-copy retry gap closed. Failed backup copy cleanup preserves old settings and allows retry.
 
 `bun run docs:check` and `bun run check` passed. The full plugin suite passed 32 files with 861 tests passed and 1 skipped. No real device, real vault, or production service was used. Device verification remains for OAB-50.6.
+
+Branch review corrections: F1 closed. The in-plugin migration now replaces and closes the startup session with one built from the imported service address. A lifecycle test starts Connect without editing that address and checks discovery and registration request origins. F2 closed. A device-local approval gate blocks restore, sync, event listeners, and publication while copied settings await a successful OAuth reconnect. The gate preserves stored credentials until that reconnect. A lifecycle test starts with valid old credentials and pending journal work, proves no network or effects before Connect, then proves journal history and payload bytes survive OAuth. F3 closed. Enrollment classification and settings traversal exclude the exact migration backup directory with every settings category enabled. `bun run docs:check` and `bun run check` passed. Plugin tests passed 864 with 1 skipped. No real device, real vault, or production service was used. OAB-50.3 remains In Progress. No push or task closure occurred.
 <!-- SECTION:NOTES:END -->

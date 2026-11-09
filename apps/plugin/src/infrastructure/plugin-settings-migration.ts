@@ -25,6 +25,27 @@ export async function hasLegacyPluginSettingsToMigrate(
 	);
 }
 
+/** Reads and validates the exact old settings bytes used by one migration attempt. */
+export async function readLegacyPluginSettings(
+	app: App,
+): Promise<{ data: string; settings: Record<string, unknown> }> {
+	const data = await app.vault.adapter.read(OLD_SETTINGS_PATH);
+	const parsed: unknown = JSON.parse(data);
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+		throw new Error("Old AI Bridge data.json must contain a settings object");
+	return { data, settings: parsed as Record<string, unknown> };
+}
+
+/** Detects a completed file copy whose target still needs owner confirmation. */
+export async function hasCopiedLegacyPluginSettings(
+	app: App,
+): Promise<boolean> {
+	return (
+		(await app.vault.adapter.exists(BACKUP_SETTINGS_PATH)) &&
+		(await app.vault.adapter.exists(NEW_SETTINGS_PATH))
+	);
+}
+
 /** Safe settings copied from the old plugin folder after backup verification. */
 export interface LegacyPluginMigrationResult {
 	/** The retained backup path inside the vault's plugin directory. */
@@ -47,6 +68,7 @@ export interface LegacyPluginMigrationState {
 export async function migrateLegacyPluginSettings(
 	app: App,
 	state: LegacyPluginMigrationState,
+	expectedSourceData?: string,
 ): Promise<LegacyPluginMigrationResult> {
 	const adapter = app.vault.adapter;
 	let enabledPlugins: unknown;
@@ -72,10 +94,10 @@ export async function migrateLegacyPluginSettings(
 		throw new Error("Old AI Bridge data.json was not found");
 	if (await adapter.exists(NEW_SETTINGS_PATH))
 		throw new Error("Vaultwire data.json already exists");
-	const oldData = await adapter.read(OLD_SETTINGS_PATH);
-	const parsed: unknown = JSON.parse(oldData);
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-		throw new Error("Old AI Bridge data.json must contain a settings object");
+	const source = await readLegacyPluginSettings(app);
+	if (expectedSourceData !== undefined && source.data !== expectedSourceData)
+		throw new Error("Old AI Bridge settings changed before migration");
+	const { data: oldData, settings } = source;
 	const backupDirectoryExists = await adapter.exists(BACKUP_DIRECTORY);
 	if (backupDirectoryExists) {
 		if (!(await adapter.exists(BACKUP_SETTINGS_PATH)))
@@ -109,8 +131,5 @@ export async function migrateLegacyPluginSettings(
 			await adapter.remove(STAGED_SETTINGS_PATH);
 		throw error;
 	}
-	return {
-		backupPath: BACKUP_SETTINGS_PATH,
-		settings: parsed as Record<string, unknown>,
-	};
+	return { backupPath: BACKUP_SETTINGS_PATH, settings };
 }

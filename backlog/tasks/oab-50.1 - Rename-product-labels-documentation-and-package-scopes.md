@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:24:00Z'
+updated_date: '2026-11-09T16:36:00Z'
 labels:
   - rename
 dependencies: []
@@ -97,4 +97,16 @@ Sibling-owned follow-up:
 
 Root pin source check:
 - The official manifest guide says `last-release-sha` applies only at the root and is never ignored. `src/manifest.ts` passes this root value to shared manifest options, then stops commit collection at that SHA. Both components use this shared baseline. See https://github.com/googleapis/release-please/blob/main/docs/manifest-releaser.md and https://github.com/googleapis/release-please/blob/main/src/manifest.ts.
+
+Final whole-branch correction evidence:
+- The branch review found fixed assertions for live versions and a cutover paragraph that allowed a fresh namespace and skipped migration.
+- RED for release metadata: simulated plugin `0.2.2`, Worker `0.5.1`, and matching Release Please manifest values. `bun run --filter '@vaultwire/tooling' test -- test/release-please-config.test.ts` failed 2 tests as expected. Fixed assertions had expected `vaultwire-v0.2.1` and `worker-v0.5.1`.
+- GREEN for release metadata: the same temporary version fixture passed all 9 release configuration tests after the test refactor. The temporary metadata files were restored. No version or tag changed in the branch.
+- The plugin-only, Worker-only, and combined future-version cases now call `expectReleaseConfigurationMatchesMetadata`, which checks component settings, version alignment, package paths, and tag families.
+- The only fixed version tag in the worker-first fixture is historical plugin tag `ai-bridge-v0.2.1`. The Worker-first next tag and first Vaultwire plugin tag derive from current metadata.
+- RED for cutover documentation: the new product-label test failed against the old fresh-namespace and no-migration statement.
+- GREEN for both findings: `bun run --filter '@vaultwire/tooling' test -- test/release-please-config.test.ts test/product-labels.test.ts test/deployment-config.test.ts` passed 18 tests across 3 files.
+- `docs/api/f2.md` now marks the four-note count as historical and states the OAB-50.4 namespace transfer and OAB-50.6 object-copy, checksum, cursor, and file-set duties. README history remains unchanged because it already limits the count to evidence recorded at that time and does not waive migration.
+- Final `bun run docs:check` passed. Final `bun run check` passed 132 test files, 2,311 tests, and 1 skipped test. Final `bun run --filter '@vaultwire/worker' preflight` passed.
+- No sibling implementation files, live service, vault, tag, release, deployment, or Cloudflare resource changed.
 <!-- SECTION:NOTES:END -->

@@ -53,6 +53,24 @@ describe("Vaultwire product labels and package names", () => {
 		expect(workerConfig).toContain("@vaultwire/tooling/vite-aliases");
 	});
 
+	it("separates historical vault evidence from current cutover duties", () => {
+		const api = repositoryText("docs/api/f2.md");
+		const readme = repositoryText("README.md");
+
+		expect(api).toContain(
+			"Historical OAB-7.8 evidence records four synthetic notes under `oab-7.8/` in the test vault at that time.",
+		);
+		expect(api).toContain(
+			"OAB-50.4 must transfer the existing `Vault` Durable Object namespace to the `vaultwire` script.",
+		);
+		expect(api).toContain(
+			"OAB-50.6 must copy every blob and backup object with SHA-256 checksums, preserve existing vault authority, and verify the journal cursor and file set against the final export before clients reconnect.",
+		);
+		expect(api).not.toContain("so no data migration is needed.");
+		expect(readme).toContain("when that evidence was recorded.");
+		expect(readme).not.toContain("so no data migration is needed.");
+	});
+
 	it("uses Vaultwire in current plugin and owner-facing labels", () => {
 		const settings = repositoryText("apps/plugin/src/settings.ts");
 		const plugin = repositoryText("apps/plugin/src/main.ts");

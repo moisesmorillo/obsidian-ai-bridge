@@ -622,6 +622,29 @@ describe("production OAuth entry", () => {
 		expect(selectedNames).not.toContain("service.test");
 	});
 
+	it("fails closed at the Worker entry when the object name is missing or empty", async () => {
+		for (const objectName of [undefined, ""] as const) {
+			const idFromName = vi.fn();
+			const bindings = new Proxy(env, {
+				/** Override object selection to test the Worker entry guard. */
+				get(target, property) {
+					if (property === "VAULT_OBJECT_NAME") return objectName;
+					if (property === "VAULTS")
+						return { idFromName } as unknown as Env["VAULTS"];
+					return Reflect.get(target, property, target);
+				},
+			}) as Env;
+			const response = await productionWorker.fetch(
+				new Request("https://service.test/v1/vault"),
+				bindings,
+			);
+			expect(response.status).toBe(503);
+			expect(await response.text()).toBe("Vault object name is not configured");
+			expect(response.headers.get("cache-control")).toBe("no-store");
+			expect(idFromName).not.toHaveBeenCalled();
+		}
+	});
+
 	it("rejects consent requests without an object name before namespace access", async () => {
 		const idFromName = vi.fn();
 		const missingName = new Proxy(env, {
@@ -730,9 +753,15 @@ describe("production OAuth entry", () => {
 
 	it("rejects other provider identities and invalid callback configuration before registration", async () => {
 		let registrations = 0;
+		let namespaceSelections = 0;
 		const vaults = new Proxy(env.VAULTS, {
-			/** Wrap the real stub and count only grant registration calls. */
+			/** Count namespace selection and wrap stubs for grant registration. */
 			get(target, property) {
+				if (property === "idFromName")
+					return (name: string) => {
+						namespaceSelections += 1;
+						return target.idFromName(name);
+					};
 				const value = Reflect.get(target, property, target);
 				if (property !== "get")
 					return typeof value === "function" ? value.bind(target) : value;
@@ -800,6 +829,7 @@ describe("production OAuth entry", () => {
 			Partial<Env> & { VAULT_OBJECT_NAME?: string }
 		> = [
 			{ VAULT_OBJECT_NAME: undefined },
+			{ VAULT_OBJECT_NAME: "other-stable-object-name" },
 			{ VAULT_OBJECT_NAME: "" },
 			{ OWNER_SUBJECT: undefined },
 			{ SERVICE_ORIGIN: "http://service.test" },
@@ -832,6 +862,7 @@ describe("production OAuth entry", () => {
 			).rejects.toMatchObject({ code: "invalid_grant" });
 		}
 		expect(registrations).toBe(0);
+		expect(namespaceSelections).toBe(0);
 		expect(
 			createOAuthOptions(
 				new Proxy(env, {

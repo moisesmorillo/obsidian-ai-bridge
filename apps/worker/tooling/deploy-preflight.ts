@@ -32,6 +32,16 @@ export function filterLocalCompatibilityFlags(flags: string[]): string[] {
 	return flags.filter((flag) => flag !== unsupportedLocalCompatibilityFlag);
 }
 
+/** Replace remote namespace transfer with a local-only SQLite namespace creation. */
+export function localizeDurableObjectMigrations(
+	migrations: Array<Record<string, unknown>> = [],
+): Array<Record<string, unknown>> {
+	return [
+		...migrations.filter((migration) => !("transferred_classes" in migration)),
+		{ tag: "preflight-local-v1", new_sqlite_classes: ["Vault"] },
+	];
+}
+
 /** Return a private temporary root with isolated Wrangler state and home directories. */
 export function createTemporaryRoot(): string {
 	const root = mkdtempSync(join(tmpdir(), "oab-worker-preflight-"));
@@ -172,6 +182,7 @@ export function startLocalWorker(
 		main: string;
 		compatibility_flags: string[];
 		vars: Record<string, string>;
+		migrations?: Array<Record<string, unknown>>;
 	} = JSON.parse(readFileSync(resolve("wrangler.production.jsonc"), "utf8"));
 	delete config.account_id;
 	config.main = bundle;
@@ -183,6 +194,7 @@ export function startLocalWorker(
 		SERVICE_ORIGIN: origin,
 		OWNER_SUBJECT: "preflight-test-owner",
 	};
+	config.migrations = localizeDurableObjectMigrations(config.migrations);
 	writeFileSync(configPath, JSON.stringify(config));
 	const launch = createLocalWorkerLaunch(root, port);
 	return spawn("node", launch.args, {

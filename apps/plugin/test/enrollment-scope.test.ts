@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	classifyEnrollmentPath,
 	DEFAULT_SETTINGS_SYNC_POLICY,
+	shouldTraverseSettingsDirectory,
 } from "../src/sync/enrollment-scope";
 
 describe("classifyEnrollmentPath", () => {
@@ -99,6 +100,8 @@ describe("settings category enrollment", () => {
 		".obsidian/workspace.json",
 		".obsidian/workspace-mobile.json",
 		".obsidian/plugins/ai-bridge/data.json",
+		".obsidian/plugins/vaultwire/data.json",
+		".obsidian/plugins/ai-bridge-vaultwire-backup/data.json",
 		".obsidian/cache/cache.db",
 		".obsidian/cache2/cache.db",
 		".obsidian/graph.json",
@@ -113,6 +116,25 @@ describe("settings category enrollment", () => {
 				communityPlugins: true,
 			}),
 		).toBe("excluded");
+	});
+
+	it("does not traverse migration backups when all settings categories are enabled", () => {
+		const policy = {
+			...DEFAULT_SETTINGS_SYNC_POLICY,
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		expect(shouldTraverseSettingsDirectory(".obsidian/plugins", policy)).toBe(
+			true,
+		);
+		expect(
+			shouldTraverseSettingsDirectory(
+				".obsidian/plugins/ai-bridge-vaultwire-backup",
+				policy,
+			),
+		).toBe(false);
 	});
 
 	it("preserves exact JavaScript and CSS bytes within the blob limit", () => {

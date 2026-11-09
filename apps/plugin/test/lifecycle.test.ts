@@ -29,6 +29,21 @@ const host = vi.hoisted(() => ({
 	statusRefreshes: 0,
 	settingsData: null as unknown,
 	localSettings: null as unknown,
+	credentialReads: 0,
+	credentialValue: null as unknown,
+	migrationTarget: null as string | null,
+	connectAction: null as (() => Promise<void>) | null,
+	files: new Map<string, string>(),
+	directories: new Set<string>([
+		".obsidian/plugins",
+		".obsidian/plugins/ai-bridge",
+		".obsidian/plugins/vaultwire",
+	]),
+	commands: [] as Array<{
+		id: string;
+		name: string;
+		callback: () => void | Promise<void>;
+	}>,
 	localSettingsSave: null as ((value: unknown) => Promise<void>) | null,
 	serverUrlChange: null as ((url: string) => Promise<void>) | null,
 	deviceNameChange: null as ((name: string) => Promise<void>) | null,
@@ -87,6 +102,14 @@ vi.mock("obsidian", () => ({
 	},
 	Plugin: class {
 		loadData = async () => host.settingsData;
+		/** Captures the explicit command registered for one-time migration. */
+		addCommand = (command: {
+			id: string;
+			name: string;
+			callback: () => void | Promise<void>;
+		}) => {
+			host.commands.push(command);
+		};
 		/** Captures the route and callback registered by the plugin lifecycle. */
 		registerObsidianProtocolHandler = (
 			action: string,
@@ -117,12 +140,37 @@ vi.mock("obsidian", () => ({
 					if (index >= 0) host.vaultListeners.splice(index, 1);
 				},
 				adapter: {
+					exists: async (path: string) =>
+						host.files.has(path) ||
+						host.payloads.has(path) ||
+						host.directories.has(path),
+					read: async (path: string) => {
+						const value = host.files.get(path);
+						if (value === undefined) throw new Error(`Missing ${path}`);
+						return value;
+					},
+					write: async (path: string, value: string) => {
+						host.files.set(path, value);
+					},
+					mkdir: async (path: string) => {
+						host.directories.add(path);
+					},
+					remove: async (path: string) => {
+						host.files.delete(path);
+					},
+					rmdir: async (path: string) => {
+						host.directories.delete(path);
+					},
+					rename: async (from: string, to: string) => {
+						const value = host.files.get(from);
+						if (value === undefined) throw new Error(`Missing ${from}`);
+						host.files.set(to, value);
+						host.files.delete(from);
+					},
 					stat: async (path: string) =>
 						host.unavailablePaths.has(path)
 							? { type: "file", mtime: 0, size: 0 }
 							: null,
-					exists: async (path: string) => host.payloads.has(path),
-					mkdir: async () => undefined,
 					readBinary: async (path: string) => {
 						const bytes = host.payloads.get(path);
 						return bytes ? bytes.slice().buffer : new ArrayBuffer(0);
@@ -133,12 +181,25 @@ vi.mock("obsidian", () => ({
 				},
 			},
 			loadLocalStorage: (key: string) => {
-				if (key.includes(":credential:")) return null;
+				if (key.includes(":credential:")) {
+					host.credentialReads += 1;
+					return host.credentialValue;
+				}
+				if (key.includes(":vaultwire-migration-target:"))
+					return host.migrationTarget;
 				if (key.includes(":settings-sync:")) return host.localSettings;
 				host.calls.push("loadLocalStorage");
 				return host.loadState ? host.loadState() : host.state;
 			},
 			saveLocalStorage: (_key: string, value: unknown) => {
+				if (_key.includes(":vaultwire-migration-target:")) {
+					host.migrationTarget = value as string;
+					return host.migrationTarget;
+				}
+				if (_key.includes(":credential:")) {
+					host.credentialValue = structuredClone(value);
+					return host.credentialValue;
+				}
 				if (_key.includes(":settings-sync:")) {
 					if (host.failLocalSave || host.failSettingsSave)
 						throw new Error("local storage write failed");
@@ -227,12 +288,20 @@ vi.mock("../src/settings", () => ({
 	AIBridgeSettingTab: class {
 		/** Captures server, device-name, and sync callbacks from plugin composition. */
 		constructor(...args: unknown[]) {
+			const getSession = args[3] as () => DeviceSession;
+			host.connectAction = async () =>
+				getSession()
+					.connect()
+					.then(() => undefined);
 			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
 			host.deviceNameChange = args[6] as (name: string) => Promise<void>;
 			host.syncActions = args[10] as CapturedSyncActions;
 			host.settingsSyncPolicyChange =
 				args[11] as typeof host.settingsSyncPolicyChange;
 		}
+
+		/** Rebuilds settings controls after one-time settings data import. */
+		display(): void {}
 
 		/** Counts visible status refreshes from real plugin action callbacks. */
 		refreshStatus(): void {
@@ -247,6 +316,7 @@ import {
 	type DeviceSessionHost,
 	DeviceSessionNetworkError,
 } from "../src/auth/device-session";
+import { ObsidianOAuthTransport } from "../src/infrastructure/oauth-transport";
 import { VaultEventAdapter } from "../src/infrastructure/vault-events";
 import AIBridgePlugin from "../src/main";
 import { getAttentionKey } from "../src/sync/attention";
@@ -345,6 +415,17 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.statusRefreshes = 0;
 		host.settingsData = null;
 		host.localSettings = null;
+		host.credentialReads = 0;
+		host.credentialValue = null;
+		host.migrationTarget = null;
+		host.connectAction = null;
+		host.files.clear();
+		host.directories.clear();
+		host.directories.add(".obsidian/plugins");
+		host.directories.add(".obsidian/plugins/ai-bridge");
+		host.directories.add(".obsidian/plugins/vaultwire");
+		host.files.set(".obsidian/community-plugins.json", "[]");
+		host.commands.splice(0);
 		host.localSettingsSave = null;
 		host.serverUrlChange = null;
 		host.deviceNameChange = null;
@@ -1103,6 +1184,243 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			"loadLocalStorage",
 		]);
 		expect(plugin.attentionReason).toBeNull();
+	});
+
+	it("blocks automatic restore until the explicit old-settings migration runs", async () => {
+		const oldData =
+			'{"serverUrl":"https://migration-target.example","coexistenceMode":true}';
+		host.files.set(".obsidian/plugins/ai-bridge/data.json", oldData);
+		host.payloads.set(
+			".ai-bridge/pending/operation-payload",
+			new Uint8Array([7, 8, 9]),
+		);
+		const close = vi.spyOn(DeviceSession.prototype, "close");
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		const beforeJournal = journal.snapshot();
+		const beforeLocalSettings = structuredClone(host.localSettings);
+		const migration = host.commands.find(
+			(command) => command.id === "migrate-ai-bridge-settings",
+		);
+		if (!migration) throw new Error("Migration command was not registered");
+
+		expect(host.credentialReads).toBe(0);
+		expect(host.settingsTab).toBeNull();
+		await migration.callback();
+
+		expect(host.files.get(".obsidian/plugins/vaultwire/data.json")).toBe(
+			oldData,
+		);
+		expect(host.settingsTab).not.toBeNull();
+		expect(
+			host.files.get(".obsidian/plugins/ai-bridge-vaultwire-backup/data.json"),
+		).toBe(oldData);
+		expect(host.files.get(".obsidian/plugins/ai-bridge/data.json")).toBe(
+			oldData,
+		);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			serverUrl: "https://migration-target.example",
+			coexistenceMode: true,
+		});
+		expect(journal.snapshot()).toEqual(beforeJournal);
+		expect(host.localSettings).toEqual(beforeLocalSettings);
+		expect(host.payloads.get(".ai-bridge/pending/operation-payload")).toEqual(
+			new Uint8Array([7, 8, 9]),
+		);
+		expect(host.credentialReads).toBe(0);
+		expect(Reflect.get(plugin, "sessionStatus")).toBe("disconnected");
+		const requests: string[] = [];
+		const request = vi
+			.spyOn(ObsidianOAuthTransport.prototype, "request")
+			.mockImplementation(async (url) => {
+				requests.push(url);
+				const origin = new URL(url).origin;
+				if (url.endsWith("oauth-authorization-server"))
+					return {
+						issuer: origin,
+						registration_endpoint: `${origin}/oauth/register`,
+						authorization_endpoint: `${origin}/authorize`,
+						token_endpoint: `${origin}/oauth/token`,
+						response_types_supported: ["code"],
+						grant_types_supported: ["authorization_code", "refresh_token"],
+						code_challenge_methods_supported: ["S256"],
+					};
+				if (url.endsWith("oauth/register"))
+					return { client_id: "migration-client" };
+				throw new Error(`Unexpected OAuth request: ${url}`);
+			});
+		try {
+			await host.connectAction?.();
+			expect(close).toHaveBeenCalledOnce();
+			expect(requests).toEqual([
+				"https://migration-target.example/.well-known/oauth-authorization-server",
+				"https://migration-target.example/oauth/register",
+			]);
+		} finally {
+			request.mockRestore();
+			close.mockRestore();
+			plugin.onunload();
+		}
+	});
+
+	it("holds copied desktop settings behind explicit reconnect without losing local work", async () => {
+		const serviceOrigin = "https://migration-target.example";
+		const deviceStore = {
+			readState: async () => host.state,
+			writeState: async (state: unknown) => {
+				host.state = structuredClone(state);
+			},
+			readPayload: async (path: string) => {
+				const bytes = host.payloads.get(path);
+				if (!bytes) throw new Error(`Missing ${path}`);
+				return bytes.slice();
+			},
+			writePayload: async (path: string, bytes: Uint8Array) => {
+				host.payloads.set(path, bytes.slice());
+			},
+		};
+		const journal = await DeviceJournal.open(deviceStore);
+		await journal.setClientId("old-client");
+		const operation = await journal.enqueue(
+			{
+				op: "put",
+				path: "notes/pending.md",
+				precondition: { kind: "match", epoch: "b".repeat(32), rev: 4 },
+			},
+			new TextEncoder().encode("pending local edit"),
+		);
+		const beforeJournal = journal.snapshot();
+		const beforePayloads = structuredClone([...host.payloads]);
+		journal.close();
+		const copiedSettings = JSON.stringify({ serverUrl: serviceOrigin });
+		host.settingsData = JSON.parse(copiedSettings);
+		host.files.set(".obsidian/plugins/vaultwire/data.json", copiedSettings);
+		host.files.set(
+			".obsidian/plugins/ai-bridge-vaultwire-backup/data.json",
+			copiedSettings,
+		);
+		host.directories.add(".obsidian/plugins/ai-bridge-vaultwire-backup");
+		host.credentialValue = {
+			service_origin: serviceOrigin,
+			client_id: "old-client",
+			access_token: "old-access-token",
+			refresh_token: "old-refresh-token",
+			token_type: "Bearer",
+			expires_at: Date.now() + 3_600_000,
+			scope: ["vault:read", "vault:write", "vault:delete"],
+		};
+		const beforeCredentials = structuredClone(host.credentialValue);
+
+		vi.useFakeTimers();
+		vi.stubGlobal("window", {
+			setTimeout: (callback: () => void, delay: number) =>
+				globalThis.setTimeout(callback, delay),
+			clearTimeout: (handle: number) => globalThis.clearTimeout(handle),
+			setInterval: (callback: () => void, delay: number) =>
+				globalThis.setInterval(callback, delay),
+			clearInterval: (handle: number) => globalThis.clearInterval(handle),
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		vi.stubGlobal("document", {
+			visibilityState: "visible",
+			hasFocus: () => true,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+
+		expect(host.credentialReads).toBe(0);
+		expect(host.credentialValue).toEqual(beforeCredentials);
+		expect(Reflect.get(plugin, "migrationConfirmationPending")).toBe(true);
+		expect(Reflect.get(plugin, "sessionStatus")).toBe("disconnected");
+		expect(host.vaultListeners).toEqual([]);
+		expect(host.compositionNames).toEqual([]);
+		expect(host.syncCycles).toBe(0);
+		expect(host.publicationEvents).toEqual([]);
+		expect(host.publicationStages).toEqual([]);
+		expect(
+			(Reflect.get(plugin, "journal") as DeviceJournal).snapshot(),
+		).toEqual(beforeJournal);
+		expect([...host.payloads]).toEqual(beforePayloads);
+		expect(operation.path).toBe("notes/pending.md");
+		expect(host.calls).not.toContain("requestUrl");
+		const requests: string[] = [];
+		const request = vi
+			.spyOn(ObsidianOAuthTransport.prototype, "request")
+			.mockImplementation(async (url) => {
+				requests.push(url);
+				const origin = new URL(url).origin;
+				if (url.endsWith("oauth-authorization-server"))
+					return {
+						issuer: origin,
+						registration_endpoint: `${origin}/oauth/register`,
+						authorization_endpoint: `${origin}/authorize`,
+						token_endpoint: `${origin}/oauth/token`,
+						response_types_supported: ["code"],
+						grant_types_supported: ["authorization_code", "refresh_token"],
+						code_challenge_methods_supported: ["S256"],
+					};
+				if (url.endsWith("oauth/register"))
+					return { client_id: "migration-client" };
+				if (url.endsWith("oauth/token"))
+					return {
+						access_token: "new-access-token",
+						refresh_token: "new-refresh-token",
+						token_type: "Bearer",
+						expires_in: 3600,
+						scope: "vault:read vault:write vault:delete",
+					};
+				throw new Error(`Unexpected OAuth request: ${url}`);
+			});
+		try {
+			await host.connectAction?.();
+			expect(requests).toEqual([
+				`${serviceOrigin}/.well-known/oauth-authorization-server`,
+				`${serviceOrigin}/oauth/register`,
+			]);
+			const session = Reflect.get(plugin, "session") as DeviceSession;
+			const authorizationUrl = session.getAuthorizationUrl();
+			if (!authorizationUrl)
+				throw new Error(
+					"Explicit reconnect did not start browser authorization",
+				);
+			const state = new URL(authorizationUrl).searchParams.get("state");
+			if (!state) throw new Error("Authorization state was not created");
+			await session.callback({ code: "approved-code", state });
+			await settleSyncEffects(plugin);
+			expect(host.migrationTarget).toBe(serviceOrigin);
+			expect(Reflect.get(plugin, "migrationConfirmationPending")).toBe(false);
+			expect(Reflect.get(plugin, "sessionStatus")).toBe("connected");
+			const afterJournal = (
+				Reflect.get(plugin, "journal") as DeviceJournal
+			).snapshot();
+			expect({
+				device_id: afterJournal.device_id,
+				pending_ops: afterJournal.pending_ops,
+				pending_apply: afterJournal.pending_apply,
+				attention: afterJournal.attention,
+				base: afterJournal.base,
+				unavailable_paths: afterJournal.unavailable_paths,
+				sync_paused: afterJournal.sync_paused,
+			}).toEqual({
+				device_id: beforeJournal.device_id,
+				pending_ops: beforeJournal.pending_ops,
+				pending_apply: beforeJournal.pending_apply,
+				attention: beforeJournal.attention,
+				base: beforeJournal.base,
+				unavailable_paths: beforeJournal.unavailable_paths,
+				sync_paused: beforeJournal.sync_paused,
+			});
+			expect([...host.payloads]).toEqual(beforePayloads);
+		} finally {
+			request.mockRestore();
+			plugin.onunload();
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
 	});
 
 	it("wires the exact Obsidian callback action to the session adapter", async () => {

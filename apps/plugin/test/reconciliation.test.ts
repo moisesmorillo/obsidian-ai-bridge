@@ -583,7 +583,7 @@ describe("ReconciliationController", () => {
 					);
 				},
 			},
-			plugins: { plugins: { "ai-bridge": plugin } },
+			plugins: { plugins: { vaultwire: plugin } },
 		};
 		const scope = {
 			excludedPaths: [excludedPath],

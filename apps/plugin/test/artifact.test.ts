@@ -27,7 +27,11 @@ describe("production plugin artifact", () => {
 
 		expect(existsSync(resolve(outputDirectory, "main.js"))).toBe(true);
 		expect(existsSync(resolve(outputDirectory, "manifest.json"))).toBe(true);
-		expect(manifest.id).toBe("ai-bridge");
+		expect(manifest.id).toBe("vaultwire");
+		expect(manifest.name).toBe("Vaultwire");
+		expect(manifest.description).toBe(
+			"Self-hosted vault sync and storage, with MCP tools for AI agents.",
+		);
 		expect(manifest.minAppVersion).toBe("1.13.0");
 		expect(manifest.isDesktopOnly).toBe(false);
 		const sourceManifest = JSON.parse(

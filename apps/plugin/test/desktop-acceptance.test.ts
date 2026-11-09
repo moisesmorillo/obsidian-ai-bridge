@@ -277,7 +277,7 @@ function createAc19Host(responses: readonly Ac19ReadResponse[] = []): {
 					);
 			},
 		},
-		plugins: { plugins: { "ai-bridge": plugin } },
+		plugins: { plugins: { vaultwire: plugin } },
 	};
 	return {
 		app,
@@ -796,7 +796,7 @@ describe("desktop acceptance safety", () => {
 				},
 				plugins: {
 					plugins: {
-						"ai-bridge": {
+						vaultwire: {
 							settingsTab: {
 								syncActions: {
 									pause: () => {
@@ -1004,7 +1004,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		const script = createInstallScript(
 			"dev-1",
 			"/Users/test/vaults/obsidian-ai-bridge-dev",
-			'{"id":"ai-bridge","version":"0.1.0"}',
+			'{"id":"vaultwire","version":"0.1.0"}',
 			"synthetic bundle",
 			"/Users/test",
 		);
@@ -1085,7 +1085,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		const scripts = createInstallPayloadScripts(
 			"dev-1",
 			"/Users/test/vaults/obsidian-ai-bridge-dev",
-			'{"id":"ai-bridge","version":"0.1.0"}',
+			'{"id":"vaultwire","version":"0.1.0"}',
 			"synthetic bundle ".repeat(80_000),
 			"/Users/test",
 		);
@@ -1162,7 +1162,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 				getAbstractFileByPath: (path: string) =>
 					path === fixture.placeholder ? { path } : null,
 			},
-			plugins: { plugins: { "ai-bridge": plugin } },
+			plugins: { plugins: { vaultwire: plugin } },
 		};
 		const scripts = createAc19CaptureReloadScripts(
 			vaults["dev-1"],
@@ -1197,7 +1197,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		const script = createInstallScript(
 			"dev-1",
 			"/Users/test/vaults/obsidian-ai-bridge-dev",
-			'{"id":"ai-bridge","version":"0.1.0"}',
+			'{"id":"vaultwire","version":"0.1.0"}',
 			"synthetic bundle",
 			"/Users/test",
 		);
@@ -1234,19 +1234,24 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 
 	it("keeps every differing plugin file before it writes the checked bundle", async () => {
 		const basePath = vaults["dev-1"];
-		const mainPath = ".obsidian/plugins/ai-bridge/main.js";
-		const manifestPath = ".obsidian/plugins/ai-bridge/manifest.json";
+		const mainPath = ".obsidian/plugins/vaultwire/main.js";
+		const manifestPath = ".obsidian/plugins/vaultwire/manifest.json";
+		const oldPluginFile = ".obsidian/plugins/ai-bridge/data.json";
 		const firstBackup = `${mainPath}.oab-8.8-backup`;
-		const manifestText = '{"id":"ai-bridge","version":"0.1.0"}';
+		const manifestText = '{"id":"vaultwire","version":"0.1.0"}';
 		const oldBundle = "current altered bundle";
 		const checkedBundle = "checked bundle";
 		const files = new Map<string, string>([
 			[mainPath, oldBundle],
 			[firstBackup, "earlier bundle"],
 			[manifestPath, manifestText],
+			[oldPluginFile, '{"legacy":"untouched"}'],
 		]);
-		const folders = new Set([".obsidian/plugins/ai-bridge"]);
-		const enabled = new Set(["ai-bridge"]);
+		const folders = new Set([
+			".obsidian/plugins/vaultwire",
+			".obsidian/plugins/ai-bridge",
+		]);
+		const enabled = new Set(["vaultwire"]);
 		const app = {
 			vault: {
 				adapter: {
@@ -1308,6 +1313,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 		const preservedCurrentPath = `${mainPath}.oab-8.8-backup-${createHash("sha256").update(oldBundle).digest("hex")}`;
 		expect(files.get(preservedCurrentPath)).toBe(oldBundle);
 		expect(files.get(mainPath)).toBe(checkedBundle);
+		expect(files.get(oldPluginFile)).toBe('{"legacy":"untouched"}');
 	});
 
 	it("accepts only a canonical authorization URL without callback credentials", () => {
@@ -1450,7 +1456,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 			},
 			plugins: {
 				plugins: {
-					"ai-bridge": {
+					vaultwire: {
 						sessionStatus: "disconnected",
 						session: { pending: null },
 						journal: {
@@ -1510,7 +1516,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 			},
 			plugins: {
 				plugins: {
-					"ai-bridge": {
+					vaultwire: {
 						sessionStatus: "connected",
 						syncStatus: () => ({ state: "settled" }),
 						journal: {
@@ -2083,7 +2089,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 				},
 				plugins: {
 					plugins: {
-						"ai-bridge": { composition: { publication: { remote } } },
+						vaultwire: { composition: { publication: { remote } } },
 					},
 				},
 			};
@@ -2287,7 +2293,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 			},
 			plugins: {
 				plugins: {
-					"ai-bridge": {
+					vaultwire: {
 						journal: {
 							snapshot: () => structuredClone(state),
 						},
@@ -2687,7 +2693,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 			},
 			plugins: {
 				plugins: {
-					"ai-bridge": {
+					vaultwire: {
 						journal: {
 							snapshot: () => ({
 								epoch,
@@ -3305,7 +3311,7 @@ if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; els
 					},
 					plugins: {
 						plugins: {
-							"ai-bridge": {
+							vaultwire: {
 								journal,
 								composition: { publication },
 								desktopSync,

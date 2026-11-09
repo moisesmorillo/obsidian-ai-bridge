@@ -342,7 +342,7 @@ function createPhaseHost(
 				}
 			},
 		},
-		plugins: { plugins: { "ai-bridge": plugin } },
+		plugins: { plugins: { vaultwire: plugin } },
 	};
 	return {
 		app,
@@ -535,7 +535,7 @@ describe("AC-19 bounded phase runner", () => {
 			},
 			plugins: {
 				plugins: {
-					"ai-bridge": {
+					vaultwire: {
 						journal: {
 							snapshot: () => {
 								journalReads += 1;
@@ -587,7 +587,7 @@ describe("AC-19 bounded phase runner", () => {
 				getName: () => "obsidian-ai-bridge-dev-2",
 				adapter: { basePath: target, getBasePath: () => target },
 			},
-			plugins: { plugins: { "ai-bridge": plugin } },
+			plugins: { plugins: { vaultwire: plugin } },
 		};
 		const pause = await evaluateScript(app, scripts().pause);
 		expect(pause.status).toBe("paused");
@@ -719,7 +719,7 @@ describe("AC-19 bounded phase runner", () => {
 					return new Promise(() => {});
 				},
 			},
-			plugins: { plugins: { "ai-bridge": plugin } },
+			plugins: { plugins: { vaultwire: plugin } },
 		};
 		const phaseScripts = scripts();
 		await evaluateScript(app, phaseScripts.preflight);
@@ -978,7 +978,7 @@ describe("AC-19 bounded phase runner", () => {
 			},
 			plugins: {
 				plugins: {
-					"ai-bridge": {
+					vaultwire: {
 						journal: { snapshot: () => structuredClone(state) },
 						desktopSync: {},
 						sessionStatus: "connected",

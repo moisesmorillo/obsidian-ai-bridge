@@ -12,6 +12,8 @@ export async function syncCompatibilityVersion(
 	const manifest: unknown = JSON.parse(manifestText);
 	const versions: unknown = JSON.parse(versionsText);
 	if (!isObject(manifest)) throw new Error("Manifest must be a JSON object");
+	if (manifest.id !== "vaultwire")
+		throw new Error("Manifest id must be vaultwire");
 	const version = exactVersion(manifest.version, "Manifest version");
 	const minimum = exactVersion(
 		manifest.minAppVersion,

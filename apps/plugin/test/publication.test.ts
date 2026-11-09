@@ -3819,7 +3819,7 @@ describe("PublicationController", () => {
 			},
 			plugins: {
 				plugins: {
-					"ai-bridge": {
+					vaultwire: {
 						journal,
 						composition: { publication: controller },
 						desktopSync,

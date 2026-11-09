@@ -11,7 +11,11 @@ describe("release compatibility version sync", () => {
 		const versionsPath = join(root, "versions.json");
 		writeFileSync(
 			manifestPath,
-			JSON.stringify({ version: "0.1.7", minAppVersion: "1.14.0" }),
+			JSON.stringify({
+				id: "vaultwire",
+				version: "0.1.7",
+				minAppVersion: "1.14.0",
+			}),
 		);
 		writeFileSync(versionsPath, JSON.stringify({ "0.1.6": "1.13.0" }));
 		try {
@@ -31,7 +35,11 @@ describe("release compatibility version sync", () => {
 		const versionsPath = join(root, "versions.json");
 		writeFileSync(
 			manifestPath,
-			JSON.stringify({ version: "0.1.7", minAppVersion: "1.14.0" }),
+			JSON.stringify({
+				id: "vaultwire",
+				version: "0.1.7",
+				minAppVersion: "1.14.0",
+			}),
 		);
 		const original = '{"0.1.6":"1.13.0","0.1.7":"1.14.0"}';
 		writeFileSync(versionsPath, original);
@@ -51,7 +59,11 @@ describe("release compatibility version sync", () => {
 		const versionsPath = join(root, "versions.json");
 		writeFileSync(
 			manifestPath,
-			JSON.stringify({ version: "0.1.7", minAppVersion: "1.14.0" }),
+			JSON.stringify({
+				id: "vaultwire",
+				version: "0.1.7",
+				minAppVersion: "1.14.0",
+			}),
 		);
 		const original = '{"0.1.7":"1.13.0"}';
 		writeFileSync(versionsPath, original);
@@ -59,6 +71,30 @@ describe("release compatibility version sync", () => {
 			await expect(
 				syncCompatibilityVersion(manifestPath, versionsPath),
 			).rejects.toThrow(/conflicts/);
+			expect(readFileSync(versionsPath, "utf8")).toBe(original);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects the old plugin identifier without changing compatibility data", async () => {
+		const root = mkdtempSync(join(tmpdir(), "release-versions-old-id-"));
+		const manifestPath = join(root, "manifest.json");
+		const versionsPath = join(root, "versions.json");
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				id: "ai-bridge",
+				version: "0.2.1",
+				minAppVersion: "1.13.0",
+			}),
+		);
+		const original = '{"0.2.0":"1.13.0"}';
+		writeFileSync(versionsPath, original);
+		try {
+			await expect(
+				syncCompatibilityVersion(manifestPath, versionsPath),
+			).rejects.toThrow(/vaultwire/);
 			expect(readFileSync(versionsPath, "utf8")).toBe(original);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
@@ -80,7 +116,11 @@ describe("release compatibility version sync", () => {
 			).rejects.toThrow();
 			writeFileSync(
 				manifestPath,
-				JSON.stringify({ version: "0.1.7", minAppVersion: "1.14.0" }),
+				JSON.stringify({
+					id: "vaultwire",
+					version: "0.1.7",
+					minAppVersion: "1.14.0",
+				}),
 			);
 			writeFileSync(versionsPath, "[]");
 			await expect(

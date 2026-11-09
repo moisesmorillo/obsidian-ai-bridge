@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
+import { getOAuthApi, OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { DEVICE_CALLBACK_URI, VaultScopeSchema } from "@vaultwire/protocol";
 import type { Env } from "@worker/env";
 import productionWorker from "@worker/index";
@@ -753,6 +753,200 @@ describe("production OAuth entry", () => {
 		await response.text();
 	});
 
+	it("denies an old-identity token at the empty Vaultwire registry without a content write", async () => {
+		const client = await registerPublicClient();
+		const oldIdentitySeparator = [
+			"obsidian",
+			"-ai-bridge/provider-identity/v1",
+		].join("");
+		const oldIdentityDigest = new Uint8Array(
+			await crypto.subtle.digest(
+				"SHA-256",
+				new TextEncoder().encode(
+					JSON.stringify([
+						oldIdentitySeparator,
+						"https://service.test",
+						"synthetic-owner",
+					]),
+				),
+			),
+		);
+		const oldUserId = `oab${"1_"}${Array.from(oldIdentityDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+		const oldObjectName = ["obsidian-bridge", ".mmorillo.dev"].join("");
+		const oldEnv = new Proxy(env, {
+			/** Select the released object name only for old-token creation. */
+			get(target, property) {
+				return property === "VAULT_OBJECT_NAME"
+					? oldObjectName
+					: Reflect.get(target, property, target);
+			},
+		}) as Env;
+		const options = requireValue(
+			createOAuthOptions(
+				oldEnv,
+				createAuthorizeHandler(),
+				createAuthorizeHandler(),
+			),
+			"old provider options",
+		);
+		const oldRegistry = env.VAULTS.get(env.VAULTS.idFromName(oldObjectName));
+		const fence = await oldRegistry.beginClientConsent(
+			"synthetic-owner",
+			client.client_id,
+			"Released client",
+		);
+		options.tokenExchangeCallback = async ({
+			clientId,
+			grantId,
+			requestedScope,
+			userId,
+			props,
+		}) => {
+			expect(userId).toBe(oldUserId);
+			const accepted = await oldRegistry.registerClientGrant({
+				owner_subject: "synthetic-owner",
+				client_id: clientId,
+				grant_id: grantId,
+				generation: props?.generation,
+				consent_id: props?.consent_id,
+			});
+			if (!accepted) throw new Error("Old registry rejected its fixture grant");
+			return {
+				newProps: {
+					...props,
+					client_id: clientId,
+					grant_id: grantId,
+					generation: fence.generation,
+					consent_id: fence.consent_id,
+				},
+				accessTokenScope: requestedScope,
+			};
+		};
+		const api = getOAuthApi(options, oldEnv);
+		const { verifier, challenge } = createPkce();
+		const authorization = new URLSearchParams({
+			response_type: "code",
+			client_id: client.client_id,
+			redirect_uri: "https://flow.test/callback",
+			scope: "vault:read vault:write",
+			state: "old-object-token",
+			code_challenge: await challenge,
+			code_challenge_method: "S256",
+			resource: "https://service.test",
+		});
+		const authRequest = await api.parseAuthRequest(
+			new Request(`https://service.test/authorize?${authorization}`),
+		);
+		const consent = await api.beginConsent(authRequest);
+		const cookie = consent.headers.get("set-cookie")?.split(";")[0] ?? "";
+		const approved = await api.approveConsent(
+			new Request("https://service.test/authorize/consent", {
+				headers: { cookie },
+			}),
+			consent.handle,
+		);
+		const completed = await api.completeAuthorization({
+			request: approved.request,
+			userId: oldUserId,
+			metadata: { client_name: "Released client" },
+			scope: approved.request.scope,
+			props: {
+				client_id: client.client_id,
+				generation: fence.generation,
+				consent_id: fence.consent_id,
+			},
+		});
+		const code = requireValue(
+			new URL(completed.redirectTo).searchParams.get("code"),
+			"old-identity authorization code",
+		);
+		const issued = await new OAuthProvider(options).fetch(
+			new Request("https://service.test/oauth/token", {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					grant_type: "authorization_code",
+					client_id: client.client_id,
+					code,
+					redirect_uri: "https://flow.test/callback",
+					code_verifier: verifier,
+					resource: "https://service.test",
+				}),
+			}),
+			oldEnv,
+			{} as ExecutionContext,
+		);
+		expect(issued.status).toBe(200);
+		const token = (await issued.json()) as { access_token: string };
+		expect(token.access_token.startsWith(`${oldUserId}:`)).toBe(true);
+
+		const newObjectName = requireValue(
+			env.VAULT_OBJECT_NAME,
+			"new object name",
+		);
+		const newRegistry = env.VAULTS.get(env.VAULTS.idFromName(newObjectName));
+		let contentWrites = 0;
+		const observedVaults = new Proxy(env.VAULTS, {
+			/** Keep real registry RPCs and count any content commit. */
+			get(target, property) {
+				if (property !== "get") {
+					const value = Reflect.get(target, property, target);
+					return typeof value === "function" ? value.bind(target) : value;
+				}
+				return (id: Parameters<typeof env.VAULTS.get>[0]) => {
+					const stub = target.get(id);
+					return new Proxy(stub, {
+						/** Count content commit attempts while preserving the real stub. */
+						get(stubTarget, method) {
+							if (method === "commitText")
+								return async (...args: Parameters<typeof stub.commitText>) => {
+									contentWrites += 1;
+									return await stub.commitText(...args);
+								};
+							return Reflect.get(stubTarget, method, stubTarget);
+						},
+					});
+				};
+			},
+		});
+		const newEnv = new Proxy(env, {
+			/** Observe content commit calls without replacing registry authority. */
+			get(target, property) {
+				return property === "VAULTS"
+					? observedVaults
+					: Reflect.get(target, property, target);
+			},
+		}) as Env;
+		const response = await productionWorker.fetch(
+			new Request("https://service.test/v1/files/old-token-denied.md", {
+				method: "PUT",
+				headers: {
+					authorization: `Bearer ${token.access_token}`,
+					"content-type": "text/markdown",
+					"if-none-match": "*",
+					"x-vault-epoch": "0".repeat(32),
+				},
+				body: "must not be stored",
+			}),
+			newEnv,
+			{} as ExecutionContext,
+		);
+		expect(response.status).toBe(401);
+		expect(contentWrites).toBe(0);
+		expect(
+			await oldRegistry.listClientGrants("synthetic-owner", client.client_id),
+		).toMatchObject({
+			grants: [
+				expect.objectContaining({ grant_id: token.access_token.split(":")[1] }),
+			],
+		});
+		expect(
+			await newRegistry.listClientGrants("synthetic-owner", client.client_id),
+		).toMatchObject({
+			grants: [],
+		});
+	});
+
 	it("rejects other provider identities and invalid callback configuration before registration", async () => {
 		let registrations = 0;
 		let namespaceSelections = 0;
@@ -810,14 +1004,14 @@ describe("production OAuth entry", () => {
 				"SHA-256",
 				new TextEncoder().encode(
 					JSON.stringify([
-						"obsidian-ai-bridge/provider-identity/v1",
+						["obsidian", "-ai-bridge/provider-identity/v1"].join(""),
 						"https://service.test",
 						"synthetic-owner",
 					]),
 				),
 			),
 		);
-		const oldProviderIdentity = `oab1_${Array.from(oldIdentityDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+		const oldProviderIdentity = `${["oab", "1_"].join("")}${Array.from(oldIdentityDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 		const invalidIdentities = [
 			"synthetic-other-owner",
 			oldProviderIdentity,

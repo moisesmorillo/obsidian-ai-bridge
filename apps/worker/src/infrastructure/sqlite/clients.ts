@@ -159,6 +159,17 @@ export class SqliteClientRegistry {
 		});
 	}
 
+	/** Return whether this Vault retains a registration record for one grant. */
+	hasRegisteredGrant(clientId: string, grantId: string): boolean {
+		return this.db.transaction(
+			(tx) =>
+				tx.all<{ grant_id: string }>(
+					sql`SELECT grant_id FROM client_grants
+					WHERE client_id = ${clientId} AND grant_id = ${grantId}`,
+				).length > 0,
+		);
+	}
+
 	/**
 	 * Read a finite owner page from retained registry records.
 	 *

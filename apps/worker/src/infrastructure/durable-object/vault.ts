@@ -310,6 +310,11 @@ export class Vault extends DurableObject<Env> {
 		return this.clientRegistry.registerClientGrant(request);
 	}
 
+	/** Check that the selected Vault retains one provider grant record. */
+	hasRegisteredGrant(clientId: string, grantId: string): boolean {
+		return this.clientRegistry.hasRegisteredGrant(clientId, grantId);
+	}
+
 	/** Return a bounded page of clients for the configured owner. */
 	listClients(ownerSubject: string, cursor?: string) {
 		const request = ListClientsRequestSchema.parse({

@@ -26,7 +26,7 @@ describe("production Worker configuration", () => {
 			"utf8",
 		);
 		expect(entry.split("idFromName(")).toHaveLength(8);
-		expect(oauth.split("idFromName(")).toHaveLength(3);
+		expect(oauth.split("idFromName(")).toHaveLength(4);
 		expect(entry).not.toContain("idFromName(new URL");
 		expect(oauth).not.toContain("idFromName(new URL");
 		expect(entry).not.toContain("idFromName(env.SERVICE_ORIGIN");
@@ -34,6 +34,7 @@ describe("production Worker configuration", () => {
 		expect(entry).toContain("idFromName(env.VAULT_OBJECT_NAME");
 		expect(oauth).toContain("callbackEnv.VAULT_OBJECT_NAME");
 		expect(oauth).toContain("idFromName(objectName)");
+		expect(oauth).toContain("bindings.VAULT_OBJECT_NAME");
 	});
 
 	it("deploys only from a release event or an owner dispatch", () => {

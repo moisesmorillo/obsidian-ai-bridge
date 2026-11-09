@@ -420,7 +420,7 @@ export function createOAuthWorker(
 	defaultHandler: ExportedHandler<Env>,
 ): OAuthProvider<Env> | null {
 	const apiHandler: ExportedHandler<Env> = {
-		fetch: (request, bindings, context) => {
+		fetch: async (request, bindings, context) => {
 			const enriched = context as ExecutionContext & {
 				props?: unknown;
 				auth?: unknown;
@@ -438,6 +438,19 @@ export function createOAuthWorker(
 				scopes,
 			});
 			if (!identity.success)
+				return Promise.resolve(new Response("Unauthorized", { status: 401 }));
+			const objectName = bindings.VAULT_OBJECT_NAME;
+			if (!objectName)
+				return Promise.resolve(new Response("Unauthorized", { status: 401 }));
+			const registry = bindings.VAULTS.get(
+				bindings.VAULTS.idFromName(objectName),
+			);
+			if (
+				!(await registry.hasRegisteredGrant(
+					identity.data.client_id,
+					identity.data.grant_id,
+				))
+			)
 				return Promise.resolve(new Response("Unauthorized", { status: 401 }));
 			const headers = new Headers(request.headers);
 			headers.set(CONTEXT_HEADER, JSON.stringify(identity.data));

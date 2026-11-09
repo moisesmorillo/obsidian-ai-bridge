@@ -1,6 +1,6 @@
-import { renderConsentPage } from "@worker/transport/owner-pages/consent";
 import { renderBlobGcPage } from "@worker/transport/owner-pages/blob-gc";
 import { renderClientsPage } from "@worker/transport/owner-pages/clients";
+import { renderConsentPage } from "@worker/transport/owner-pages/consent";
 import { renderExportsPage } from "@worker/transport/owner-pages/exports";
 import {
 	formatBytes,

@@ -1,5 +1,5 @@
-import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
 import { BRAND_MARK_SVG } from "@worker/transport/owner-pages/shell";
+import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
 
 /** Escaped display values for one provider authorization request. */
 export interface ConsentPageViewModel {

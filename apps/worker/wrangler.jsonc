@@ -3,6 +3,7 @@
 	"compatibility_date": "2025-07-12",
 	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],
 	"main": "src/index.ts",
+	"vars": { "VAULT_OBJECT_NAME": "vaultwire-development" },
 	"triggers": { "crons": ["0 * * * *"] },
 	"durable_objects": {
 		"bindings": [{ "name": "VAULTS", "class_name": "Vault" }]

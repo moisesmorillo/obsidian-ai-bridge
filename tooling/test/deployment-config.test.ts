@@ -13,6 +13,29 @@ const productionConfig = JSON.parse(productionConfigText) as Record<
 >;
 
 describe("production Worker configuration", () => {
+	it("uses the configured object name at every Durable Object routing seam", () => {
+		const entry = readFileSync(
+			new URL("../../apps/worker/src/index.ts", import.meta.url),
+			"utf8",
+		);
+		const oauth = readFileSync(
+			new URL(
+				"../../apps/worker/src/infrastructure/auth/oauth.ts",
+				import.meta.url,
+			),
+			"utf8",
+		);
+		expect(entry.split("idFromName(")).toHaveLength(8);
+		expect(oauth.split("idFromName(")).toHaveLength(3);
+		expect(entry).not.toContain("idFromName(new URL");
+		expect(oauth).not.toContain("idFromName(new URL");
+		expect(entry).not.toContain("idFromName(env.SERVICE_ORIGIN");
+		expect(oauth).not.toContain("idFromName(env.SERVICE_ORIGIN");
+		expect(entry).toContain("idFromName(env.VAULT_OBJECT_NAME");
+		expect(oauth).toContain("callbackEnv.VAULT_OBJECT_NAME");
+		expect(oauth).toContain("idFromName(objectName)");
+	});
+
 	it("deploys only from a release event or an owner dispatch", () => {
 		const workflow = readFileSync(
 			new URL("../../.github/workflows/deploy.yml", import.meta.url),
@@ -42,6 +65,7 @@ describe("production Worker configuration", () => {
 		);
 		expect(productionConfig.vars).toEqual({
 			SERVICE_ORIGIN: "https://vaultwire.mmorillo.dev",
+			VAULT_OBJECT_NAME: "obsidian-bridge.mmorillo.dev",
 			ACCESS_TEAM_DOMAIN: "https://mmorillo.cloudflareaccess.com",
 			ACCESS_AUDIENCE: "PENDING_S17_VAULTWIRE_ACCESS_AUDIENCE",
 		});
@@ -102,18 +126,31 @@ describe("production Worker configuration", () => {
 				new URL("../../apps/worker/wrangler.jsonc", import.meta.url),
 				"utf8",
 			),
-		) as { name: string; migrations: Array<Record<string, unknown>> };
+		) as {
+			name: string;
+			vars: { VAULT_OBJECT_NAME: string };
+			migrations: Array<Record<string, unknown>>;
+		};
 		const f2 = JSON.parse(
 			readFileSync(
 				new URL("../../apps/worker/wrangler.f2.jsonc", import.meta.url),
 				"utf8",
 			),
-		) as { name: string; migrations: Array<Record<string, unknown>> };
+		) as {
+			name: string;
+			vars: { VAULT_OBJECT_NAME: string };
+			migrations: Array<Record<string, unknown>>;
+		};
 
 		expect(development.name).toBe("vaultwire-development");
 		expect(f2.name).toBe("vaultwire-f2-tests");
 		expect(development.name).not.toBe(productionConfig.name);
 		expect(f2.name).not.toBe(productionConfig.name);
+		expect(development.vars.VAULT_OBJECT_NAME).toBe(development.name);
+		expect(f2.vars.VAULT_OBJECT_NAME).toBe(f2.name);
+		expect(development.vars.VAULT_OBJECT_NAME).not.toBe(
+			f2.vars.VAULT_OBJECT_NAME,
+		);
 		for (const config of [development, f2]) {
 			expect(config.migrations).toHaveLength(1);
 			expect(config.migrations[0]).toHaveProperty("new_sqlite_classes", [

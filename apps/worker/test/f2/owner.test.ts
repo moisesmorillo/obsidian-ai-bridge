@@ -38,7 +38,7 @@ describe("production owner console", () => {
 			),
 		);
 		const clientId = `owner-${crypto.randomUUID()}`;
-		const stub = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 		const consent = await stub.beginClientConsent(
 			"synthetic-owner",
 			clientId,

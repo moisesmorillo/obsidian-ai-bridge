@@ -192,6 +192,7 @@ export function startLocalWorker(
 	);
 	config.vars = {
 		SERVICE_ORIGIN: origin,
+		VAULT_OBJECT_NAME: "vaultwire-preflight-test",
 		OWNER_SUBJECT: "preflight-test-owner",
 	};
 	config.migrations = localizeDurableObjectMigrations(config.migrations);

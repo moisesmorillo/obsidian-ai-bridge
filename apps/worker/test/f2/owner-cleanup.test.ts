@@ -336,7 +336,7 @@ describe("owner client cleanup", () => {
 
 	it("renders Remove, sweeps stale rows, rejects CSRF, and removes only revoked clients", async () => {
 		const assertion = await ownerAssertion();
-		const stub = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(env.VAULT_OBJECT_NAME!));
 		const revoked = await acceptGrant(stub, "a-revoked");
 		await stub.revokeClient(OWNER, revoked.client_id);
 		await stub.markGrantCleanupComplete(revoked.client_id, revoked.grant_id);

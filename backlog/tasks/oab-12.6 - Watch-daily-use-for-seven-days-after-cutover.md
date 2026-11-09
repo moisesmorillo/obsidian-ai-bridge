@@ -4,7 +4,7 @@ title: Watch daily use for seven days after cutover
 status: In Progress
 assignee: []
 created_date: '2026-11-07T00:15:00Z'
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-09T03:05:00Z'
 labels:
   - F6
 dependencies: []
@@ -58,4 +58,6 @@ It does not prove seven days, all-device post-cutover exchange, rollback, or com
 All criteria stay unchecked.
 
 Keep In Progress.
+
+Owner decision 2026-11-08: the three-device convergence check in AC #8 is covered by the F5 real-use evidence in OAB-12 notes (iPad note reaches Mac and iPhone, iPhone attachment and offline edit, Mac daily use). No new scripted check is needed. The supervisor records daily Mac checks and the owner reports mobile observations. Days 1 to 3 (2026-11-06 to 2026-11-08): no attention, no confirmations, no failures on Mac. Cursor 268, 47 files, hourly backups present.
 <!-- SECTION:NOTES:END -->

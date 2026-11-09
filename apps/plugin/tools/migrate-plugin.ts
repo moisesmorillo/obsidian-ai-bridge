@@ -1,4 +1,12 @@
-import { copyFile, lstat, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import {
+	copyFile,
+	lstat,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rename,
+	rm,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 /** Describes the verified backup created before plugin data is copied. */
@@ -29,6 +37,27 @@ export async function migratePluginData(
 	}
 	if (!(await isDirectory(source)))
 		throw new Error("Old ai-bridge plugin folder was not found");
+	const activationPath = join(obsidian, "community-plugins.json");
+	let enabledPlugins: unknown;
+	try {
+		enabledPlugins = JSON.parse(await readFile(activationPath, "utf8"));
+	} catch (error) {
+		if (isMissing(error))
+			throw new Error(
+				"community-plugins.json is required to verify plugin activation",
+			);
+		throw error;
+	}
+	if (
+		!Array.isArray(enabledPlugins) ||
+		!enabledPlugins.every((id) => typeof id === "string")
+	)
+		throw new Error("community-plugins.json must be a list of plugin IDs");
+	if (
+		enabledPlugins.includes("ai-bridge") ||
+		enabledPlugins.includes("vaultwire")
+	)
+		throw new Error("Disable AI Bridge and Vaultwire before offline migration");
 	if (await exists(destination))
 		throw new Error("Vaultwire plugin folder already exists");
 	if (await exists(backupDirectory))
@@ -37,13 +66,17 @@ export async function migratePluginData(
 	if (!(await isRegularFile(sourceData)))
 		throw new Error("Old plugin data.json must be a regular file");
 	await mkdir(backupDirectory);
+	let backupComplete = false;
 	try {
 		await copy(sourceData, join(backupDirectory, "data.json"));
+		backupComplete = true;
 		stage = await mkdtemp(join(plugins, ".vaultwire-migration-"));
 		await copy(sourceData, join(stage, "data.json"));
 		await rename(stage, destination);
 	} catch (error) {
 		if (stage) await rm(stage, { recursive: true, force: true });
+		if (!backupComplete)
+			await rm(backupDirectory, { recursive: true, force: true });
 		throw error;
 	}
 	return { backupDirectory };

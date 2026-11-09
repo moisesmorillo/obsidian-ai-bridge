@@ -4,7 +4,7 @@ title: Rename the plugin identifier to vaultwire
 status: In Progress
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T15:58:00Z'
+updated_date: '2026-11-09T16:17:00Z'
 labels:
   - rename
   - plugin
@@ -55,5 +55,9 @@ Journal storage can live outside the plugin folder. Never discard pending operat
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented Vaultwire manifest metadata, release tag validation, compatibility checks, and plugin ID use in install/dev-vault tooling. Added an offline migration command that backs up and copies data.json without changing the old folder. Preserved the existing device journal, credential, and settings-consent local-storage keys. Added migration instructions that explain the localStorage boundary. RED tests reproduced the old release prefix, new plugin settings path, compatibility identifier guard, and migration behavior before implementation. Kept the existing Obsidian callback URI unchanged because its registration belongs to the existing authentication contract and Worker changes are outside this task. Full checks passed: 31 plugin test files, 850 passed and 1 skipped; root check passed.
+Implemented Vaultwire manifest metadata, release validation, compatibility checks, install/dev-vault tooling, and migration protection. Existing journal, credential, and settings-consent storage keys stay unchanged. RED tests showed failures for the release prefix, activation-state guard, first-copy cleanup, and missing migration command. GREEN targeted tests passed 73 tests across migration and lifecycle files.
+
+Review finding closures: MAJOR startup-order risk closed. The desktop procedure disables AI Bridge before restart. The offline command refuses when community-plugins.json enables either plugin ID. Vaultwire blocks credential restore and hides its settings page until its explicit migration action completes. That action refuses an enabled old plugin, connected or active Vaultwire, and existing Vaultwire data. MINOR iOS access gap closed. The guide uses BRAT and the explicit in-plugin migration command, not Files access to hidden folders. MINOR first-copy retry gap closed. Failed backup copy cleanup preserves old settings and allows retry.
+
+`bun run docs:check` and `bun run check` passed. The full plugin suite passed 32 files with 861 tests passed and 1 skipped. No real device, real vault, or production service was used. Device verification remains for OAB-50.6.
 <!-- SECTION:NOTES:END -->

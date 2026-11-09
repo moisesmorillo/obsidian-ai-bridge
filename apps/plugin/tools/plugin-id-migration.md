@@ -1,26 +1,30 @@
 # Move one device to the Vaultwire plugin ID
 
-Stop Obsidian on every device before migration. Do not sync or copy between devices during these steps. The owner accepts a full reconnect to the new service address after the cutover.
+Stop Obsidian on every device before cutover. Keep AI Bridge disabled before Obsidian starts again. Do not sync between devices during migration. Reconnect only after the new service is ready.
 
 ## Desktop
 
-1. Close Obsidian. Make a full backup of the vault.
-2. Run `bun apps/plugin/tools/migrate-plugin.ts "$HOME/path/to/vault"` from the repository root. Use the full path to the intended vault. The tool refuses paths without `.obsidian/plugins`, an existing `vaultwire` folder, symbolic-link source data, and an existing backup.
-3. Confirm `.obsidian/plugins/ai-bridge-vaultwire-backup/data.json` exists. The tool keeps `.obsidian/plugins/ai-bridge` unchanged and copies only `data.json` to `.obsidian/plugins/vaultwire/data.json`.
-4. Install the Vaultwire plugin files into `.obsidian/plugins/vaultwire`. Do not install into or remove `ai-bridge`.
-5. Start Obsidian. Disable AI Bridge and enable Vaultwire. Check the shared settings, then reconnect to the Vaultwire service. Check that pending edits, attention items, and local notes remain present before normal use.
+1. In Obsidian, disable AI Bridge in Community plugins. Confirm it stays disabled, then close Obsidian.
+2. Make a complete vault backup.
+3. Run `bun apps/plugin/tools/migrate-plugin.ts "$HOME/path/to/vault"` from the repository root. Use the full path to the intended vault.
+4. The command refuses if `community-plugins.json` enables AI Bridge or Vaultwire. It copies `data.json` to `.obsidian/plugins/vaultwire` and verifies a backup at `.obsidian/plugins/ai-bridge-vaultwire-backup/data.json`.
+5. Start Obsidian with AI Bridge disabled. Use BRAT to install Vaultwire. Keep Vaultwire disabled until the new service is ready.
+6. After cutover, enable Vaultwire. Check its settings and local state, then reconnect to the new service. Check pending edits, attention items, and notes before normal use.
 
-If migration stops before step 3, the old folder remains unchanged. Keep the vault backup and the migration backup. Do not remove either plugin folder. A failed stage copy leaves no Vaultwire folder. If the backup path exists, stop and inspect it instead of overwriting it.
+The command keeps the old folder unchanged. If it fails during the first backup copy, it removes the incomplete backup directory and leaves the old data. A failed staged copy leaves a verified backup and no Vaultwire folder. Inspect the backup and old folder before you retry.
 
 ## iPhone and iPad
 
-1. Stop Obsidian on all devices. Make a complete vault backup in Files or the approved vault backup location.
-2. In Files, open the vault's `.obsidian/plugins` folder. Copy `ai-bridge/data.json` into a new `vaultwire` folder. Keep the original folder and all its files. If `vaultwire` already exists, stop and inspect it. Do not replace files.
-3. Install or update Vaultwire so its manifest, `main.js`, and `styles.css` are in the `vaultwire` folder. Do not delete `ai-bridge`.
-4. Start Obsidian. Disable AI Bridge, enable Vaultwire, inspect settings, then reconnect to the Vaultwire service. Confirm local edits and plugin state before normal use.
+1. In Obsidian, disable AI Bridge in Community plugins. Confirm it stays disabled, then close Obsidian.
+2. After cutover, reopen Obsidian with AI Bridge disabled. Use BRAT to install Vaultwire, then enable Vaultwire.
+3. When old AI Bridge settings exist and Vaultwire has no `data.json`, startup keeps Vaultwire disconnected. Run **Migrate AI Bridge settings to Vaultwire** from the command palette.
+4. The command refuses while AI Bridge remains enabled, while Vaultwire is connected or active, or when Vaultwire already has settings. It copies the old `data.json` and creates a verified backup. It does not change journal state or payloads.
+5. The Vaultwire settings page becomes available. Keep AI Bridge disabled. Check the service address and local state, then reconnect only when the new service is ready.
+
+Use BRAT for the plugin files. Do not use Files to open the hidden `.obsidian/plugins` directory. The iOS procedure uses Obsidian adapter access and the explicit command above. Do not remove either plugin folder during this task.
 
 ## Device-only state
 
-The journal uses the stable Obsidian local-storage key `obsidian-ai-bridge:device-state:v1`. Credentials and settings-sync consent also use stable local keys when the platform does not provide secret storage. The plugin payload files remain under the vault's `.ai-bridge/pending` path. These items are not in `data.json` and are not copied by the migration command. Keep the same vault and Obsidian application data. Do not clear application data or reset plugin state. Obsidian local storage does not move when a folder is copied. This procedure does not claim to copy it.
+The journal uses the stable Obsidian local-storage key `obsidian-ai-bridge:device-state:v1`. Credentials and settings-sync consent also use stable local keys when the platform does not provide secret storage. Pending payloads stay under `.ai-bridge/pending`. Migration does not copy or reset these values. Keep the same vault and Obsidian application data. Do not clear application data or reset plugin state. A folder copy does not move localStorage.
 
-A new service address needs a full reconnect. The old plugin folder and the backup stay in place until the owner verifies migration and unsynced edits on each device. Remove neither during this task.
+The desktop command and migration logic have temporary-fixture tests. No real device or real vault test is part of this task. Device verification belongs to OAB-50.6.

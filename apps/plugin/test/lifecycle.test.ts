@@ -29,6 +29,18 @@ const host = vi.hoisted(() => ({
 	statusRefreshes: 0,
 	settingsData: null as unknown,
 	localSettings: null as unknown,
+	credentialReads: 0,
+	files: new Map<string, string>(),
+	directories: new Set<string>([
+		".obsidian/plugins",
+		".obsidian/plugins/ai-bridge",
+		".obsidian/plugins/vaultwire",
+	]),
+	commands: [] as Array<{
+		id: string;
+		name: string;
+		callback: () => void | Promise<void>;
+	}>,
 	localSettingsSave: null as ((value: unknown) => Promise<void>) | null,
 	serverUrlChange: null as ((url: string) => Promise<void>) | null,
 	deviceNameChange: null as ((name: string) => Promise<void>) | null,
@@ -87,6 +99,14 @@ vi.mock("obsidian", () => ({
 	},
 	Plugin: class {
 		loadData = async () => host.settingsData;
+		/** Captures the explicit command registered for one-time migration. */
+		addCommand = (command: {
+			id: string;
+			name: string;
+			callback: () => void | Promise<void>;
+		}) => {
+			host.commands.push(command);
+		};
 		/** Captures the route and callback registered by the plugin lifecycle. */
 		registerObsidianProtocolHandler = (
 			action: string,
@@ -117,12 +137,37 @@ vi.mock("obsidian", () => ({
 					if (index >= 0) host.vaultListeners.splice(index, 1);
 				},
 				adapter: {
+					exists: async (path: string) =>
+						host.files.has(path) ||
+						host.payloads.has(path) ||
+						host.directories.has(path),
+					read: async (path: string) => {
+						const value = host.files.get(path);
+						if (value === undefined) throw new Error(`Missing ${path}`);
+						return value;
+					},
+					write: async (path: string, value: string) => {
+						host.files.set(path, value);
+					},
+					mkdir: async (path: string) => {
+						host.directories.add(path);
+					},
+					remove: async (path: string) => {
+						host.files.delete(path);
+					},
+					rmdir: async (path: string) => {
+						host.directories.delete(path);
+					},
+					rename: async (from: string, to: string) => {
+						const value = host.files.get(from);
+						if (value === undefined) throw new Error(`Missing ${from}`);
+						host.files.set(to, value);
+						host.files.delete(from);
+					},
 					stat: async (path: string) =>
 						host.unavailablePaths.has(path)
 							? { type: "file", mtime: 0, size: 0 }
 							: null,
-					exists: async (path: string) => host.payloads.has(path),
-					mkdir: async () => undefined,
 					readBinary: async (path: string) => {
 						const bytes = host.payloads.get(path);
 						return bytes ? bytes.slice().buffer : new ArrayBuffer(0);
@@ -133,7 +178,10 @@ vi.mock("obsidian", () => ({
 				},
 			},
 			loadLocalStorage: (key: string) => {
-				if (key.includes(":credential:")) return null;
+				if (key.includes(":credential:")) {
+					host.credentialReads += 1;
+					return null;
+				}
 				if (key.includes(":settings-sync:")) return host.localSettings;
 				host.calls.push("loadLocalStorage");
 				return host.loadState ? host.loadState() : host.state;
@@ -233,6 +281,9 @@ vi.mock("../src/settings", () => ({
 			host.settingsSyncPolicyChange =
 				args[11] as typeof host.settingsSyncPolicyChange;
 		}
+
+		/** Rebuilds settings controls after one-time settings data import. */
+		display(): void {}
 
 		/** Counts visible status refreshes from real plugin action callbacks. */
 		refreshStatus(): void {
@@ -345,6 +396,14 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.statusRefreshes = 0;
 		host.settingsData = null;
 		host.localSettings = null;
+		host.credentialReads = 0;
+		host.files.clear();
+		host.directories.clear();
+		host.directories.add(".obsidian/plugins");
+		host.directories.add(".obsidian/plugins/ai-bridge");
+		host.directories.add(".obsidian/plugins/vaultwire");
+		host.files.set(".obsidian/community-plugins.json", "[]");
+		host.commands.splice(0);
 		host.localSettingsSave = null;
 		host.serverUrlChange = null;
 		host.deviceNameChange = null;
@@ -1103,6 +1162,52 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			"loadLocalStorage",
 		]);
 		expect(plugin.attentionReason).toBeNull();
+	});
+
+	it("blocks automatic restore until the explicit old-settings migration runs", async () => {
+		const oldData =
+			'{"serverUrl":"https://old.example","coexistenceMode":true}';
+		host.files.set(".obsidian/plugins/ai-bridge/data.json", oldData);
+		host.payloads.set(
+			".ai-bridge/pending/operation-payload",
+			new Uint8Array([7, 8, 9]),
+		);
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		const beforeJournal = journal.snapshot();
+		const beforeLocalSettings = structuredClone(host.localSettings);
+		const migration = host.commands.find(
+			(command) => command.id === "migrate-ai-bridge-settings",
+		);
+		if (!migration) throw new Error("Migration command was not registered");
+
+		expect(host.credentialReads).toBe(0);
+		expect(host.settingsTab).toBeNull();
+		await migration.callback();
+
+		expect(host.files.get(".obsidian/plugins/vaultwire/data.json")).toBe(
+			oldData,
+		);
+		expect(host.settingsTab).not.toBeNull();
+		expect(
+			host.files.get(".obsidian/plugins/ai-bridge-vaultwire-backup/data.json"),
+		).toBe(oldData);
+		expect(host.files.get(".obsidian/plugins/ai-bridge/data.json")).toBe(
+			oldData,
+		);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			serverUrl: "https://old.example",
+			coexistenceMode: true,
+		});
+		expect(journal.snapshot()).toEqual(beforeJournal);
+		expect(host.localSettings).toEqual(beforeLocalSettings);
+		expect(host.payloads.get(".ai-bridge/pending/operation-payload")).toEqual(
+			new Uint8Array([7, 8, 9]),
+		);
+		expect(host.credentialReads).toBe(0);
+		expect(Reflect.get(plugin, "sessionStatus")).toBe("disconnected");
+		plugin.onunload();
 	});
 
 	it("wires the exact Obsidian callback action to the session adapter", async () => {

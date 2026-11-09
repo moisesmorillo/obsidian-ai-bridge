@@ -18,6 +18,7 @@ function createVault(): string {
 	const root = mkdtempSync(join(tmpdir(), "vaultwire-migration-"));
 	temporaryRoots.push(root);
 	mkdirSync(join(root, ".obsidian/plugins/ai-bridge"), { recursive: true });
+	writeFileSync(join(root, ".obsidian/community-plugins.json"), "[]");
 	return root;
 }
 
@@ -47,6 +48,25 @@ describe("offline plugin data migration", () => {
 		expect(readFileSync(oldData, "utf8")).toContain("example.invalid");
 	});
 
+	it.each([["ai-bridge"], ["vaultwire"], ["ai-bridge", "vaultwire"]])(
+		"refuses migration while the plugin activation list includes %s",
+		async (...enabled: string[]) => {
+			const root = createVault();
+			const data = join(root, ".obsidian/plugins/ai-bridge/data.json");
+			writeFileSync(data, "shared-settings");
+			writeFileSync(
+				join(root, ".obsidian/community-plugins.json"),
+				JSON.stringify(enabled),
+			);
+
+			await expect(migratePluginData(root)).rejects.toThrow(/Disable/);
+			expect(readFileSync(data, "utf8")).toBe("shared-settings");
+			expect(() =>
+				readFileSync(join(root, ".obsidian/plugins/vaultwire/data.json")),
+			).toThrow();
+		},
+	);
+
 	it("refuses a target that is not an Obsidian vault", async () => {
 		const root = mkdtempSync(join(tmpdir(), "not-a-vault-"));
 		temporaryRoots.push(root);
@@ -64,6 +84,32 @@ describe("offline plugin data migration", () => {
 		await expect(migratePluginData(root)).rejects.toThrow(/already exists/);
 		expect(readFileSync(oldData, "utf8")).toBe("old");
 		expect(readFileSync(newData, "utf8")).toBe("new");
+	});
+
+	it("removes an incomplete backup after its first copy fails and permits retry", async () => {
+		const root = createVault();
+		const oldData = join(root, ".obsidian/plugins/ai-bridge/data.json");
+		writeFileSync(oldData, "shared-settings");
+		/** Fails the initial backup copy so a later command retry can be checked. */
+		const failFirstCopy: typeof copyFile = async () => {
+			throw new Error("simulated backup failure");
+		};
+
+		await expect(migratePluginData(root, failFirstCopy)).rejects.toThrow(
+			/simulated backup failure/,
+		);
+		expect(readFileSync(oldData, "utf8")).toBe("shared-settings");
+		expect(() =>
+			readFileSync(
+				join(root, ".obsidian/plugins/ai-bridge-vaultwire-backup/data.json"),
+			),
+		).toThrow();
+		await expect(migratePluginData(root)).resolves.toMatchObject({
+			backupDirectory: join(
+				root,
+				".obsidian/plugins/ai-bridge-vaultwire-backup",
+			),
+		});
 	});
 
 	it("keeps a complete backup and source after the staged copy fails", async () => {

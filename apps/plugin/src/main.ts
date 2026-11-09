@@ -7,6 +7,10 @@ import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-sto
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
 import {
+	hasLegacyPluginSettingsToMigrate,
+	migrateLegacyPluginSettings,
+} from "@plugin/infrastructure/plugin-settings-migration";
+import {
 	readSettingsSyncConfiguration,
 	saveSettingsSyncConfiguration,
 } from "@plugin/infrastructure/settings-sync-storage";
@@ -95,6 +99,8 @@ export default class AIBridgePlugin extends Plugin {
 	};
 	/** Durable full-manifest duty. Only completed hydration can clear this flag. */
 	private settingsHydrationPending = false;
+	/** Blocks credential restore until the owner copies old shared plugin settings. */
+	private legacySettingsMigrationPending = false;
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
 	/** Fences asynchronous journal opens when unload or a newer load occurs. */
@@ -129,6 +135,8 @@ export default class AIBridgePlugin extends Plugin {
 		this.sessionRestoreComplete = false;
 		try {
 			const stored = await this.loadData();
+			this.legacySettingsMigrationPending =
+				await hasLegacyPluginSettingsToMigrate(this.app);
 			if (stored && typeof stored === "object") {
 				if (typeof stored.serverUrl === "string")
 					this.settingsValue.serverUrl = stored.serverUrl;
@@ -156,7 +164,8 @@ export default class AIBridgePlugin extends Plugin {
 				journal.snapshot().device_id,
 			);
 			const session = this.createSession();
-			await session.restore().catch(() => undefined);
+			if (!this.legacySettingsMigrationPending)
+				await session.restore().catch(() => undefined);
 			if (generation !== this.lifecycleGeneration) {
 				session.close();
 				return;
@@ -316,10 +325,50 @@ export default class AIBridgePlugin extends Plugin {
 				},
 				(policy) => this.changeSettingsSyncPolicy(generation, policy),
 			);
-			this.addSettingTab(this.settingsTab);
+			if (!this.legacySettingsMigrationPending)
+				this.addSettingTab(this.settingsTab);
+			this.addCommand({
+				id: "migrate-ai-bridge-settings",
+				name: "Migrate AI Bridge settings to Vaultwire",
+				callback: () => this.runLegacySettingsMigration(),
+			});
 		} catch {
 			if (generation === this.lifecycleGeneration)
 				this.attentionReason = DEVICE_JOURNAL_ATTENTION_REASON;
+		}
+	}
+
+	/** Copies old plugin settings only after startup blocks session restore and sync effects. */
+	private async runLegacySettingsMigration(): Promise<void> {
+		if (!this.legacySettingsMigrationPending) {
+			this.notice("No old plugin settings migration is pending");
+			return;
+		}
+		try {
+			const migration = await migrateLegacyPluginSettings(this.app, {
+				sessionStatus: this.sessionStatus,
+				syncActive: this.syncActive,
+				syncControllerActive:
+					this.desktopSync !== null || this.composition !== null,
+			});
+			if (typeof migration.settings.serverUrl === "string")
+				this.settingsValue.serverUrl = migration.settings.serverUrl;
+			this.settingsValue.deviceName = resolveDeviceName(
+				migration.settings.deviceName,
+			);
+			this.settingsValue.coexistenceMode =
+				migration.settings.coexistenceMode === true;
+			this.legacySettingsMigrationPending = false;
+			if (this.settingsTab) this.addSettingTab(this.settingsTab);
+			this.notice(
+				"Settings copied. Vaultwire remains disconnected. Check the service address before reconnecting.",
+			);
+		} catch (error) {
+			this.notice(
+				error instanceof Error
+					? error.message
+					: "Plugin settings migration failed. Keep both plugin folders.",
+			);
 		}
 	}
 

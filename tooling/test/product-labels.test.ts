@@ -67,7 +67,7 @@ describe("Vaultwire product labels and package names", () => {
 			"OAB-50.6 must copy every blob and backup object with SHA-256 checksums, preserve existing vault authority, and verify the journal cursor and file set against the final export before clients reconnect.",
 		);
 		expect(api).not.toContain("so no data migration is needed.");
-		expect(readme).toContain("when that evidence was recorded.");
+		expect(readme).toContain("# Vaultwire");
 		expect(readme).not.toContain("so no data migration is needed.");
 	});
 

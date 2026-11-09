@@ -1,10 +1,10 @@
 ---
 id: OAB-50.3
 title: Rename the plugin identifier to vaultwire
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T16:39:00Z'
+updated_date: '2026-11-09T16:46:00Z'
 labels:
   - rename
   - plugin
@@ -22,9 +22,9 @@ Repository obsidian-ai-bridge, apps/plugin and plugin tooling. The manifest id b
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A build produces a plugin with id `vaultwire` that installs next to an old ai-bridge folder without reading or deleting it by accident.
-- [ ] #2 A documented and tested procedure moves a device from ai-bridge to vaultwire without loss of vault content or unsynced local edits.
-- [ ] #3 bun run check passes.
+- [x] #1 A build produces a plugin with id `vaultwire` that installs next to an old ai-bridge folder without reading or deleting it by accident.
+- [x] #2 A documented and tested procedure moves a device from ai-bridge to vaultwire without loss of vault content or unsynced local edits.
+- [x] #3 bun run check passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,4 +62,12 @@ Review finding closures: MAJOR startup-order risk closed. The desktop procedure 
 `bun run docs:check` and `bun run check` passed. The full plugin suite passed 32 files with 861 tests passed and 1 skipped. No real device, real vault, or production service was used. Device verification remains for OAB-50.6.
 
 Branch review corrections: F1 closed. The in-plugin migration now replaces and closes the startup session with one built from the imported service address. A lifecycle test starts Connect without editing that address and checks discovery and registration request origins. F2 closed. A device-local approval gate blocks restore, sync, event listeners, and publication while copied settings await a successful OAuth reconnect. The gate preserves stored credentials until that reconnect. A lifecycle test starts with valid old credentials and pending journal work, proves no network or effects before Connect, then proves journal history and payload bytes survive OAuth. F3 closed. Enrollment classification and settings traversal exclude the exact migration backup directory with every settings category enabled. `bun run docs:check` and `bun run check` passed. Plugin tests passed 864 with 1 skipped. No real device, real vault, or production service was used. OAB-50.3 remains In Progress. No push or task closure occurred.
+
+Final acceptance: independent task review and whole-branch review found six issues. Corrections closed each issue. Corrective review approved rebased revision 90dae70ca70e24d96798e5c1fc5a0a0b1cd742fc. Documentation scope: migration guide, affected TypeScript declarations, release and install contracts. Structural candidates: main.ts, plugin-settings-migration.ts, migrate-plugin.ts and desktop-acceptance.ts. The reviewer found clear state ownership after correction. Parent ran bun run check on the rebased tree with exit 0. Artifact, install-isolation, migration failure, pending payload and journal preservation, imported origin, and reconnect admission tests support all acceptance criteria. Physical devices and BRAT ID replacement remain outside this task. OAB-50.6 owns those checks. Earlier In Progress notes describe the state before acceptance.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Changed the plugin ID to vaultwire and updated release, compatibility and install tooling. Added tested desktop and in-plugin migration procedures that preserve device-local state and pending edits. Explicit reconnect approval prevents automatic sync to the old service. Task and branch reviews closed all findings. Final bun run check passed on the rebased branch. OAB-50.6 owns real-device cutover verification.
+<!-- SECTION:FINAL_SUMMARY:END -->

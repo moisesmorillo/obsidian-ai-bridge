@@ -3,6 +3,7 @@ import {
 	encodeFileFailureBodyChunks,
 	type FileHttpFailureInput,
 } from "@vaultwire/protocol";
+import { jsonReadHeaders } from "@worker/transport/json-read-headers";
 
 /** Maximum bytes requested or queued by the owned response reader. */
 const RESPONSE_CHUNK_BYTES = 65_536;
@@ -94,7 +95,10 @@ function ownedResponseBody(
 	});
 }
 
-/** Encode a canonical failure without exposing thrown exception details. */
+/**
+ * Encode a canonical failure without exposing thrown exception details.
+ * File read and mutation failures send `Cache-Control: no-transform` like JSON read responses.
+ */
 export function fileFailureResponse(failure: FileHttpFailureInput): Response {
 	const result = encodeFileFailure(failure);
 	let chunks: Iterator<Uint8Array> | undefined = encodeFileFailureBodyChunks(
@@ -120,7 +124,10 @@ export function fileFailureResponse(failure: FileHttpFailureInput): Response {
 		}),
 		{
 			status: result.status,
-			headers: { ...result.headers, "Content-Type": "application/json" },
+			headers: jsonReadHeaders({
+				...result.headers,
+				"Content-Type": "application/json",
+			}),
 		},
 	);
 }

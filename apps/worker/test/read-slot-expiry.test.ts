@@ -134,3 +134,304 @@ describe("read preparation expiry ownership", () => {
 		},
 	);
 });
+
+describe("unsettled REST read reclaim", () => {
+	it("admits a device read after four stalled feed reads pass their grace", async () => {
+		const host = "reclaim.invalid";
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			state.storage.sql.exec("PRAGMA foreign_keys = ON");
+			initializeVaultStorage(
+				state.storage,
+				() => TEXT_FIXTURE_EPOCH,
+				() => 10_000,
+			);
+			await seedLiveTextState(state.storage, {
+				path: "task.md",
+				content: "task",
+			});
+			state.storage.sql.exec("DELETE FROM operation_admissions");
+		});
+		const stalled = gate();
+		let started = 0;
+		const allStarted = gate();
+		const gateway = new Proxy(stub, {
+			/** Stall the first four feed batches after native work, as a never-settling RPC would. */
+			get(target, property) {
+				const method = Reflect.get(target, property, target);
+				if (typeof method !== "function") return method;
+				return async (...args: unknown[]) => {
+					const result = await Reflect.apply(method, target, args);
+					if (property === "readBatch" && started < 4) {
+						started += 1;
+						if (started === 4) allStarted.resolve();
+						await stalled.promise;
+					}
+					return result;
+				};
+			},
+		});
+		const worker = createWorker(
+			async () => identity,
+			() => gateway,
+			() => new R2BlobStore(env.R2_BUCKET),
+		);
+		vi.useFakeTimers();
+		const before = readSlotCapacitySnapshot().reclaimed_unsettled_count ?? 0;
+		const feeds = Array.from({ length: 4 }, () =>
+			worker.fetch(
+				new Request(
+					`https://${host}/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0`,
+				),
+				env,
+			),
+		);
+		await allStarted.promise;
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		for (const response of await Promise.all(feeds)) {
+			expect(response.status).toBe(500);
+			await response.text();
+		}
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(18_000_000);
+		const limited = await worker.fetch(
+			new Request(`https://${host}/v1/vault`),
+			env,
+		);
+		expect(limited.status).toBe(429);
+		await limited.text();
+		vi.setSystemTime(Date.now() + 60_000);
+		const admitted = await worker.fetch(
+			new Request(`https://${host}/v1/vault`),
+			env,
+		);
+		expect(admitted.status).toBe(200);
+		expect(await admitted.json()).toMatchObject({ epoch: TEXT_FIXTURE_EPOCH });
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 4,
+		);
+		stalled.resolve();
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.waitFor(() =>
+			expect(admissionByteSnapshot().rest_read_bytes).toBe(0),
+		);
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 4,
+		);
+	});
+});
+
+describe("unsettled MCP read reclaim", () => {
+	it("releases shared bytes of eight stalled MCP reads after their grace", async () => {
+		const host = "mcp-reclaim.invalid";
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			state.storage.sql.exec("PRAGMA foreign_keys = ON");
+			initializeVaultStorage(
+				state.storage,
+				() => TEXT_FIXTURE_EPOCH,
+				() => 10_000,
+			);
+			await seedLiveTextState(state.storage, {
+				path: "task.md",
+				content: "task",
+			});
+			state.storage.sql.exec("DELETE FROM operation_admissions");
+		});
+		const stalled = gate();
+		const allStarted = gate();
+		let started = 0;
+		const gateway = new Proxy(stub, {
+			/** Stall the first eight note reads after native work, as a never-settling RPC would. */
+			get(target, property) {
+				const method = Reflect.get(target, property, target);
+				if (typeof method !== "function") return method;
+				return async (...args: unknown[]) => {
+					const result = await Reflect.apply(method, target, args);
+					if (property === "readText" && started < 8) {
+						started += 1;
+						if (started === 8) allStarted.resolve();
+						await stalled.promise;
+					}
+					return result;
+				};
+			},
+		});
+		const worker = createWorker(
+			async () => identity,
+			() => gateway,
+			() => new R2BlobStore(env.R2_BUCKET),
+		);
+		/** Build one MCP read_note request with an exact Content-Length. */
+		const readNote = (id: number) => {
+			const body = JSON.stringify({
+				jsonrpc: "2.0",
+				id,
+				method: "tools/call",
+				params: { name: "read_note", arguments: { path: "task.md" } },
+			});
+			return worker.fetch(
+				new Request(`https://${host}/mcp`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+						"content-length": String(body.length),
+					},
+					body,
+				}),
+				env,
+			);
+		};
+		vi.useFakeTimers();
+		const before = readSlotCapacitySnapshot().reclaimed_unsettled_count ?? 0;
+		const reads = Array.from({ length: 8 }, (_, index) => readNote(index + 1));
+		await allStarted.promise;
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		for (const response of await Promise.all(reads)) {
+			expect(response.status).toBe(500);
+			await response.text();
+		}
+		expect(admissionByteSnapshot().shared_bytes).toBeGreaterThan(0);
+		const refused = readNote(9);
+		await vi.advanceTimersByTimeAsync(2_000);
+		const limited = await refused;
+		expect(limited.status).toBe(429);
+		await limited.text();
+		vi.setSystemTime(Date.now() + 58_000);
+		// MCP admission alone must sweep and reclaim; no measurement runs first.
+		const admitted = await readNote(10);
+		expect(admitted.status).toBe(200);
+		expect(admitted.headers.get("cache-control")).toBe(
+			"no-store, no-transform",
+		);
+		expect(admitted.headers.get("content-type")).toBe("application/json");
+		await admitted.text();
+		await vi.waitFor(() =>
+			expect(readSlotCapacitySnapshot()).toMatchObject({
+				shared_bytes: 0,
+				held_mcp_slots: 0,
+				reclaimed_unsettled_count: before + 8,
+			}),
+		);
+		stalled.resolve();
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.waitFor(() =>
+			expect(admissionByteSnapshot()).toMatchObject({
+				shared_bytes: 0,
+				active_reservations: 0,
+			}),
+		);
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 8,
+		);
+	});
+});
+
+describe("shared pool reclaim for device writes", () => {
+	it("admits a REST write after stalled MCP envelopes pass their grace", async () => {
+		const host = "write-reclaim.invalid";
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			state.storage.sql.exec("PRAGMA foreign_keys = ON");
+			initializeVaultStorage(
+				state.storage,
+				() => TEXT_FIXTURE_EPOCH,
+				() => 10_000,
+			);
+			await seedLiveTextState(state.storage, {
+				path: "task.md",
+				content: "task",
+			});
+			state.storage.sql.exec("DELETE FROM operation_admissions");
+		});
+		const stalled = gate();
+		const allStarted = gate();
+		let started = 0;
+		const gateway = new Proxy(stub, {
+			/** Stall the first eight note reads after native work, as a never-settling RPC would. */
+			get(target, property) {
+				const method = Reflect.get(target, property, target);
+				if (typeof method !== "function") return method;
+				return async (...args: unknown[]) => {
+					const result = await Reflect.apply(method, target, args);
+					if (property === "readText" && started < 8) {
+						started += 1;
+						if (started === 8) allStarted.resolve();
+						await stalled.promise;
+					}
+					return result;
+				};
+			},
+		});
+		const worker = createWorker(
+			async () => identity,
+			() => gateway,
+			() => new R2BlobStore(env.R2_BUCKET),
+		);
+		/** Build one padded MCP read_note request whose envelope reserves about 7.4 MB. */
+		const readNote = (id: number) => {
+			const body = `${JSON.stringify({
+				jsonrpc: "2.0",
+				id,
+				method: "tools/call",
+				params: { name: "read_note", arguments: { path: "task.md" } },
+			})}${" ".repeat(25_000)}`;
+			return worker.fetch(
+				new Request(`https://${host}/mcp`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+						"content-length": String(body.length),
+					},
+					body,
+				}),
+				env,
+			);
+		};
+		/** Create one text file through the REST write route. */
+		const write = (path: string) =>
+			worker.fetch(
+				new Request(`https://${host}/v1/files/${path}`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: "device text",
+				}),
+				env,
+			);
+		vi.useFakeTimers();
+		const reads = Array.from({ length: 8 }, (_, index) => readNote(index + 1));
+		await allStarted.promise;
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		for (const response of await Promise.all(reads)) {
+			expect(response.status).toBe(500);
+			await response.text();
+		}
+		expect(admissionByteSnapshot().shared_bytes).toBeGreaterThan(56_000_000);
+		const refused = await write("before.md");
+		expect(refused.status).toBe(429);
+		await refused.text();
+		vi.setSystemTime(Date.now() + 60_000);
+		// No read or measurement runs between the grace and the write.
+		const admitted = await write("after.md");
+		expect(admitted.status).toBe(201);
+		await admitted.text();
+		stalled.resolve();
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.waitFor(() =>
+			expect(admissionByteSnapshot()).toMatchObject({
+				shared_bytes: 0,
+				active_reservations: 0,
+			}),
+		);
+	});
+});

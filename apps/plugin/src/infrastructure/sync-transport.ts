@@ -1,3 +1,4 @@
+import { DeviceSessionNetworkError } from "@plugin/auth/device-session";
 import type { OAuthTransportResponse } from "@plugin/infrastructure/oauth-transport";
 import {
 	type CanonicalSyncErrorKind,
@@ -784,11 +785,17 @@ async function hashBytes(bytes: Uint8Array): Promise<string> {
 	);
 }
 
-/** Parses metadata JSON without copying parse errors or untrusted content into errors. */
+/**
+ * Parses response JSON without copying parse errors or untrusted content into errors.
+ * A body that is not valid JSON is a truncated or damaged transfer, such as a 200 whose stream the
+ * service ended at its read deadline. It raises the retryable network failure class, so status
+ * reports a network failure and the next cycle retries, instead of an unclassified error.
+ * @throws DeviceSessionNetworkError when the text is not valid JSON.
+ */
 function parseJson(text: string): JsonValue {
 	try {
 		return JSON.parse(text) as JsonValue;
 	} catch {
-		throw new Error("Sync response is not valid JSON");
+		throw new DeviceSessionNetworkError();
 	}
 }

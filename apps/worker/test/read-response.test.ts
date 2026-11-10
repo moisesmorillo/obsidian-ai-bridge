@@ -128,6 +128,43 @@ describe("owned read response", () => {
 		lease.complete();
 	});
 
+	it("errors, never closes, a body whose lease expires after its first chunk", async () => {
+		vi.useFakeTimers();
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected an available read slot");
+		let pulls = 0;
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					pulls += 1;
+					return pulls === 1
+						? Promise.resolve({
+								done: false,
+								value: new TextEncoder().encode('{"entries":['),
+							})
+						: new Promise<IteratorResult<Uint8Array>>(() => {});
+				},
+				cancel: async () => {},
+			},
+			{ finish: async () => ({ ok: true }) },
+			lease,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		const closed = reader.closed.then(
+			() => "closed",
+			() => "errored",
+		);
+		const first = await reader.read();
+		expect(first.done).toBe(false);
+		const second = reader.read();
+		void second.catch(() => undefined);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await expect(second).rejects.toThrow("Read slot hold deadline exceeded");
+		expect(await closed).toBe("errored");
+		lease.complete();
+	});
+
 	it("returns an expiry result when response preparation misses its lease", async () => {
 		vi.useFakeTimers();
 		const lease = tryAcquireReadSlot();

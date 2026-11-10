@@ -353,7 +353,9 @@ REST reads use four isolate-local slots and a separate 18,000,000-byte pool. Eac
 
 Each read lease expires after 60,000 ms. Admission, completion checks, and capacity observations sweep overdue leases when request timers stop. Expiry frees logical capacity but does not prove that physical source work stopped.
 
-Byte ownership continues until started source work and cancellation settle. Unresolved physical work can cause safe memory refusal after logical expiry. Count or byte refusal occurs before metadata or R2 demand.
+Byte ownership continues until started source work and cancellation settle, or until the reclaim deadline. The reclaim deadline is the lease deadline plus a 60,000 ms grace. At that deadline the Worker releases the byte reservations of unsettled work once and counts the lease as reclaimed unsettled. A REST lease releases its REST read bytes. An MCP read lease releases its MCP envelope reservation in the shared pool, which also frees one MCP admission count. A later settlement releases nothing a second time. Admission and capacity observations apply the reclaim without a timer. Reclaim bounds the time a stalled read can fill the REST or shared pool. It does not prove that physical source work stopped. Count or byte refusal occurs before metadata or R2 demand.
+
+Vault, manifest, changes, history, and search responses and their read failures send `Cache-Control: no-transform`. File content, blob, and history-command responses send it, and so do file failure responses. MCP JSON responses send `Cache-Control: no-store, no-transform`. The header stops edge compression, which could end a body that the Worker errors at its lease deadline as a short 200 (observed 2026-11-10). A body that a lease deadline stops errors the response stream. It never ends as a clean short body.
 
 Each successful read keeps one durable admission through response production and cleanup. Metadata responses demand one bounded batch at a time. Response encoding never creates a complete escaped inline string or JSON page. Cancellation joins started RPC, storage reads, and cleanup before physical ownership ends. Unknown authority results keep the original admission deadline. Producer EOF does not prove client receipt or native release.
 
@@ -368,6 +370,8 @@ Eight MCP envelopes can run at the same time if their bytes fit. MCP admission w
 A full logical MCP read pool returns `Retry-After` from its earliest active lease deadline. The estimate uses whole seconds rounded upward, bounded from 2 through 60. This estimate does not predict physical-byte release.
 
 Unknown physical-byte completion returns `Retry-After: 2`. Logical read expiry does not establish physical completion. Durable authority retry values stay unchanged.
+
+The plugin treats a 2xx response whose body is not valid JSON as a truncated transfer. It raises the retryable network failure class, so status reports a network failure and the next cycle retries. A valid JSON body that fails its schema stays a protocol fault.
 
 Byte ownership continues through operation cleanup and response production. Timers serve only active leases, waiters, and bounded cleanup. Completed owners leave no polling, alarms, or agent-only idle timers.
 
@@ -658,6 +662,8 @@ The native admission storage test has a growth target of at most 32 MiB. It uses
 Cost expectation: $5/month base. Included allowances cover the measured vault with two orders of magnitude of headroom.
 
 The panel shows DO storage, R2 bytes, and requests per day. The owner sees drift before billing.
+
+The measurements page and its JSON also report the responding Worker isolate. Fields are active logical read slots, held REST and MCP leases, reserved REST read and shared bytes, and the expired count. They also include the reclaim grace, the reclaimed unsettled count for REST and MCP leases, and the route and age of the oldest held REST lease. Route labels name the REST route family; MCP leases use the `mcp` label. A held lease has not completed and has not been reclaimed. It can be past its hold deadline. These isolate fields are optional and additive in the protocol. They reset on isolate restart and do not describe other isolates.
 
 ## 13. Acceptance cases
 

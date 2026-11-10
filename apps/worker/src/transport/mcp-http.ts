@@ -185,7 +185,10 @@ function mcpResponseOwner(
 	};
 }
 
-/** Keep the read owner and local slots through JSON production and cancellation. */
+/**
+ * Keep the read owner and local slots through JSON production and cancellation.
+ * The response is never cached or transformed, so a deadline error reaches the client as a failure.
+ */
 function encodedResponse(
 	message: JSONRPCMessage,
 	release: () => void,
@@ -205,7 +208,8 @@ function encodedResponse(
 			status,
 			headers: {
 				"content-type": "application/json",
-				"cache-control": "no-store",
+				// no-transform stops edge compression from ending an errored body as a short 200.
+				"cache-control": "no-store, no-transform",
 			},
 		},
 		signal,
@@ -467,7 +471,7 @@ export async function handleMcpHttp(
 				release();
 				return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
 			}
-			releaseRead = tryAcquireReadSlot("mcp");
+			releaseRead = tryAcquireReadSlot("mcp", "mcp", admissionReservation);
 			deadlineLease = releaseRead;
 			if (!releaseRead) {
 				admissionReservation.release();

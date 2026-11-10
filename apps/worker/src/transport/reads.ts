@@ -29,6 +29,7 @@ import {
 	settleReadAdmission,
 } from "@worker/application/reads";
 import type { Env } from "@worker/env";
+import { jsonReadHeaders } from "@worker/transport/json-read-headers";
 import { decodeAndNormalizePath } from "@worker/transport/path";
 import {
 	encodeJsonChunks,
@@ -84,7 +85,7 @@ export function createReadRouter(
 		if (!parsed.ok) return failureResponse(parsed.failure);
 		const prepared = await prepareRead(context.req.raw, resolveIdentity);
 		if (prepared instanceof Response) return prepared;
-		const slot = tryAcquireReadSlot();
+		const slot = tryAcquireReadSlot("rest", "vault");
 		if (!slot) return limitedResponse();
 		return produce(
 			context.env,
@@ -101,7 +102,7 @@ export function createReadRouter(
 		if (!parsed.ok) return failureResponse(parsed.failure);
 		const prepared = await prepareRead(context.req.raw, resolveIdentity);
 		if (prepared instanceof Response) return prepared;
-		const slot = tryAcquireReadSlot();
+		const slot = tryAcquireReadSlot("rest", "manifest");
 		if (!slot) return limitedResponse();
 		return produceLazy(
 			context.env,
@@ -125,7 +126,7 @@ export function createReadRouter(
 			return failureResponse({ kind: "invalid_request" });
 		const prepared = await prepareRead(context.req.raw, resolveIdentity);
 		if (prepared instanceof Response) return prepared;
-		const slot = tryAcquireReadSlot();
+		const slot = tryAcquireReadSlot("rest", "changes");
 		if (!slot) return limitedResponse();
 		const limit =
 			parsed.query.limit === undefined ? 1000 : Number(parsed.query.limit);
@@ -157,7 +158,7 @@ export function createReadRouter(
 		if (path === undefined) return failureResponse({ kind: "invalid_path" });
 		const prepared = await prepareRead(context.req.raw, resolveIdentity);
 		if (prepared instanceof Response) return prepared;
-		const slot = tryAcquireReadSlot();
+		const slot = tryAcquireReadSlot("rest", "history");
 		if (!slot) return limitedResponse();
 		return produceLazy(
 			context.env,
@@ -332,9 +333,7 @@ async function produceLazy<T, M>(
 		jsonReadSource(pageChunks(session, first, paged), () => session.cancel()),
 		session,
 		releaseSlot,
-		{
-			headers: { "Content-Type": "application/json; charset=UTF-8" },
-		},
+		{ headers: jsonReadHeaders() },
 		request.signal,
 	);
 }
@@ -384,9 +383,7 @@ function ownedJsonResponse<T>(
 		jsonReadSource(encodeJsonChunks(session.body)),
 		session,
 		releaseSlot,
-		{
-			headers: { "Content-Type": "application/json; charset=UTF-8" },
-		},
+		{ headers: jsonReadHeaders() },
 		signal,
 	);
 }
@@ -396,7 +393,7 @@ function failureResponse(failure: FileHttpFailureInput): Response {
 	const encoded = encodeFileFailure(failure);
 	return Response.json(encoded.body, {
 		status: encoded.status,
-		headers: encoded.headers,
+		headers: jsonReadHeaders(encoded.headers),
 	});
 }
 

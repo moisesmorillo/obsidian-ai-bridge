@@ -1,6 +1,7 @@
-import type { MeasurementResponse } from "@vaultwire/protocol";
+import type { MeasurementResponse, ReadSlotRoute } from "@vaultwire/protocol";
 import {
 	type AdmissionByteReservation,
+	admissionByteSnapshot,
 	LOCAL_ADMISSION_RETRY_SECONDS,
 	REST_READ_BYTE_ALLOWANCE,
 	tryReserveAdmissionBytes,
@@ -14,9 +15,24 @@ export const MCP_READ_SLOT_LIMIT = 8;
 export const READ_SLOT_LIMIT = REST_READ_SLOT_LIMIT + MCP_READ_SLOT_LIMIT;
 /** Maximum logical lease duration, in milliseconds, regardless of timer delivery. */
 export const READ_SLOT_HOLD_DEADLINE_MS = 60_000;
+/**
+ * Grace, in milliseconds after the logical hold deadline, that unsettled response work keeps its
+ * physical byte reservations: the REST read reservation of a REST lease and the attached MCP
+ * envelope reservation of an MCP lease. At the end of the grace these reservations are released
+ * once, even when late source work or cancellation never settles, so stalled reads cannot fill the
+ * REST or shared pool for the isolate lifetime. Owner decision D1 of OAB-58.
+ */
+export const READ_SLOT_RECLAIM_GRACE_MS = 60_000;
 const activeLeases = new Map<number, ReadSlotLeaseState>();
+/** Leases whose physical work has not completed or been reclaimed, keyed by lease id. */
+const heldLeases = new Map<number, HeldReadSlotState>();
 let nextLeaseId = 0;
 let expiredReadSlots = 0;
+/**
+ * REST and MCP leases whose work was still unsettled at the reclaim deadline. Each count released
+ * that lease's byte reservations: REST read bytes for REST, attached shared bytes for MCP.
+ */
+let reclaimedUnsettledReadSlots = 0;
 /** Opaque process-local identifier used only in owner observations, created on first use. */
 let isolateId: string | undefined;
 
@@ -29,6 +45,19 @@ interface ReadSlotLeaseState {
 	expiresAt: number;
 	released: boolean;
 	expire: () => void;
+}
+
+/** Physical ownership retained from acquisition until completion or reclaim. */
+interface HeldReadSlotState {
+	leaseClass: ReadSlotClass;
+	/** Route family that acquired the lease, for owner evidence only. */
+	route: ReadSlotRoute;
+	/** Acquisition time, in Unix milliseconds. */
+	acquiredAt: number;
+	/** Physical reclaim deadline: the logical deadline plus the reclaim grace, in Unix milliseconds. */
+	reclaimAt: number;
+	/** Release the byte reservations of unsettled work once and count the reclaim. */
+	reclaim: () => void;
 }
 
 /** Return the isolate identifier, creating it inside request context. */
@@ -68,10 +97,16 @@ export type ReadSlotCapacitySnapshot = NonNullable<
 	MeasurementResponse["worker_isolate"]
 >;
 
-/** Expire overdue leases before admission or observation, even if timers did not run. */
+/**
+ * Expire overdue leases and reclaim the bytes of work still unsettled at its reclaim deadline,
+ * before admission or observation, even if timers did not run. Reclaim needs no timer because every
+ * admission and measurement runs this sweep first.
+ */
 export function sweepExpiredReadSlots(now = Date.now()): void {
 	for (const lease of activeLeases.values())
 		if (now >= lease.expiresAt) lease.expire();
+	for (const held of heldLeases.values())
+		if (now >= held.reclaimAt) held.reclaim();
 }
 
 /**
@@ -101,12 +136,27 @@ export async function waitForReadSlotWork<T>(
 	return result;
 }
 
-/** Return an isolate-local aggregate snapshot after recovering overdue leases. */
+/**
+ * Return an isolate-local snapshot after recovering overdue leases and reclaiming overdue bytes.
+ * Active slots count logical leases; held slots also count leases past their deadline whose work has
+ * not settled, which is the physical capacity a stalled read keeps.
+ */
 export function readSlotCapacitySnapshot(): ReadSlotCapacitySnapshot {
-	sweepExpiredReadSlots();
+	const now = Date.now();
+	sweepExpiredReadSlots(now);
 	const activeSlots = [...activeLeases.values()].filter(
 		(lease) => !lease.released,
 	).length;
+	const held = [...heldLeases.values()];
+	const heldRest = held.filter((lease) => lease.leaseClass === "rest");
+	const oldestRest = heldRest.reduce<HeldReadSlotState | undefined>(
+		(oldest, lease) =>
+			oldest === undefined || lease.acquiredAt < oldest.acquiredAt
+				? lease
+				: oldest,
+		undefined,
+	);
+	const bytes = admissionByteSnapshot();
 	return {
 		isolate_id: currentIsolateId(),
 		active_slots: activeSlots,
@@ -114,6 +164,18 @@ export function readSlotCapacitySnapshot(): ReadSlotCapacitySnapshot {
 		limit: READ_SLOT_LIMIT,
 		expired_count: expiredReadSlots,
 		deadline_ms: READ_SLOT_HOLD_DEADLINE_MS,
+		reclaimed_unsettled_count: reclaimedUnsettledReadSlots,
+		reclaim_grace_ms: READ_SLOT_RECLAIM_GRACE_MS,
+		held_rest_slots: heldRest.length,
+		held_mcp_slots: held.length - heldRest.length,
+		rest_read_bytes: bytes.rest_read_bytes,
+		shared_bytes: bytes.shared_bytes,
+		oldest_rest_lease: oldestRest
+			? {
+					route: oldestRest.route,
+					age_ms: Math.max(0, now - oldestRest.acquiredAt),
+				}
+			: null,
 	};
 }
 
@@ -140,9 +202,17 @@ export function readSlotRetryAfterSeconds(leaseClass: ReadSlotClass): number {
 	);
 }
 
-/** Reserve a REST or MCP read slot without queueing. */
+/**
+ * Reserve a REST or MCP read slot without queueing.
+ * @param route - Route family recorded for owner measurements; it does not change admission.
+ * @param reclaimable - Reservation the caller owns and releases on completion, such as an MCP
+ * envelope. The lease releases it only at the reclaim deadline of unsettled work; the handle must be
+ * idempotent so a late caller release is harmless.
+ */
 export function tryAcquireReadSlot(
 	leaseClass: ReadSlotClass = "rest",
+	route: ReadSlotRoute = leaseClass === "mcp" ? "mcp" : "other",
+	reclaimable?: AdmissionByteReservation,
 ): ReadSlotLease | undefined {
 	sweepExpiredReadSlots();
 	const classLimit =
@@ -160,6 +230,7 @@ export function tryAcquireReadSlot(
 	let released = false;
 	let expired = false;
 	let completed = false;
+	let reclaimed = false;
 	let signalExpiration!: () => void;
 	const expiration = new Promise<void>((resolve) => {
 		signalExpiration = resolve;
@@ -205,8 +276,21 @@ export function tryAcquireReadSlot(
 		completed = true;
 		clearTimeout(timer);
 		activeLeases.delete(id);
-		byteReservation?.release();
+		heldLeases.delete(id);
+		// A reclaimed reservation was already released; the handle is idempotent.
+		if (!reclaimed) byteReservation?.release();
 		listeners.clear();
+	};
+	/** Reclaim the physical reservation of unsettled work once at its reclaim deadline. */
+	const reclaim = () => {
+		if (completed || reclaimed) return;
+		// Defensive: make sure logical expiry happened before releasing bytes.
+		expire();
+		reclaimed = true;
+		heldLeases.delete(id);
+		byteReservation?.release();
+		reclaimable?.release();
+		reclaimedUnsettledReadSlots += 1;
 	};
 	release.onExpire = (listener) => {
 		if (expired) {
@@ -217,8 +301,16 @@ export function tryAcquireReadSlot(
 		listeners.add(listener);
 		return () => listeners.delete(listener);
 	};
-	const expiresAt = Date.now() + READ_SLOT_HOLD_DEADLINE_MS;
+	const acquiredAt = Date.now();
+	const expiresAt = acquiredAt + READ_SLOT_HOLD_DEADLINE_MS;
 	const timer = setTimeout(expire, READ_SLOT_HOLD_DEADLINE_MS);
 	activeLeases.set(id, { leaseClass, expiresAt, released, expire });
+	heldLeases.set(id, {
+		leaseClass,
+		route,
+		acquiredAt,
+		reclaimAt: expiresAt + READ_SLOT_RECLAIM_GRACE_MS,
+		reclaim,
+	});
 	return release;
 }

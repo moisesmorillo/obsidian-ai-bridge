@@ -17,7 +17,31 @@ describe("consent page rendering", () => {
 		expect(html).toContain("service.test&amp;host");
 		expect(html).toContain("Nov 7, 2026 at 9:30 PM");
 		for (const scope of VaultScopeSchema.options) expect(html).toContain(scope);
-		expect(html).not.toContain("read notes");
+		expect(html).toContain("read notes (needed)");
+		expect(html).toContain("create and edit notes");
+		expect(html).toContain("delete notes");
+		expect(html).toContain(
+			".consent-scopes{display:grid;gap:10px;margin:8px 0 0;padding:0;list-style:none}",
+		);
+		expect(html).toContain(
+			".consent-form{display:grid;gap:16px;margin-top:12px}",
+		);
+		expect(html).toContain(
+			'.consent-scopes input[type="checkbox"]{appearance:auto;flex:0 0 18px;width:18px;height:18px;margin:1px 0 0;padding:0;border:0;border-radius:2px;background:transparent;accent-color:var(--rose);cursor:pointer}',
+		);
+		expect(html).toContain(
+			'.consent-scopes input[type="checkbox"]:focus{outline:2px solid var(--rose);outline-offset:3px}',
+		);
+		expect(html).toContain(
+			'<li><label class="consent-scope"><input type="checkbox" checked disabled aria-label="vault:read is required"><input type="hidden" name="scope" value="vault:read"><span class="consent-scope-copy"><span class="consent-scope-name">vault:read</span><span class="consent-scope-description">read notes (needed)</span></span></label></li>',
+		);
+		for (const scope of VaultScopeSchema.options.filter(
+			(scope) => scope !== "vault:read",
+		)) {
+			expect(html).toContain(
+				`<li><label class="consent-scope"><input type="checkbox" name="scope" value="${scope}" checked><span class="consent-scope-copy"><span class="consent-scope-name">${scope}</span>`,
+			);
+		}
 		for (const scope of VaultScopeSchema.options.filter(
 			(scope) => scope !== "vault:read",
 		)) {

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-09T22:05:00Z'
-updated_date: '2026-11-10T18:41:00Z'
+updated_date: '2026-11-10T19:29:00Z'
 labels: []
 dependencies: []
 references:
@@ -133,4 +133,13 @@ Raw results (not committed): scratch `runA/results.json`, `runB/results.json` wi
 ## Step 2 reuse
 
 `workloads.ts` exports `seedFixtures`, `createWorkloads`, `runLevel`, `openStalledReads`, and `deleteLoadtestFiles`. Each takes a `ProfileTarget` with `origin`, `token`, and an optional streaming `fetch`. The Worker sends no CORS headers, so a renderer `window.fetch` from `app://obsidian.md` cannot read responses. Obsidian `requestUrl` buffers whole bodies, so it suits only drain workloads, not slow or cancel workloads. A streaming `fetch` adapter over Node `https` in the desktop renderer, or Node on the Mac with the session token, covers all workloads. `bun build apps/worker/tooling/memory-profile/workloads.ts --format esm` gives one JavaScript module. Production seeding should lower `smallNotes`. Uploaded 25 MB blobs stay in R2 after `deleteLoadtestFiles` until blob GC. `/owner/measurements` needs the Access browser session. Check `held_rest_slots` after one cancelled blob read (finding 1).
+
+Production confirmation 2026-11-10 18:50-19:40Z, Worker 1.0.3, Workers Free plan. Mac sync paused, iPad and iPhone closed, ChatGPT idle. Load sent from the Obsidian renderer through the Mac plugin session (Node https streaming fetch, token kept in memory). Fixtures in _vaultwire-loadtest/: 50 x 2 KB notes, 12 x 1 MB notes, one 25 MB blob. Results:
+- No memory failure was observed. Every hard failure in Workers Observability was 'Worker exceeded CPU time limit' (error 1102, HTTP 503 when it happens before headers).
+- The Free plan 10 ms CPU limit, not the 128 MB memory limit, is the first production limit. MCP read_note of a 1 MB note failed at concurrency 1 (8 of 20 sequential calls returned 1102). A 1 MB text upload failed at concurrency 1 (2 of 2 returned 503).
+- When the CPU limit hits after headers, the client gets HTTP 200 with a cut body. Observed on GET /v1/manifest (every attempt cut at 0-24742 bytes while about 70 tombstones existed), /v1/changes (3 of 4 cut, even with limit=5) and /v1/vault once. Observability recorded these GETs as CPU-exceeded errors. This explains the OAB-58 truncated 200 better than edge compression.
+- Each cut response leaves an incomplete read whose REST lease stays held until the OAB-58 reclaim (about 120 s). Retries then fill the 4-slot REST byte pool and get 429 admission_limited (Retry-After 2). The console showed REST 4 held, 18.0 MB reserved, oldest lease search 73 s; later 12 incomplete reads and 9 reclaimed leases on one isolate. The reclaim works in production.
+- REST reads above concurrency 4 got 429 by design (18 MB / 4.5 MB). MCP was not measured above concurrency 1 because the plan stopped at the first 5xx.
+- Cleanup deleted all 63 fixtures by path with If-Match. The Mac plugin 1.0.2 classified the cut feed as a network failure and caught up to cursor 728 = head after the reclaim window: settled, 298 files, no attention. Empty local loadtest folders were removed.
+Conclusion for AC1/AC2: memory headroom in production cannot be reached before the CPU limit on Workers Free. Local peaks: Worker isolate 57.7 MB heap / 90.4 MB heap+buffers, Vault DO 118.0 / 132.1 MB. AC3 holds: reservations are recorded apart from heap and native memory.
 <!-- SECTION:NOTES:END -->

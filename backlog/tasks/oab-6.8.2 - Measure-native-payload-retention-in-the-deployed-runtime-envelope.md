@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-10T18:41:00Z'
+updated_date: '2026-11-10T19:29:00Z'
 labels: []
 dependencies: []
 references:
@@ -297,6 +297,8 @@ OAB-53 step 1 local evidence, 2026-11-10 UTC. Local workerd only. This is not a 
 - Separation of categories: application reservations (REST read pool up to 18,000,000 B, shared pool 0 B in 500 ms samples) are separate from V8 heap and backing stores per isolate. Process RSS (≤ 852 MB capped, ≤ 1,593 MB uncapped) covers both isolates, Miniflare internal Workers, SQLite, and local R2/KV simulation. RSS minus heaps is not a native-retention measure. Transport-retained RPC results, native response fragments, and native stream buffers cannot be separated with these interfaces.
 - Release observations: text and MCP cancellations released leases at once. Cancelled or abandoned 25 MB blob reads kept the REST lease and 4,500,000 reserved bytes until the OAB-58 reclaim, about 111–114 s, and refused later REST reads with 429 (`READ_SETTLEMENT_FAILED` logged). Local R2 simulation may differ from production.
 - Trigger stays: deployed measurement in step 2 (owner-approved plan, D1–D4).
+
+2026-11-10 production run (see OAB-53 notes): no memory failure observed. Workers Free 10 ms CPU limit failed first: MCP 1 MB reads, 1 MB uploads, and large manifest/feed bodies. A CPU kill after headers yields a cut HTTP 200 and an incomplete read lease held until reclaim. Native retention categories stay unmeasurable in production: Cloudflare exposes only per-invocation outcome, not memory.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

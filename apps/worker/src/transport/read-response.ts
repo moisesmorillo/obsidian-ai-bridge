@@ -6,6 +6,7 @@ import type {
 import type { ReadSlotLease } from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import {
+	READ_SETTLEMENT_DEADLINE_MS,
 	ReadBatchFailure,
 	settleReadAdmission,
 } from "@worker/application/reads";
@@ -29,9 +30,11 @@ async function abortResponseWriter(
  * Keep the current invocation alive until response work settles.
  * Workers cancel every task of a request whose client disconnects unless the task is registered with
  * waitUntil, so without this a canceled body never observes its failed write, never cancels its
- * source, and keeps its read lease and byte reservation until the lazy reclaim deadline. Outside a
- * request context (for example a direct unit call with no invocation) there is nothing to extend, so
- * a registration failure is ignored and the response behaves as before.
+ * source, and keeps its read lease and byte reservation until the lazy reclaim deadline. The caller
+ * resolves `work` when response work completes, or at most READ_SETTLEMENT_DEADLINE_MS after its
+ * lease deadline. A response without a deadline lease (some MCP failure bodies) has no such bound and
+ * relies on the platform waitUntil limit. Outside a request context (for example a direct unit call
+ * with no invocation) there is nothing to extend, so a registration failure is ignored.
  */
 function keepResponseWorkAlive(work: Promise<void>): void {
 	try {
@@ -76,6 +79,13 @@ export function ownedReadResponse(
 	knownByteLength?: number,
 	deadlineLease?: ReadSlotLease,
 ): Response {
+	if (
+		knownByteLength !== undefined &&
+		(!Number.isSafeInteger(knownByteLength) || knownByteLength < 0)
+	)
+		throw new RangeError(
+			"Known response length must be a non-negative safe integer",
+		);
 	let pending: Promise<IteratorResult<Uint8Array>> | undefined;
 	let stopping = false;
 	let settlement: Promise<void> | undefined;
@@ -109,6 +119,20 @@ export function ownedReadResponse(
 		controllerRef = undefined;
 		signalWorkSettled();
 	}
+	/**
+	 * Stop holding the invocation once expired work settles, or after the bounded settlement grace
+	 * when source or cancellation work never settles. Lazy reclaim still owns the byte reservation.
+	 */
+	function releaseKeepAliveAfter(work: Promise<void>): void {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const grace = new Promise<void>((resolve) => {
+			timer = setTimeout(resolve, READ_SETTLEMENT_DEADLINE_MS);
+		});
+		void Promise.race([work.catch(() => {}), grace]).then(() => {
+			clearTimeout(timer);
+			signalWorkSettled();
+		});
+	}
 	/** Fail the response at its acquisition deadline without joining unknown source work. */
 	function expire(): void {
 		if (expired) return;
@@ -125,7 +149,7 @@ export function ownedReadResponse(
 		} catch {
 			// The response may already be closed when the deadline fires.
 		}
-		void finish(true, "uncertain", reason).catch(() => {});
+		releaseKeepAliveAfter(finish(true, "uncertain", reason));
 		void abortFixedWriter(reason);
 	}
 	const lease =
@@ -208,10 +232,6 @@ export function ownedReadResponse(
 		);
 	}
 	if (knownByteLength !== undefined) {
-		if (!Number.isSafeInteger(knownByteLength) || knownByteLength < 0)
-			throw new RangeError(
-				"Known response length must be a non-negative safe integer",
-			);
 		if (knownByteLength === 0) {
 			const headers = new Headers(init?.headers);
 			headers.set("Content-Length", "0");

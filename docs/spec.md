@@ -365,7 +365,9 @@ A valid Content-Length limits streamed bytes before decoding or parsing. MCP res
 
 Eight MCP envelopes can run at the same time if their bytes fit. MCP admission waits at most 2,000 ms, with at most 30 queued requests and no queued body demand. Release wakes eligible requests in FIFO order, but a large request cannot block smaller requests that fit.
 
-Local refusal returns `Retry-After: 2` when no physical release time is known. Logical read expiry does not establish that time. Durable authority retry values stay unchanged.
+A full logical MCP read pool returns `Retry-After` from its earliest active lease deadline. The estimate uses whole seconds rounded upward, bounded from 2 through 60. This estimate does not predict physical-byte release.
+
+Unknown physical-byte completion returns `Retry-After: 2`. Logical read expiry does not establish physical completion. Durable authority retry values stay unchanged.
 
 Byte ownership continues through operation cleanup and response production. Timers serve only active leases, waiters, and bounded cleanup. Completed owners leave no polling, alarms, or agent-only idle timers.
 

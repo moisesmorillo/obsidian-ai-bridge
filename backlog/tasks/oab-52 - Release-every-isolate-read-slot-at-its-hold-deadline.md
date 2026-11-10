@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-09T21:55:00Z'
-updated_date: '2026-11-09T23:56:00Z'
+updated_date: '2026-11-10T00:23:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -58,4 +58,10 @@ Task review round 1 corrections: the fixed pump now owns physical lease completi
 MCP read refusal now uses the earliest active MCP lease deadline. The estimate uses whole seconds rounded upward, with a 2..60-second bound. Unknown physical completion keeps the two-second fallback.
 
 RED reproduced early byte release and fixed retry values. Sixty focused tests and the full check pass with 2393 passed, zero failed, and one skipped. OAB-52 stays In Progress for parent re-review.
+
+Final branch review correction from base c18a4f7: blob reads retain and join the first native cancellation promise. Source cleanup settles before response owner transfer and MCP byte release. The real-router regression covers resolved and rejected cleanup, source settlement, durable settlement, queued replacement admission, and zero final accounting.
+
+Spec section 6.5 now distinguishes full logical MCP deadline estimates from unknown physical-byte completion. Focused tests pass 19 cases. The rebased full check passes 2384 tests, with zero failures and one skip.
+
+Corrective semantic self-review closes F1 and F2. Main deletion of docs/api/f2.md stays intact. OAB-52 stays In Progress for parent scoped re-review and owner branch review.
 <!-- SECTION:NOTES:END -->

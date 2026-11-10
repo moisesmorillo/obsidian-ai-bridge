@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-10T19:29:00Z'
+updated_date: '2026-11-10T20:42:00Z'
 labels: []
 dependencies: []
 references:
@@ -299,6 +299,8 @@ OAB-53 step 1 local evidence, 2026-11-10 UTC. Local workerd only. This is not a 
 - Trigger stays: deployed measurement in step 2 (owner-approved plan, D1–D4).
 
 2026-11-10 production run (see OAB-53 notes): no memory failure observed. Workers Free 10 ms CPU limit failed first: MCP 1 MB reads, 1 MB uploads, and large manifest/feed bodies. A CPU kill after headers yields a cut HTTP 200 and an incomplete read lease held until reclaim. Native retention categories stay unmeasurable in production: Cloudflare exposes only per-invocation outcome, not memory.
+
+2026-11-10 run 2 on Workers Paid: no memory failure up to concurrency 12. Platform telemetry still exposes only invocation outcomes, so the five native-retention categories stay unmeasured in production. Keep this task Deferred until Cloudflare exposes isolate memory telemetry.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

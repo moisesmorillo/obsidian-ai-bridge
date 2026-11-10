@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-09T22:05:00Z'
-updated_date: '2026-11-10T19:29:00Z'
+updated_date: '2026-11-10T20:42:00Z'
 labels: []
 dependencies: []
 references:
@@ -21,9 +21,9 @@ The admission byte reservations bound identified application payloads but do not
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Measure peak Worker heap and native memory for representative REST and MCP admission workloads
-- [ ] #2 Compare measured peaks with the 128 MB isolate limit and record the workload, runtime, and limits
-- [ ] #3 Keep application byte reservations distinct from measured heap and native memory
+- [x] #1 Measure peak Worker heap and native memory for representative REST and MCP admission workloads
+- [x] #2 Compare measured peaks with the 128 MB isolate limit and record the workload, runtime, and limits
+- [x] #3 Keep application byte reservations distinct from measured heap and native memory
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -142,4 +142,14 @@ Production confirmation 2026-11-10 18:50-19:40Z, Worker 1.0.3, Workers Free plan
 - REST reads above concurrency 4 got 429 by design (18 MB / 4.5 MB). MCP was not measured above concurrency 1 because the plan stopped at the first 5xx.
 - Cleanup deleted all 63 fixtures by path with If-Match. The Mac plugin 1.0.2 classified the cut feed as a network failure and caught up to cursor 728 = head after the reclaim window: settled, 298 files, no attention. Empty local loadtest folders were removed.
 Conclusion for AC1/AC2: memory headroom in production cannot be reached before the CPU limit on Workers Free. Local peaks: Worker isolate 57.7 MB heap / 90.4 MB heap+buffers, Vault DO 118.0 / 132.1 MB. AC3 holds: reservations are recorded apart from heap and native memory.
+
+Production run 2 on Workers Paid, 2026-11-10 20:20-21:05Z, Worker 1.0.4 with limits.cpu_ms 30000 (PR #163). Same setup: Mac paused, iPad, iPhone and ChatGPT idle, fixtures in _vaultwire-loadtest/.
+- No memory failure. Workers Observability showed no exceeded-memory or exceeded-CPU outcome in this run.
+- REST reads (vault, changes 1000, text 1 MB, search) and MCP reads (read_note 1 MB, list_notes, search_notes) returned only 200 at concurrency 1, 4, 8 and 12. No 429. Run 1 refusals came from CPU-killed responses that held leases.
+- Slow consumers and text/MCP cancellations returned 200. slow-mcp-read-note-1mb c12 median 43 s. rest-changes-1000 median 5-15 s, max 32.6 s.
+- Cancelled 25 MB blob reads hold REST capacity: cancel-blob c8 and c12 got 429 after the first cancels, and the next text uploads got 429 until the leases cleared. This confirms local finding 1 in production.
+- Upload text 1 MB: c1 and c4 201. c12 gave 10 x 201 and 14 x 500. Observability: 'Durable Object is overloaded. Requests queued for too long.' Four stalled-read opens right after also got 500. After 130 s, REST text c4 and MCP read c4 returned 200 again. Upload blob 25 MB c4: 4 x 201.
+- The single Vault Durable Object queue is the first production limit on Paid, not isolate memory.
+- Cleanup deleted 87 files. Mac resumed to cursor 902 = head, settled, 298 files, no attention. Empty local folders removed.
+Conclusion: AC1 is met by local heap and RSS peaks per workload plus production pass evidence up to concurrency 12. AC2: local peaks (Worker 90.4 MB heap+buffers, Vault DO 132.1 MB) compared with the 128 MB limit, and production showed no memory failure. AC3: reservations stay separate from heap and native observations.
 <!-- SECTION:NOTES:END -->

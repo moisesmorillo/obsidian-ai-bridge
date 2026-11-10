@@ -339,6 +339,8 @@ Unknown storage or authority results retain admission until its original deadlin
 
 ### 6.5 Request limits
 
+The production Worker declares a CPU limit of 30,000 ms per invocation in its Wrangler configuration. This needs Workers Paid. On Workers Free the platform stops an invocation after 10 ms of CPU. A stop before headers returns error 1102. A stop after headers leaves a cut HTTP 200 body and an incomplete read lease until the reclaim grace. The OAB-53 production run on 2026-11-10 showed this on manifest, feed, and MCP reads.
+
 Eight body-bearing mutations share synchronous slots across clients, vault hosts, and router instances in one Worker isolate. PUT, append, rename, and restore use this budget. A request beyond this count receives `429 admission_limited` without body demand or durable reservation.
 
 A slot covers body handling, storage, authority calls, cleanup, and application-owned response preparation and production. Operation cleanup and response production must both settle before slot reuse. Response production ends after producer EOF or cancellation cleanup, not after the final chunk enters a stream.

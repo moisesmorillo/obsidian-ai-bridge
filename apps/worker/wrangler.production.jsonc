@@ -5,6 +5,7 @@
 	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],
 	"main": "src/index.ts",
 	"observability": { "enabled": true, "head_sampling_rate": 1 },
+	"limits": { "cpu_ms": 30000 },
 	"workers_dev": false,
 	"triggers": { "crons": ["0 * * * *"] },
 	"preview_urls": false,

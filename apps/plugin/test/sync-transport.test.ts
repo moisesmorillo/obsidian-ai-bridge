@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DeviceSessionNetworkError } from "../src/auth/device-session";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
 import {
 	SyncTransportError,
@@ -426,6 +427,29 @@ describe("SyncTransport", () => {
 			"x-vault-epoch": epoch,
 		});
 	});
+
+	it.each([
+		["vault", '{"epoch":"' + epoch + '","head_seq":'],
+		["manifest", '{"epoch":"' + epoch + '","entries":[{"path":"a'],
+		["changes", '{"epoch":"' + epoch + '","head_seq":3,"entries":[{"se'],
+		["changes", "not json"],
+	] as const)(
+		"raises a retryable network failure for a truncated %s 200 body",
+		async (read, text) => {
+			const session = new ResponseSession();
+			session.responses.push({ status: 200, headers: {}, text });
+			const transport = new SyncTransport("https://service.test", session);
+			const pending =
+				read === "vault"
+					? transport.vault()
+					: read === "manifest"
+						? transport.manifest(null)
+						: transport.changes(epoch, 0);
+			const error = await pending.catch((caught: unknown) => caught);
+			expect(error).toBeInstanceOf(DeviceSessionNetworkError);
+			expect(String(error)).not.toContain(text);
+		},
+	);
 
 	it("rejects a partial JSON read as a full pinned revision", async () => {
 		const session = new ResponseSession();

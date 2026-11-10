@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-09T21:55:00Z'
-updated_date: '2026-11-10T00:23:00Z'
+updated_date: '2026-11-10T00:27:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -21,13 +21,13 @@ Owner R3 brief reports persistent isolate read denial after parallel MCP calls. 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A regression first reproduces a read slot held beyond its deadline.
-- [ ] #2 Every read acquisition path frees expired local capacity, including MCP, search, preparation, abort, errors, and unread bodies.
-- [ ] #3 Count limits increase within a documented aggregate memory bound below 128 MB. Agent work cannot consume the device read reservation.
-- [ ] #4 Spec section 6.5 and affected tests match approved limits. Protocol shapes stay unchanged.
-- [ ] #5 Thirty parallel mixed MCP calls receive success or bounded retry while device sync succeeds. Admission waits stay bounded and idle periods create no agent timers.
-- [ ] #6 bun run check and semantic task and branch reviews pass before owner branch review and pull request.
-- [ ] #7 A synthetic 300-operation Linear migration and a 300-call spike complete through bounded retries while device sync succeeds. Append retries create no duplicates.
+- [x] #1 A regression first reproduces a read slot held beyond its deadline.
+- [x] #2 Every read acquisition path frees expired local capacity, including MCP, search, preparation, abort, errors, and unread bodies.
+- [x] #3 Count limits increase within a documented aggregate memory bound below 128 MB. Agent work cannot consume the device read reservation.
+- [x] #4 Spec section 6.5 and affected tests match approved limits. Protocol shapes stay unchanged.
+- [x] #5 Thirty parallel mixed MCP calls receive success or bounded retry while device sync succeeds. Admission waits stay bounded and idle periods create no agent timers.
+- [x] #6 bun run check and semantic task and branch reviews pass before owner branch review and pull request.
+- [x] #7 A synthetic 300-operation Linear migration and a 300-call spike complete through bounded retries while device sync succeeds. Append retries create no duplicates.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,4 +64,6 @@ Final branch review correction from base c18a4f7: blob reads retain and join the
 Spec section 6.5 now distinguishes full logical MCP deadline estimates from unknown physical-byte completion. Focused tests pass 19 cases. The rebased full check passes 2384 tests, with zero failures and one skip.
 
 Corrective semantic self-review closes F1 and F2. Main deletion of docs/api/f2.md stays intact. OAB-52 stays In Progress for parent scoped re-review and owner branch review.
+
+Parent review record at code revision 128bb3a. Task review fef8fb2b found early fixed-writer byte release and a missing known-deadline retry estimate. Commit 97ae7e4, now c18a4f7 after rebase, fixes both. Scoped review 0a685419 approved. Whole-branch review a972cf80 found first blob-cancellation promise loss and incomplete retry documentation. Commit 128bb3a fixes both with router-level RED/GREEN evidence. Scoped review 6ab82e0d approved. All actionable findings have evidence-based closure. Stateful review covered scheduler, leases, body owner, response pump, MCP HTTP, blob source, and meaningful declarations. The auxiliary history.ts AST diagnostics do not establish semantic defects because decoders catch parse failures and canonical schemas validate boundary unknown values. Main through 9fc7e64 is rebased. Its deletion of docs/api/f2.md remains intact. Final bun run check at 128bb3a passes 2384 tests, zero failures, one skip, docs, types, lint, and dry-run builds. The 300-call schedules pass with concurrent device reads. Application admission reserves at most 82 MB with 46 MB arithmetic headroom, not proof of total heap safety. OAB-53 and the unknown production trigger remain explicit limits. Owner branch review remains pending.
 <!-- SECTION:NOTES:END -->

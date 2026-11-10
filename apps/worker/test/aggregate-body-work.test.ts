@@ -2,7 +2,10 @@ import { env, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@vaultwire/protocol";
 import { FileCommandSchema, VaultReadResultSchema } from "@vaultwire/protocol";
 import { executeBlobPut } from "@worker/application/blobs";
-import { tryAcquireBodySlot } from "@worker/application/body-budget";
+import {
+	bodySlotSnapshot,
+	tryAcquireBodySlot,
+} from "@worker/application/body-budget";
 import {
 	executeFileCommand,
 	type HistoryVaultGateway,
@@ -261,6 +264,8 @@ describe("aggregate body ownership", () => {
 				expect(fifth.stats().reads).toBe(0);
 				expect(await admissions(host)).toHaveLength(0);
 				await responses[0]?.body?.cancel();
+				// A native body observes cancellation at its next write; await cancel does not join cleanup.
+				await vi.waitFor(() => expect(bodySlotSnapshot().active_slots).toBe(7));
 				const next = await worker.fetch(
 					new Request(`https://${host}/v1/files/next.md`, {
 						method: "PUT",
@@ -984,6 +989,8 @@ describe("aggregate body ownership", () => {
 			if (!firstMutation?.body)
 				throw new Error("Expected mutation response body");
 			await firstMutation.body.cancel();
+			// A native body observes cancellation at its next write; await cancel does not join cleanup.
+			await vi.waitFor(() => expect(bodySlotSnapshot().active_slots).toBe(7));
 			const recoveredBody = await worker.fetch(
 				new Request(`https://${hosts[8]}/v1/files/recovered.md`, {
 					method: "PUT",

@@ -1,3 +1,4 @@
+import { waitUntil } from "cloudflare:workers";
 import type {
 	AdmissionCompletion,
 	AdmissionFinishResult,
@@ -21,6 +22,22 @@ async function abortResponseWriter(
 		await writer.abort(reason);
 	} catch {
 		// A canceled consumer can close the writer before cleanup reaches it.
+	}
+}
+
+/**
+ * Keep the current invocation alive until response work settles.
+ * Workers cancel every task of a request whose client disconnects unless the task is registered with
+ * waitUntil, so without this a canceled body never observes its failed write, never cancels its
+ * source, and keeps its read lease and byte reservation until the lazy reclaim deadline. Outside a
+ * request context (for example a direct unit call with no invocation) there is nothing to extend, so
+ * a registration failure is ignored and the response behaves as before.
+ */
+function keepResponseWorkAlive(work: Promise<void>): void {
+	try {
+		waitUntil(work);
+	} catch {
+		// No current invocation exists to extend.
 	}
 }
 
@@ -74,6 +91,11 @@ export function ownedReadResponse(
 	let fixedWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
 	let fixedWriterShutdown: Promise<void> | undefined;
 	let fixedPump: Promise<void> | undefined;
+	let signalWorkSettled!: () => void;
+	const workSettled = new Promise<void>((resolve) => {
+		signalWorkSettled = resolve;
+	});
+	keepResponseWorkAlive(workSettled);
 	/** Release local capacity after started source work and cancellation settle. */
 	function release(): void {
 		if (slotReleased) return;
@@ -85,6 +107,7 @@ export function ownedReadResponse(
 	function completeDeadline(): void {
 		if (lease) lease.complete();
 		controllerRef = undefined;
+		signalWorkSettled();
 	}
 	/** Fail the response at its acquisition deadline without joining unknown source work. */
 	function expire(): void {

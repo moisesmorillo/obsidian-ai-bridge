@@ -3,11 +3,11 @@ id: OAB-62
 title: >-
   Stream generic JSON read responses through a writer pump that observes client
   cancellation
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-10T21:32:00Z'
-updated_date: '2026-11-10T22:14:00Z'
+updated_date: '2026-11-10T22:15:00Z'
 labels: []
 dependencies:
   - OAB-61
@@ -28,7 +28,7 @@ OAB-61 found that generic JSON read responses (feed, manifest, history, search, 
 - [x] #2 JSON read bodies keep OAB-58 semantics: lease expiry errors the body and never closes it cleanly, and capacity is released once.
 - [x] #3 Output bytes, chunk coalescing, one-batch-at-a-time demand, and the existing ownership tests keep passing, or each changed test records why its old expectation was wrong.
 - [x] #4 MCP JSON responses get the same cancellation behaviour, with a test.
-- [ ] #5 Spec §6.5 removes the known limit, and bun run check, task review, and branch review pass before the pull request.
+- [x] #5 Spec §6.5 removes the known limit, and bun run check, task review, and branch review pass before the pull request.
 - [x] #6 Review round 1 (owner: fix in this branch): cancelled REST mutation response bodies return their body slot and shared bytes promptly, and response production has a deadline plus a reclaim grace that releases a stalled slot once, with tests.
 <!-- AC:END -->
 
@@ -79,3 +79,9 @@ L1: mutation-response.ts finish cleared the deadline timer before inner cleanup 
 L2: mutation-response.test.ts 'waits_for_pending_read_and_cancel_cleanup' no longer swallows the pending consumer read. Its real outcome in this test is a rejection 'Stream was cancelled' (not done as in the metadata pending-batch test), and the test asserts exactly that; comment corrected.
 Validation: bun run check exit 0 (protocol 314, tooling 107, plugin 879 + 1 skipped, worker 871 + http 138 + f2 150). AC #5 left open for the parent.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Generic JSON read bodies and REST mutation bodies now stream through a shared writer pump (transport/response-pump.ts) over IdentityTransformStream, so a client cancel surfaces as a failed write and releases capacity within about 2 s instead of waiting for reclaim (reads) or leaking for the isolate lifetime (mutations). Mutation response production gained a 60 s deadline plus a 60 s reclaim grace that releases count and bytes once. Keep-alive stays bounded by a 5 s grace. Lease expiry still errors the body. Zero-byte read responses keep their gated stream. Verified by RED/GREEN tests, bun run check, and two review rounds.
+<!-- SECTION:FINAL_SUMMARY:END -->

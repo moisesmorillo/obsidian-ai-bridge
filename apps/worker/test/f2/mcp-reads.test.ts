@@ -1299,12 +1299,12 @@ describe("production MCP transport", () => {
 	// A 30,000 ms bound covers 256 serial writes and preserves hang detection.
 	it("keeps real durable admission until MCP response EOF and cancellation", async () => {
 		const { token, clientId } = await issueToken();
-		await seedMcpManifestRows(
-			token,
-			256,
-			`MCP-lifecycle-${crypto.randomUUID()}/`,
-		);
-		/** Start a production list request without consuming its response body. */
+		const prefix = `MCP-lifecycle-${crypto.randomUUID()}/`;
+		await seedMcpManifestRows(token, 256, prefix);
+		/**
+		 * Start a production list request without consuming its response body. The prefix keeps the
+		 * result to the seeded rows, so earlier tests in this file cannot turn it into a short error.
+		 */
 		const request = () =>
 			productionWorker.fetch(
 				new Request("https://service.test/mcp", {
@@ -1318,7 +1318,7 @@ describe("production MCP transport", () => {
 						jsonrpc: "2.0",
 						id: 1,
 						method: "tools/call",
-						params: { name: "list_notes", arguments: {} },
+						params: { name: "list_notes", arguments: { prefix } },
 					}),
 				}),
 				env,

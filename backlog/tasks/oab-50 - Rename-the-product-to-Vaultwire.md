@@ -1,10 +1,10 @@
 ---
 id: OAB-50
 title: Rename the product to Vaultwire
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-09T15:37:00Z'
-updated_date: '2026-11-09T21:36:00Z'
+updated_date: '2026-11-10T02:20:00Z'
 labels:
   - rename
 dependencies: []
@@ -21,13 +21,28 @@ Owner decision 2026-11-09: the product name becomes Vaultwire. The old name "AI 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every subtask is Done.
-- [ ] #2 No current product surface, package, configuration, Cloudflare resource or repository name uses ai-bridge, obsidian-ai-bridge, AI Bridge or oab. Historical records are the only exception.
-- [ ] #3 The real vault on Mac, iPhone and iPad and the ChatGPT connection work against vaultwire.mmorillo.dev with the same content as before the cutover.
+- [x] #1 Every subtask is Done.
+- [x] #2 No current product surface, package, configuration, Cloudflare resource or repository name uses ai-bridge, obsidian-ai-bridge, AI Bridge or oab. Historical records are the only exception.
+- [x] #3 The real vault on Mac, iPhone and iPad and the ChatGPT connection work against vaultwire.mmorillo.dev with the same content as before the cutover.
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Status 2026-11-09: subtasks 50.1 to 50.7 are Done. Criterion 2 is still open. The OAuth device callback obsidian://ai-bridge/callback keeps the old name. The Durable Object key VAULT_OBJECT_NAME keeps obsidian-bridge.mmorillo.dev because a change would select an empty object. The deploy guard secret VAULTWIRE_CUTOVER_AUTHORIZED is no longer needed.
+
+Closure evidence, 2026-11-10:
+- Subtasks OAB-50.1 to OAB-50.8 are Done.
+- PR #143 removed the remaining AI Bridge names. Worker 1.0.0 uses the vaultwire Durable Object key, and plugin 1.0.0 uses obsidian://vaultwire/callback, .vaultwire/ and vaultwire: storage keys.
+- Historical exceptions only: the released transferred_classes migration record, old release tags in release tests, the spec Legacy row, CHANGELOG files and Backlog records with OAB- ids.
+- The Cloudflare account lists only vaultwire resources after cloudflare-infra PR #30.
+- The local repository folder is now ~/workspace/moisesmorillo/vaultwire.
+- Mac imported 68 files into the new vault object. iPhone and iPad reconciled by hash. Their four stale conflict copies were reviewed and deleted with owner approval.
+- ChatGPT reconnected through a new connector with consent for all three scopes. Worker 1.0.2 and plugin 1.0.1 run in production.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The product is Vaultwire end to end: repository, packages, plugin id, Worker, hostname, buckets, KV, Durable Object key, Access, deploy token and local folder. All devices and ChatGPT work against vaultwire.mmorillo.dev.
+<!-- SECTION:FINAL_SUMMARY:END -->

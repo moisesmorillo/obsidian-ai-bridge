@@ -12,8 +12,8 @@ export const VAULT_OVERLOAD_RETRY_SECONDS = 5;
  * A Vault RPC the platform refused because the Durable Object queue was overloaded.
  * It carries the canonical `admission_limited` failure, so every caller that maps known failures
  * returns `429 admission_limited` with `Retry-After` instead of an internal error. The caller cannot
- * know whether the refused call reached the object, so durable admission stays uncertain where the
- * caller already treats a rejected RPC that way, and every mutation retry stays conditional.
+ * know whether the refused call reached the object, so every caller keeps the durable admission
+ * uncertain (see {@link knownFailureCompletion}) and every mutation retry stays conditional.
  */
 export class VaultOverloaded extends FileOperationDenied {
 	/** The fixed retryable refusal, narrowed so callers can read its retry delay. */
@@ -60,6 +60,17 @@ export function refuseVaultOverload<T extends object>(gateway: T): T {
 			};
 		},
 	});
+}
+
+/**
+ * Admission completion for a failure whose canonical response is known. Known policy failures
+ * settle their admission. An overload refusal stays uncertain: the platform does not promise that
+ * the refused call never reached the object, so the admission keeps its original deadline.
+ */
+export function knownFailureCompletion(
+	error: unknown,
+): "settled" | "uncertain" {
+	return error instanceof VaultOverloaded ? "uncertain" : "settled";
 }
 
 /**

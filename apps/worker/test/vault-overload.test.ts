@@ -77,39 +77,73 @@ function overloadWorker(method: string, failure: "overloaded" | "unknown") {
 	);
 }
 
-/** REST requests and the RPC whose overload each one must survive. */
-const REST_CASES: Array<[string, string, () => Request]> = [
+/** ETag of the seeded note, captured before each case. */
+let seededEtag = "";
+
+/** Exact bytes and declaration of the blob that blob cases upload. */
+const BLOB_BYTES = new Uint8Array([0, 1, 2, 255]);
+
+/** Build a create-only text PUT for a new note. */
+function newTextPut(): Request {
+	return new Request(`https://${HOST}/v1/files/new.md`, {
+		method: "PUT",
+		headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+		body: "x".repeat(1_000),
+	});
+}
+
+/** Build a create-only declared blob PUT with the exact SHA-256 of {@link BLOB_BYTES}. */
+async function newBlobPut(): Promise<Request> {
+	const digest = Array.from(
+		new Uint8Array(await crypto.subtle.digest("SHA-256", BLOB_BYTES)),
+		(byte) => byte.toString(16).padStart(2, "0"),
+	).join("");
+	return new Request(`https://${HOST}/v1/files/new.bin`, {
+		method: "PUT",
+		headers: {
+			"If-None-Match": "*",
+			"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			"X-Content-SHA256": digest,
+			"X-Content-Size": String(BLOB_BYTES.byteLength),
+		},
+		body: BLOB_BYTES,
+	});
+}
+
+/**
+ * REST requests, the RPC whose overload each one must survive, and the durable admission states
+ * left afterwards. A refusal after a ticket exists keeps that admission uncertain, never settled,
+ * because an overloaded call may still have reached the object. A refusal before any ticket leaves
+ * no admission.
+ */
+const REST_CASES: Array<
+	[string, string, () => Request | Promise<Request>, string[]]
+> = [
+	["PUT before reservation", "beginMutation", newTextPut, []],
+	["PUT at authorization", "authorize", newTextPut, ["uncertain"]],
+	["PUT at commit", "commitText", newTextPut, ["uncertain"]],
+	["blob PUT at commit", "commitBlob", newBlobPut, ["uncertain"]],
 	[
-		"PUT before reservation",
-		"beginMutation",
+		"rename at commit",
+		"commitFileCommand",
 		() =>
-			new Request(`https://${HOST}/v1/files/new.md`, {
-				method: "PUT",
-				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
-				body: "x".repeat(1_000),
+			new Request(`https://${HOST}/v1/files/note.md:rename`, {
+				method: "POST",
+				headers: {
+					"If-Match": seededEtag,
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"Idempotency-Key": "overload-rename-01",
+				},
+				body: JSON.stringify({ to: "renamed.md" }),
 			}),
+		["uncertain"],
 	],
 	[
-		"PUT at authorization",
-		"authorize",
-		() =>
-			new Request(`https://${HOST}/v1/files/new.md`, {
-				method: "PUT",
-				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
-				body: "x".repeat(1_000),
-			}),
+		"vault read",
+		"readVault",
+		() => new Request(`https://${HOST}/v1/vault`),
+		["uncertain"],
 	],
-	[
-		"PUT at commit",
-		"commitText",
-		() =>
-			new Request(`https://${HOST}/v1/files/new.md`, {
-				method: "PUT",
-				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
-				body: "x".repeat(1_000),
-			}),
-	],
-	["vault read", "readVault", () => new Request(`https://${HOST}/v1/vault`)],
 	[
 		"feed open",
 		"authorize",
@@ -117,6 +151,7 @@ const REST_CASES: Array<[string, string, () => Request]> = [
 			new Request(
 				`https://${HOST}/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0`,
 			),
+		[],
 	],
 	[
 		"feed batch",
@@ -125,24 +160,46 @@ const REST_CASES: Array<[string, string, () => Request]> = [
 			new Request(
 				`https://${HOST}/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0`,
 			),
+		["uncertain"],
 	],
 	[
 		"manifest batch",
 		"readBatch",
 		() => new Request(`https://${HOST}/v1/manifest`),
+		["uncertain"],
 	],
 	[
 		"content read",
 		"readText",
 		() => new Request(`https://${HOST}/v1/files/note.md`),
+		["uncertain"],
 	],
 	[
 		"history read",
 		"readHistoryUpper",
 		() => new Request(`https://${HOST}/v1/history/note.md`),
+		["uncertain"],
 	],
-	["search", "search", () => new Request(`https://${HOST}/v1/search?q=note`)],
+	[
+		"search",
+		"search",
+		() => new Request(`https://${HOST}/v1/search?q=note`),
+		["uncertain"],
+	],
 ];
+
+/** Return the durable admission states that remain for the overload test client. */
+async function admissionStates(): Promise<string[]> {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName(HOST));
+	return runInDurableObject(stub, (_instance, state) =>
+		state.storage.sql
+			.exec(
+				"SELECT state FROM operation_admissions WHERE client_id = 'overload-client' ORDER BY state",
+			)
+			.toArray()
+			.map((row) => String(row.state)),
+	);
+}
 
 /** Send one MCP tool call through the real router. */
 function toolCall(name: string, args: Record<string, unknown>): Request {
@@ -184,25 +241,27 @@ describe("Durable Object overload refusal", () => {
 		);
 		await seeded.text();
 		expect(seeded.status).toBe(201);
+		seededEtag = seeded.headers.get("ETag") ?? "";
 	});
 
 	it.each(REST_CASES)(
 		"returns a retryable 429 for an overloaded %s",
-		async (_label, method, request) => {
+		async (_label, method, request, states) => {
 			const response = await overloadWorker(method, "overloaded").fetch(
-				request(),
+				await request(),
 				env,
 			);
 			const body = await response.json();
 			expect(response.status).toBe(429);
 			expect(body).toMatchObject({ error: "admission_limited" });
 			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+			expect(await admissionStates()).toEqual(states);
 		},
 	);
 
 	it("keeps an ordinary unknown RPC failure as an internal error", async () => {
 		const response = await overloadWorker("commitText", "unknown").fetch(
-			REST_CASES[2]?.[2]() ?? new Request(`https://${HOST}/`),
+			newTextPut(),
 			env,
 		);
 		await response.text();
@@ -210,25 +269,46 @@ describe("Durable Object overload refusal", () => {
 	});
 
 	it.each([
-		["read_note", "readText", { path: "note.md" }],
+		["read_note", "readText", () => ({ path: "note.md" }), ["uncertain"]],
 		[
 			"create_note",
 			"beginMutation",
-			{ path: "Agents/new.md", content: "x", epoch: TEXT_FIXTURE_EPOCH },
+			() => ({
+				path: "Agents/new.md",
+				content: "x",
+				epoch: TEXT_FIXTURE_EPOCH,
+			}),
+			[],
 		],
 		[
 			"create_note",
 			"commitText",
-			{ path: "Agents/new.md", content: "x", epoch: TEXT_FIXTURE_EPOCH },
+			() => ({
+				path: "Agents/new.md",
+				content: "x",
+				epoch: TEXT_FIXTURE_EPOCH,
+			}),
+			["uncertain"],
 		],
-		["list_notes", "readBatch", {}],
-		["search_notes", "search", { query: "note" }],
-		["get_history", "readHistoryUpper", { path: "note.md" }],
-	] as const)(
+		[
+			"update_note",
+			"commitText",
+			() => ({ path: "note.md", content: "changed", etag: seededEtag }),
+			["uncertain"],
+		],
+		["list_notes", "readBatch", () => ({}), ["uncertain"]],
+		["search_notes", "search", () => ({ query: "note" }), ["uncertain"]],
+		[
+			"get_history",
+			"readHistoryUpper",
+			() => ({ path: "note.md" }),
+			["uncertain"],
+		],
+	] as Array<[string, string, () => Record<string, unknown>, string[]]>)(
 		"returns the retryable admission_limited MCP tool error when %s meets an overloaded %s",
-		async (tool, method, args) => {
+		async (tool, method, args, states) => {
 			const response = await overloadWorker(method, "overloaded").fetch(
-				toolCall(tool, args),
+				toolCall(tool, args()),
 				env,
 			);
 			const message = (await response.json()) as {
@@ -238,6 +318,7 @@ describe("Durable Object overload refusal", () => {
 			expect(message.error).toBeUndefined();
 			expect(message.result?.isError).toBe(true);
 			expect(message.result?.structuredContent?.code).toBe("admission_limited");
+			expect(await admissionStates()).toEqual(states);
 		},
 	);
 

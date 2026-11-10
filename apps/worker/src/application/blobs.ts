@@ -19,6 +19,7 @@ import {
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
 import type { TextVaultGateway } from "@worker/application/text-files";
+import { knownFailureCompletion } from "@worker/application/vault-overload";
 
 /** Storage-independent proof that immutable bytes match their content address. */
 export interface BlobEvidence {
@@ -153,8 +154,9 @@ export async function executeBlobPut(
 		} catch (error) {
 			if (error instanceof FileOperationDenied) {
 				// Storage failures can follow a successful immutable write with a lost result.
+				// An overload refusal can follow a delivered call, so it stays uncertain too.
 				if (error.failure.kind !== "blob_storage_unavailable")
-					completion = "settled";
+					completion = knownFailureCompletion(error);
 				return { ok: false, failure: error.failure };
 			}
 			throw error;

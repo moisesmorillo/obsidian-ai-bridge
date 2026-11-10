@@ -26,6 +26,7 @@ import {
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";
+import { knownFailureCompletion } from "@worker/application/vault-overload";
 
 /** Native operations needed for one read admission across every batch. */
 export interface ReadVaultGateway {
@@ -123,7 +124,7 @@ export async function discardReadOutcome<T>(
 }
 
 /** One deadline for every response and preparation settlement path. */
-const READ_SETTLEMENT_DEADLINE_MS = 5_000;
+export const READ_SETTLEMENT_DEADLINE_MS = 5_000;
 
 /** Mark the fixed deadline so diagnostics never include a native failure reason. */
 class ReadSettlementTimeout extends Error {}
@@ -545,17 +546,22 @@ export function createReadSession<T>(
 	};
 }
 
-/** Return known policy failure with settlement deferred to the slot-owning transport. */
+/**
+ * Return a known failure with settlement deferred to the slot-owning transport.
+ * @param completion - `settled` for a known policy result; `uncertain` when the failure came from a
+ * call that may have reached the object, such as an overload refusal.
+ */
 function finishReadFailure<T>(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	ticketId: string,
 	failure: FileFailure,
+	completion: "settled" | "uncertain" = "settled",
 ): ReadOutcome<T> {
 	return {
 		ok: false,
 		failure,
-		settle: async () => gateway.finishAdmission(context, ticketId, "settled"),
+		settle: async () => gateway.finishAdmission(context, ticketId, completion),
 	};
 }
 
@@ -573,7 +579,13 @@ function finishKnownFailure<T>(
 			settle: async () => gateway.finishAdmission(context, ticketId, "settled"),
 		};
 	if (!isKnownFailure(error)) throw error;
-	return finishReadFailure(gateway, context, ticketId, error.failure);
+	return finishReadFailure(
+		gateway,
+		context,
+		ticketId,
+		error.failure,
+		knownFailureCompletion(error),
+	);
 }
 
 /** Identify failures with a safe canonical response rather than uncertain storage errors. */

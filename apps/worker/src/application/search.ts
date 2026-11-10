@@ -11,6 +11,7 @@ import { FileOperationDenied } from "@worker/application/files";
 import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";
 import type { ReadOutcome, ReadVaultGateway } from "@worker/application/reads";
 import { createReadSession } from "@worker/application/reads";
+import { knownFailureCompletion } from "@worker/application/vault-overload";
 
 /** Native search gateway operations that extend the shared read authority. */
 export interface SearchVaultGateway
@@ -74,7 +75,11 @@ export async function readSearch(
 						? { kind: "invalid_request" }
 						: error.failure,
 				settle: async () =>
-					gateway.finishAdmission(context, ticketId, "settled"),
+					gateway.finishAdmission(
+						context,
+						ticketId,
+						knownFailureCompletion(error),
+					),
 			};
 		}
 		throw error;

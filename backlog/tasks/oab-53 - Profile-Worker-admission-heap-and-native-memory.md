@@ -1,9 +1,10 @@
 ---
 id: OAB-53
 title: Profile Worker admission heap and native memory
-status: To Do
+status: Deferred
 assignee: []
 created_date: '2026-11-09T22:05:00Z'
+updated_date: '2026-11-10T00:28:00Z'
 labels: []
 dependencies: []
 references:
@@ -23,3 +24,9 @@ The admission byte reservations bound identified application payloads but do not
 - [ ] #2 Compare measured peaks with the 128 MB isolate limit and record the workload, runtime, and limits
 - [ ] #3 Keep application byte reservations distinct from measured heap and native memory
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner-approved plan pn-f28109 defers complete heap and native-memory profiling. Start before another concurrency increase or after an exceeded-memory event. OAB-52 enforces application reservations only.
+<!-- SECTION:NOTES:END -->

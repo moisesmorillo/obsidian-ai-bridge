@@ -1,11 +1,11 @@
 ---
 id: OAB-52
 title: Release every isolate read slot at its hold deadline
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-09T21:55:00Z'
-updated_date: '2026-11-10T00:27:00Z'
+updated_date: '2026-11-10T00:28:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -66,4 +66,12 @@ Spec section 6.5 now distinguishes full logical MCP deadline estimates from unkn
 Corrective semantic self-review closes F1 and F2. Main deletion of docs/api/f2.md stays intact. OAB-52 stays In Progress for parent scoped re-review and owner branch review.
 
 Parent review record at code revision 128bb3a. Task review fef8fb2b found early fixed-writer byte release and a missing known-deadline retry estimate. Commit 97ae7e4, now c18a4f7 after rebase, fixes both. Scoped review 0a685419 approved. Whole-branch review a972cf80 found first blob-cancellation promise loss and incomplete retry documentation. Commit 128bb3a fixes both with router-level RED/GREEN evidence. Scoped review 6ab82e0d approved. All actionable findings have evidence-based closure. Stateful review covered scheduler, leases, body owner, response pump, MCP HTTP, blob source, and meaningful declarations. The auxiliary history.ts AST diagnostics do not establish semantic defects because decoders catch parse failures and canonical schemas validate boundary unknown values. Main through 9fc7e64 is rebased. Its deletion of docs/api/f2.md remains intact. Final bun run check at 128bb3a passes 2384 tests, zero failures, one skip, docs, types, lint, and dry-run builds. The 300-call schedules pass with concurrent device reads. Application admission reserves at most 82 MB with 46 MB arithmetic headroom, not proof of total heap safety. OAB-53 and the unknown production trigger remain explicit limits. Owner branch review remains pending.
+
+Owner approved the complete branch diff in Plannotator pn-6a990e with no changes requested. Plan approval was pn-f28109. Code revision 128bb3a passed the final full check and scoped semantic review. Current main remains 9fc7e64 with no unincorporated commits. All seven acceptance criteria have direct regression or review evidence. No vault access, deployment, Cloudflare resource change, new dependency, or production mutation retry occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Recovered logical read capacity through absolute deadlines and protected four REST read slots from eight MCP read slots. Added eight body and envelope ceilings with weighted byte admission, a 2000 ms MCP wait, thirty waiters, and useful bounded retry delays. Kept physical bytes until source, cancellation, response, and writer cleanup end. Synthetic 300-operation migration and 300-call spike tests preserve device reads and exact append results. Final full check passes 2384 tests with zero failures and one skip. Task, branch, scoped corrective, and owner reviews pass. OAB-53 defers complete heap profiling. The exact production trigger remains unproven. No deployment occurred.
+<!-- SECTION:FINAL_SUMMARY:END -->

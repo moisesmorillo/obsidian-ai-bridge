@@ -14,10 +14,11 @@ import {
 /** Maximum bytes requested from the inner body in one read. */
 const RESPONSE_CHUNK_BYTES = 65_536;
 /**
- * Bound, in milliseconds, on the invocation keep-alive after the response deadline when inner
- * cancellation never settles. Body slot reclaim still owns the capacity after this bound.
+ * Bound, in milliseconds, on the invocation keep-alive after a cancellation starts (consumer cancel,
+ * inner read failure, or response deadline) when inner cleanup never settles. Body slot reclaim still
+ * owns the capacity after this bound.
  */
-const MUTATION_RESPONSE_SETTLEMENT_GRACE_MS = 5_000;
+export const MUTATION_RESPONSE_SETTLEMENT_GRACE_MS = 5_000;
 
 /**
  * Keep mutation capacity through response preparation and owned production, not final client delivery.
@@ -79,7 +80,12 @@ function pumpedResponseBody(
 	});
 	keepResponseWorkAlive(workSettled);
 	const deadline = setTimeout(expire, BODY_RESPONSE_DEADLINE_MS);
-	/** Join the started read and inner cancellation, release the reader, and complete production once. */
+	/**
+	 * Join the started read and inner cancellation, release the reader, and complete production once.
+	 * A canceling finish replaces the deadline timer with a grace timer: the keep-alive ends when
+	 * cleanup settles or MUTATION_RESPONSE_SETTLEMENT_GRACE_MS later, whichever comes first. Body slot
+	 * reclaim still owns the capacity of cleanup that never settles.
+	 */
 	function finish(cancel: boolean, reason?: unknown): Promise<void> {
 		if (cleanup !== undefined) return cleanup;
 		stopping = true;
@@ -98,24 +104,26 @@ function pumpedResponseBody(
 			complete();
 			signalWorkSettled();
 		})();
+		if (cancel) {
+			let grace: ReturnType<typeof setTimeout> | undefined;
+			void Promise.race([
+				cleanup,
+				new Promise<void>((resolve) => {
+					grace = setTimeout(resolve, MUTATION_RESPONSE_SETTLEMENT_GRACE_MS);
+				}),
+			]).then(() => {
+				clearTimeout(grace);
+				signalWorkSettled();
+			});
+		}
 		return cleanup;
 	}
-	/** Error the body at the response deadline and bound the keep-alive when cleanup stalls. */
+	/** Error the body at the response deadline and cancel the inner reader under the bounded grace. */
 	function expire(): void {
 		if (stopping) return;
 		const reason = new Error("Mutation response deadline exceeded");
 		void abortResponseWriter(writer, reason);
-		const work = finish(true, reason);
-		let grace: ReturnType<typeof setTimeout> | undefined;
-		void Promise.race([
-			work,
-			new Promise<void>((resolve) => {
-				grace = setTimeout(resolve, MUTATION_RESPONSE_SETTLEMENT_GRACE_MS);
-			}),
-		]).then(() => {
-			clearTimeout(grace);
-			signalWorkSettled();
-		});
+		void finish(true, reason);
 	}
 	/** Pump the inner body and end production for each pump outcome. */
 	const pump = async (): Promise<void> => {

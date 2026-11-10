@@ -116,8 +116,10 @@ describe("mutation response production", () => {
 				);
 			});
 			const reader = response.body?.getReader();
-			// A native stream rejects the pending read when its consumer cancels.
-			const pending = reader?.read().catch(() => undefined);
+			// The native body rejects this pending consumer read when the consumer cancels.
+			const pending = expect(reader?.read()).rejects.toThrow(
+				"Stream was cancelled",
+			);
 			await entered.promise;
 			const cancellation = reader?.cancel();
 			try {

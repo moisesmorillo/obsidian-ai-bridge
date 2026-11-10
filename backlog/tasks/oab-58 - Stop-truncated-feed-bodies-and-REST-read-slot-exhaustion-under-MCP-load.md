@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-10T12:08:00Z'
-updated_date: '2026-11-10T16:00:00Z'
+updated_date: '2026-11-10T16:18:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -25,8 +25,8 @@ Production incident 2026-11-10 04:09Z, Worker 1.0.2, during a ChatGPT Linear mig
 - [x] #2 A regression first reproduces the production condition that holds all four REST read slots during MCP load, and the fix then keeps device reads admitted.
 - [x] #3 A body that the Worker stops at its lease deadline can never reach the plugin as a complete 200 JSON page; the plugin classifies a short or malformed body as a retryable transport failure.
 - [x] #4 The owner measurements page shows held read slots per pool (REST, MCP) and the route of the oldest held lease, so the next incident has evidence.
-- [x] #5 Spec sections that describe read admission, feed responses and measurements match the change. Protocol shapes stay unchanged.
-- [ ] #6 bun run check, task review and branch review pass before the pull request.
+- [x] #5 Spec sections that describe read admission, feed responses and measurements match the change. Sync and MCP protocol shapes stay unchanged; the only protocol change is additive optional owner measurement fields (owner approved 2026-11-10).
+- [x] #6 bun run check, task review and branch review pass before the pull request.
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -30,6 +30,7 @@ import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type {
 	LevelResult,
@@ -92,22 +93,51 @@ interface Options {
 	v8Flags: string;
 }
 
-/** Parse `--name value` options. */
+/** Read one option as a finite positive number, or throw naming the option. */
+function positive(
+	values: Map<string, string>,
+	name: string,
+	fallback: number,
+): number {
+	const raw = values.get(name);
+	const value = raw === undefined ? fallback : Number(raw);
+	if (!Number.isFinite(value) || value <= 0)
+		throw new Error(`--${name} must be a finite positive number`);
+	return value;
+}
+
+/**
+ * Parse `--name value` options. Numbers must be finite and positive, and workload names must exist
+ * in the `createWorkloads` catalog; otherwise the runner throws before it starts workerd.
+ */
 function parseOptions(argv: readonly string[]): Options {
 	const values = new Map<string, string>();
 	for (let index = 0; index < argv.length; index += 2)
 		values.set(String(argv[index]).replace(/^--/, ""), String(argv[index + 1]));
 	const out = values.get("out");
 	if (!out) throw new Error("--out <directory> is required");
+	const levels = (values.get("levels") ?? "1,4,8,12").split(",").map(Number);
+	if (levels.some((level) => !Number.isFinite(level) || level <= 0))
+		throw new Error("--levels must list finite positive numbers");
+	const known = new Set(
+		createWorkloads({
+			epoch: "",
+			largeNotes: ["catalog"],
+			blob: "catalog",
+		}).map((workload) => workload.name),
+	);
+	const workloads = values.get("workloads")?.split(",") ?? null;
+	const unknown = workloads?.find((name) => !known.has(name));
+	if (unknown !== undefined) throw new Error(`unknown workload: ${unknown}`);
 	return {
 		out: resolve(out),
-		port: Number(values.get("port") ?? 18_931),
-		inspectorPort: Number(values.get("inspector-port") ?? 19_931),
-		durationMs: Number(values.get("duration-ms") ?? 8_000),
-		levels: (values.get("levels") ?? "1,4,8,12").split(",").map(Number),
-		workloads: values.get("workloads")?.split(",") ?? null,
+		port: positive(values, "port", 18_931),
+		inspectorPort: positive(values, "inspector-port", 19_931),
+		durationMs: positive(values, "duration-ms", 8_000),
+		levels,
+		workloads,
 		stall: values.get("stall") !== "false",
-		stallHoldMs: Number(values.get("stall-hold-ms") ?? 125_000),
+		stallHoldMs: positive(values, "stall-hold-ms", 125_000),
 		v8Flags: values.get("v8-flags") ?? "--expose-gc",
 	};
 }
@@ -115,10 +145,12 @@ function parseOptions(argv: readonly string[]): Options {
 /** Resolve the Wrangler entry used by the Workers test pool; its workerd supports the prod flag. */
 function wranglerEntry(): string {
 	const pluginManifest = realpathSync(
-		new URL(
-			"../../node_modules/@cloudflare/vitest-plugin/package.json",
-			import.meta.url,
-		).pathname,
+		fileURLToPath(
+			new URL(
+				"../../node_modules/@cloudflare/vitest-plugin/package.json",
+				import.meta.url,
+			),
+		),
 	);
 	return createRequire(pluginManifest).resolve("wrangler");
 }
@@ -175,10 +207,15 @@ interface MiniflareInstance {
 
 /** Started local runtime and its identifying versions. */
 interface LocalRuntime {
+	/** Running Miniflare instance that owns the workerd process. */
 	readonly miniflare: MiniflareInstance;
+	/** Wrangler package version used for the dry-run bundle, from its package.json. */
 	readonly wrangler: string;
+	/** Miniflare package version that started workerd, from its package.json. */
 	readonly miniflareVersion: string;
+	/** Compatibility date from `wrangler.f2.jsonc`. */
 	readonly compatibilityDate: string;
+	/** Compatibility flags from `wrangler.f2.jsonc`. */
 	readonly compatibilityFlags: string[];
 }
 
@@ -193,8 +230,9 @@ async function startRuntime(
 	signer: AccessSigner,
 ): Promise<LocalRuntime> {
 	const wrangler = wranglerEntry();
-	const configPath = new URL("../../wrangler.f2.jsonc", import.meta.url)
-		.pathname;
+	const configPath = fileURLToPath(
+		new URL("../../wrangler.f2.jsonc", import.meta.url),
+	);
 	const bundle = join(options.out, "bundle");
 	await run(
 		process.execPath,
@@ -275,6 +313,19 @@ async function startRuntime(
 	};
 }
 
+/**
+ * Throw when one OAuth step returns an unexpected status. The message names the step and status
+ * only; it never includes the response body, code, or token.
+ */
+function requireStatus(
+	step: string,
+	response: Response,
+	expected: number,
+): void {
+	if (response.status !== expected)
+		throw new Error(`OAuth ${step} returned ${response.status}`);
+}
+
 /** Issue one access token through the real dynamic registration, Access consent, and PKCE flow. */
 async function issueToken(base: string, signer: AccessSigner): Promise<string> {
 	const scope = "vault:read vault:write vault:delete";
@@ -289,6 +340,7 @@ async function issueToken(base: string, signer: AccessSigner): Promise<string> {
 			token_endpoint_auth_method: "none",
 		}),
 	});
+	requireStatus("registration", registration, 201);
 	const { client_id: clientId } = (await registration.json()) as {
 		client_id: string;
 	};
@@ -312,6 +364,7 @@ async function issueToken(base: string, signer: AccessSigner): Promise<string> {
 	const consent = await fetch(`${base}/authorize?${query}`, {
 		headers: { "Cf-Access-Jwt-Assertion": assertion },
 	});
+	requireStatus("consent page", consent, 200);
 	const cookie = consent.headers.get("set-cookie")?.split(";")[0] ?? "";
 	const handle =
 		(await consent.text()).match(/name="handle" value="([^"]+)"/)?.[1] ?? "";
@@ -329,6 +382,7 @@ async function issueToken(base: string, signer: AccessSigner): Promise<string> {
 			...scope.split(" ").map((value): [string, string] => ["scope", value]),
 		]),
 	});
+	requireStatus("consent approval", approval, 302);
 	const code =
 		new URL(
 			approval.headers.get("location") ?? "https://invalid/",
@@ -345,7 +399,7 @@ async function issueToken(base: string, signer: AccessSigner): Promise<string> {
 			resource: SERVICE_ORIGIN,
 		}),
 	});
-	if (token.status !== 200) throw new Error(`token returned ${token.status}`);
+	requireStatus("token exchange", token, 200);
 	return ((await token.json()) as { access_token: string }).access_token;
 }
 
@@ -367,6 +421,7 @@ async function workerdPid(): Promise<number> {
 
 /** One `Runtime.getHeapUsage` reading, in bytes, tagged with wall-clock milliseconds. */
 interface HeapSample {
+	/** Sample time, in Unix milliseconds from the runner clock. */
 	t: number;
 	/** V8 heap bytes in use, including garbage not yet collected. */
 	used: number;
@@ -380,8 +435,11 @@ interface HeapSample {
 
 /** Sample series tagged with wall-clock milliseconds. */
 interface Samples {
+	/** Heap readings per isolate from `Runtime.getHeapUsage`. */
 	heap: Record<IsolateName, HeapSample[]>;
+	/** workerd process RSS from `ps`, in bytes, with Unix-millisecond time. */
 	rss: { t: number; bytes: number }[];
+	/** `worker_isolate` snapshots from `/owner/measurements`, with Unix-millisecond time. */
 	app: { t: number; isolate: Record<string, unknown> }[];
 }
 
@@ -531,18 +589,23 @@ function startSamplers(
 
 /** Heap peaks of one isolate inside one window, in bytes. */
 interface IsolatePeaks {
+	/** Peak V8 heap bytes in use (`usedSize`), including uncollected garbage. */
 	used: number;
+	/** Peak V8 committed heap bytes (`totalSize`). */
 	total: number;
 	/** Peak ArrayBuffer backing-store bytes outside the JS heap. */
 	backing: number;
 	/** Peak of committed heap plus backing stores in one sample; the closest isolate-memory proxy. */
 	isolate: number;
+	/** Number of heap samples inside the window. */
 	samples: number;
 }
 
 /** Peaks inside one time window. */
 interface WindowPeaks {
+	/** Heap peaks per isolate. */
 	heap: Record<IsolateName, IsolatePeaks>;
+	/** Peak workerd process RSS from `ps`, in bytes. */
 	rss: number;
 	/**
 	 * RSS minus the committed heaps of both user isolates at the samples nearest the RSS peak. It
@@ -550,10 +613,15 @@ interface WindowPeaks {
 	 * Miniflare internal Workers.
 	 */
 	nativeAtRssPeak: number;
+	/** Peak reserved REST read bytes from owner measurements (`rest_read_bytes`). */
 	restReadBytes: number;
+	/** Peak reserved shared-pool bytes from owner measurements (`shared_bytes`). */
 	sharedBytes: number;
+	/** Peak held REST leases from owner measurements (`held_rest_slots`), a count. */
 	heldRest: number;
+	/** Peak held MCP leases from owner measurements (`held_mcp_slots`), a count. */
 	heldMcp: number;
+	/** Number of `ps` RSS samples inside the window. */
 	rssSamples: number;
 }
 

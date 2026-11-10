@@ -4,7 +4,8 @@
  * This module uses only Web platform APIs (`fetch`, streams, `crypto.subtle`, `TextEncoder`), so the
  * same workload definitions can run from Node against local workerd or from another client that can
  * supply a streaming `fetch` and a bearer token. It never reads credentials itself and never prints
- * response content. Every path it creates lives under {@link LOADTEST_PREFIX}.
+ * response content. Every path it creates lives under {@link LOADTEST_PREFIX}. A driver must run
+ * {@link deleteLoadtestFiles} in a `finally` block after {@link seedFixtures}.
  */
 
 /** Folder that holds every file the profile seeds or uploads; cleanup deletes only this prefix. */
@@ -682,7 +683,11 @@ async function retryRefusals(
 		)
 			return response;
 		await drain(response);
-		await sleep(Number(response.headers.get("retry-after") ?? 2) * 1_000);
+		const header = response.headers.get("retry-after");
+		const seconds = header === null ? Number.NaN : Number(header);
+		await sleep(
+			(Number.isFinite(seconds) && seconds >= 0 ? seconds : 2) * 1_000,
+		);
 	}
 }
 
@@ -696,6 +701,8 @@ interface ManifestEntry {
 /**
  * Delete every live file under {@link LOADTEST_PREFIX} with `If-Match` on its observed ETag. Returns
  * the number of 2xx deletes and the non-2xx statuses. Blob bytes stay in R2 until blob GC.
+ * Production drivers must call it in a `finally` block around seeding and workloads, so a failed or
+ * interrupted run still removes its files.
  */
 export async function deleteLoadtestFiles(
 	target: ProfileTarget,

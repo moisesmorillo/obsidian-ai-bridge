@@ -373,6 +373,149 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it("moves a queued unsent create to the destination path without remote rename", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		vault.files.set("source.md", "new note");
+		await controller.observe({ type: "create", path: "source.md" });
+		vault.files.delete("source.md");
+		vault.files.set("target.md", "new note");
+		await controller.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+		expect(journal.snapshot().pending_ops[0]).toMatchObject({
+			op: "put",
+			path: "target.md",
+			state: "queued",
+			precondition: { kind: "absent" },
+		});
+		const pending = journal.snapshot().pending_ops[0];
+		expect(
+			new TextDecoder().decode(
+				await journal.readPayload(
+					pending?.payload_ref ?? "",
+					pending?.payload_hash ?? "",
+				),
+			),
+		).toBe("new note");
+		expect(journal.snapshot().attention).toEqual([]);
+		await controller.flush();
+		expect(remote.writes.map(({ path, text }) => ({ path, text }))).toEqual([
+			{ path: "target.md", text: "new note" },
+		]);
+		expect(remote.deletes).toEqual([]);
+		expect(remote.renames).toEqual([]);
+		controller.close();
+	});
+
+	it("keeps the newest destination edit after moving an unsent create", async () => {
+		const { controller, journal, vault } = await openController();
+		vault.files.set("source.md", "initial");
+		await controller.observe({ type: "create", path: "source.md" });
+		vault.files.delete("source.md");
+		vault.files.set("target.md", "moved then edited");
+		await controller.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+		await controller.observe({ type: "modify", path: "target.md" });
+
+		const pending = journal.snapshot().pending_ops;
+		expect(pending).toHaveLength(1);
+		expect(pending[0]).toMatchObject({ op: "put", path: "target.md" });
+		expect(
+			await journal.readPayload(
+				pending[0]?.payload_ref ?? "",
+				pending[0]?.payload_hash ?? "",
+			),
+		).toEqual(new TextEncoder().encode("moved then edited"));
+		controller.close();
+	});
+
+	it("retires a redundant source create when destination work already owns the bytes", async () => {
+		const { controller, journal, vault } = await openController();
+		vault.files.set("source.md", "source bytes");
+		await controller.observe({ type: "create", path: "source.md" });
+		vault.files.set("target.md", "destination bytes");
+		await controller.observe({ type: "create", path: "target.md" });
+		vault.files.delete("source.md");
+		await controller.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+		expect(journal.snapshot().pending_ops[0]).toMatchObject({
+			op: "put",
+			path: "target.md",
+		});
+		expect(
+			await journal.readPayload(
+				journal.snapshot().pending_ops[0]?.payload_ref ?? "",
+				journal.snapshot().pending_ops[0]?.payload_hash ?? "",
+			),
+		).toEqual(new TextEncoder().encode("destination bytes"));
+		controller.close();
+	});
+
+	it("moves an empty unsent create as valid destination content", async () => {
+		const { controller, journal, vault, remote } = await openController();
+		vault.files.set("Untitled.md", "");
+		await controller.observe({ type: "create", path: "Untitled.md" });
+		vault.files.delete("Untitled.md");
+		vault.files.set("named.md", "");
+		await controller.observe({
+			type: "rename",
+			path: "Untitled.md",
+			to: "named.md",
+		});
+
+		expect(journal.snapshot().pending_ops).toMatchObject([
+			{
+				op: "put",
+				path: "named.md",
+				state: "queued",
+				payload_hash: await digestText(""),
+			},
+		]);
+		expect(journal.snapshot().attention).toEqual([]);
+		expect(remote.deletes).toEqual([]);
+		expect(remote.renames).toEqual([]);
+		controller.close();
+	});
+
+	it("keeps a sent create identity and payload immutable after a local rename", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		vault.files.set("source.md", "sent bytes");
+		await controller.observe({ type: "create", path: "source.md" });
+		remote.failure = new Error("response uncertain");
+		await controller.flush();
+		const sent = structuredClone(journal.snapshot().pending_ops[0]);
+		vault.files.delete("source.md");
+		vault.files.set("target.md", "sent bytes");
+		await controller.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+
+		expect(journal.snapshot().pending_ops[0]).toEqual(sent);
+		expect(
+			await journal.readPayload(
+				sent?.payload_ref ?? "",
+				sent?.payload_hash ?? "",
+			),
+		).toEqual(new TextEncoder().encode("sent bytes"));
+		expect(remote.deletes).toEqual([]);
+		expect(remote.renames).toEqual([]);
+		controller.close();
+	});
+
 	it("publishes first-enable settings as absent-precondition creates and holds disabled categories", async () => {
 		const policy: SettingsSyncPolicy = {
 			enabled: true,

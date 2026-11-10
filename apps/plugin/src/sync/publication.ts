@@ -409,6 +409,43 @@ export class PublicationController {
 				}
 				return;
 			}
+			if (parsed.type === "rename" && !base) {
+				const queuedCreate = state.pending_ops.find(
+					(item) =>
+						item.op === "put" &&
+						item.path === parsed.path &&
+						item.state === "queued" &&
+						item.precondition.kind === "absent",
+				);
+				const unresolvedSourcePut = state.pending_ops.some(
+					(item) =>
+						item.op === "put" &&
+						item.path === parsed.path &&
+						item.state !== "resolved" &&
+						item.state !== "queued",
+				);
+				if (queuedCreate && !unresolvedSourcePut) {
+					const destinationBytes = await this.vault.read(parsed.to);
+					this.assertOpen();
+					if (destinationBytes === null) return;
+					const destinationPut = state.pending_ops.some(
+						(item) => item.op === "put" && item.path === parsed.to,
+					);
+					if (destinationPut)
+						await this.journal.discardQueued(queuedCreate.key);
+					else
+						await this.journal.relocateQueuedCreate(
+							queuedCreate.key,
+							{
+								op: "put",
+								path: parsed.to,
+								precondition: { kind: "absent" },
+							},
+							new TextEncoder().encode(destinationBytes),
+						);
+					return;
+				}
+			}
 			if (!base || base.deleted || !state.epoch) return;
 			const precondition = {
 				kind: "match" as const,

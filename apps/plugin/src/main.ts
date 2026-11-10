@@ -274,7 +274,7 @@ export default class VaultwirePlugin extends Plugin {
 						this.runSyncAction(() => this.resumeSync());
 					},
 					reconnect: () => {
-						void this.session?.connect().catch(() => undefined);
+						void this.settingsTab?.startConnection();
 					},
 					openPath: (path) => {
 						void this.openAttentionPath(path);

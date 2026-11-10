@@ -283,7 +283,7 @@ function createTab() {
 	};
 	let status: "connected" | "disconnected" = "connected";
 	let authorizationUrl: string | null = "https://auth.test/consent";
-	const session = {
+	let session = {
 		connect: vi.fn().mockResolvedValue("https://auth.test/consent"),
 		getAuthorizationUrl: vi.fn(() => authorizationUrl),
 		cancel: vi.fn(() => {
@@ -361,6 +361,9 @@ function createTab() {
 		},
 		setAuthorizationUrl: (value: string | null) => {
 			authorizationUrl = value;
+		},
+		setSession: (value: DeviceSession) => {
+			session = value;
 		},
 	};
 }
@@ -591,6 +594,60 @@ describe("VaultwireSettingTab", () => {
 		test.setAuthorizationUrl(null);
 		test.tab.refreshStatus();
 		expect(message.textContent).toBe("");
+	});
+
+	it("starts authorization from the shared action without a Connect button", async () => {
+		const test = createTab();
+		test.setAuthorizationUrl(null);
+		vi.mocked(test.session.connect).mockImplementationOnce(async () => {
+			test.setAuthorizationUrl("https://auth.test/reconnect");
+			return "https://auth.test/reconnect";
+		});
+		await (
+			test.tab as unknown as {
+				/** Invokes the public shared connection action without a button. */
+				startConnection(): Promise<void>;
+			}
+		).startConnection();
+		expect(test.session.connect).toHaveBeenCalledOnce();
+		expect(
+			host.elements.filter(
+				(element) =>
+					element.textContent === "Open authorization page" && !element.removed,
+			),
+		).toHaveLength(1);
+		expect(host.elements.map((element) => element.textContent)).toContain(
+			"Use Open authorization page to continue.",
+		);
+	});
+
+	it("ignores a pending result after the device session changes", async () => {
+		const test = createTab();
+		test.setAuthorizationUrl(null);
+		let resolveConnect!: (url: string) => void;
+		vi.mocked(test.session.connect).mockReturnValueOnce(
+			new Promise<string>((resolve) => {
+				resolveConnect = resolve;
+			}),
+		);
+		const click = host.controls[3]?.buttons[0]?.onClick?.();
+		const replacement = {
+			connect: vi.fn().mockResolvedValue("https://auth.test/replacement"),
+			getAuthorizationUrl: vi.fn(() => "https://auth.test/replacement"),
+			cancel: vi.fn(),
+		} as unknown as DeviceSession;
+		test.setSession(replacement);
+		resolveConnect("https://auth.test/obsolete");
+		await click;
+		expect(
+			host.elements.filter(
+				(element) =>
+					element.textContent === "Open authorization page" && !element.removed,
+			),
+		).toHaveLength(0);
+		expect(host.elements.map((element) => element.textContent)).not.toContain(
+			"Could not start device authorization",
+		);
 	});
 
 	it("shows desktop fallback text and restores the pending control after display", async () => {

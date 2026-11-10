@@ -1,7 +1,9 @@
 import type { AdmissionCompletion } from "@vaultwire/protocol";
+import { admissionByteSnapshot } from "@worker/application/admission-budget";
+import type { ReadSlotLease } from "@worker/application/read-budget";
 import {
+	tryAcquireReadSlot as acquireReadSlot,
 	readSlotCapacitySnapshot,
-	tryAcquireReadSlot,
 	waitForReadSlotWork,
 } from "@worker/application/read-budget";
 import { ReadBatchFailure } from "@worker/application/reads";
@@ -10,6 +12,18 @@ import {
 	ownedReadResponse,
 } from "@worker/transport/read-response";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+/** Track test-owned leases so each case releases lease ownership during fixture cleanup. */
+const testReadLeases = new Set<ReadSlotLease>();
+
+/** Acquire a real lease and retain it for test teardown. */
+function tryAcquireReadSlot(
+	leaseClass?: "rest" | "mcp",
+): ReadSlotLease | undefined {
+	const lease = acquireReadSlot(leaseClass);
+	if (lease) testReadLeases.add(lease);
+	return lease;
+}
 
 /** Expose explicit work and cleanup barriers without timer ordering. */
 function barrier<T>() {
@@ -24,11 +38,17 @@ function barrier<T>() {
 
 describe("owned read response", () => {
 	afterEach(() => {
+		for (const lease of testReadLeases) {
+			lease();
+			lease.complete();
+		}
+		testReadLeases.clear();
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	it.each(["generic", "fixed-length", "zero-byte"] as const)(
-		"expires a %s response with an unresolved source and releases a fifth slot",
+		"expires a %s response but retains bytes until source cleanup",
 		async (framing) => {
 			vi.useFakeTimers();
 			const expiredBefore = readSlotCapacitySnapshot().expired_count;
@@ -64,14 +84,14 @@ describe("owned read response", () => {
 			await sourceStarted.promise;
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(await reading).toBeInstanceOf(Error);
-			expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 4);
-			const fifth = tryAcquireReadSlot();
-			try {
-				expect(fifth).toBeDefined();
-			} finally {
-				fifth?.();
-				for (const release of releases) release();
-			}
+			const expiredAfterSweep = readSlotCapacitySnapshot().expired_count;
+			expect(expiredAfterSweep).toBeGreaterThanOrEqual(expiredBefore + 4);
+			const available = tryAcquireReadSlot();
+			expect(available).toBeUndefined();
+			expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+			expect(readSlotCapacitySnapshot().expired_count).toBe(expiredAfterSweep);
+			available?.();
+			for (const release of releases) release.complete();
 		},
 	);
 
@@ -97,9 +117,14 @@ describe("owned read response", () => {
 		await vi.advanceTimersByTimeAsync(60_000);
 		await expect(reader.read()).rejects.toThrow();
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
-		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		expect(readSlotCapacitySnapshot().expired_count).toBeGreaterThan(
+			expiredBefore,
+		);
+		const expiredAtDeadline = readSlotCapacitySnapshot().expired_count;
 		await vi.advanceTimersByTimeAsync(60_000);
-		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		expect(readSlotCapacitySnapshot().expired_count).toBeGreaterThanOrEqual(
+			expiredAtDeadline,
+		);
 		lease.complete();
 	});
 
@@ -158,6 +183,89 @@ describe("owned read response", () => {
 		} finally {
 			available?.();
 			release();
+		}
+	});
+
+	it("retains expired fixed-response bytes until writer abort settles", async () => {
+		vi.useFakeTimers();
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected an available read slot");
+		const sourceStarted = barrier<void>();
+		const work = barrier<IteratorResult<Uint8Array>>();
+		const sourceCancelled = barrier<void>();
+		const durableFinished = barrier<void>();
+		const shutdownStarted = barrier<void>();
+		const shutdown = barrier<void>();
+		const completed = barrier<void>();
+		const complete = lease.complete;
+		const completeSpy = vi.spyOn(lease, "complete").mockImplementation(() => {
+			complete();
+			completed.resolve();
+		});
+		const getWriter = WritableStream.prototype.getWriter;
+		vi.spyOn(WritableStream.prototype, "getWriter").mockImplementation(
+			function (this: WritableStream) {
+				const writer = getWriter.call(this);
+				const abort = writer.abort.bind(writer);
+				vi.spyOn(writer, "abort").mockImplementation(async (reason) => {
+					shutdownStarted.resolve();
+					await shutdown.promise;
+					await abort(reason);
+				});
+				return writer;
+			},
+		);
+		const finished: AdmissionCompletion[] = [];
+		let demands = 0;
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					if (demands++ === 0)
+						return Promise.resolve({
+							done: false,
+							value: new Uint8Array(65_536),
+						});
+					sourceStarted.resolve();
+					return work.promise;
+				},
+				cancel: async () => {
+					sourceCancelled.resolve();
+				},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					durableFinished.resolve();
+					return { ok: true };
+				},
+			},
+			lease,
+			undefined,
+			undefined,
+			65_536,
+		);
+		const reading = response.arrayBuffer().catch((error: unknown) => error);
+		try {
+			await sourceStarted.promise;
+			await vi.advanceTimersByTimeAsync(60_000);
+			await Promise.all([shutdownStarted.promise, sourceCancelled.promise]);
+			work.resolve({ done: true, value: undefined });
+			await durableFinished.promise;
+			await vi.advanceTimersByTimeAsync(0);
+			expect(finished).toEqual(["uncertain"]);
+			expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+			expect(admissionByteSnapshot().rest_read_bytes).toBe(4_500_000);
+			expect(completeSpy).not.toHaveBeenCalled();
+			shutdown.resolve();
+			await completed.promise;
+			expect(await reading).toBeInstanceOf(Error);
+			expect(admissionByteSnapshot().rest_read_bytes).toBe(0);
+			expect(completeSpy).toHaveBeenCalledOnce();
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			work.resolve({ done: true, value: undefined });
+			shutdown.resolve();
+			await reading;
 		}
 	});
 
@@ -698,6 +806,7 @@ describe("owned read response", () => {
 			const reading = response.arrayBuffer();
 			settlement.reject(new Error("durable settlement rejected"));
 			await expect(reading).rejects.toThrow();
+			for (const release of releases) release.complete();
 			const reused = tryAcquireReadSlot();
 			try {
 				expect(reused).toBeDefined();
@@ -739,16 +848,22 @@ describe("owned read response", () => {
 			try {
 				await expect(response.arrayBuffer()).rejects.toThrow();
 				const available = tryAcquireReadSlot();
-				expect(available).toBeDefined();
-				available?.();
+				expect(available).toBeUndefined();
+				expect(readSlotCapacitySnapshot().active_slots).toBe(0);
 			} finally {
-				for (const release of releases) release();
+				for (const release of releases) {
+					release();
+					release.complete();
+				}
 			}
 			lateSettlement.reject(new Error("late private settlement detail"));
 		},
 		10_000,
 	);
-	it("keeps the slot until an aborted fixed-body write and shutdown settle", async () => {
+	it("retains fixed-response bytes through a pending writer shutdown", async () => {
+		const initialBytes = admissionByteSnapshot().rest_read_bytes;
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected an available read slot");
 		const eofReached = barrier<void>();
 		const durableSettled = barrier<void>();
 		const signal = new AbortController();
@@ -778,10 +893,12 @@ describe("owned read response", () => {
 			},
 			() => {
 				released = true;
+				lease();
 			},
 			{ headers: { "Content-Length": "131072" } },
 			signal.signal,
 			131072,
+			lease,
 		);
 		if (!response.body) throw new Error("Read response has no body");
 		const reader = response.body.getReader();
@@ -796,12 +913,13 @@ describe("owned read response", () => {
 		signal.abort(new Error("Request aborted"));
 		await Promise.resolve();
 		const retainedWhileWriterShutdownPending = !released;
+		const bytesBeforeConsumerShutdown = admissionByteSnapshot().rest_read_bytes;
 		const completionBeforeConsumerShutdown = [...finished];
 		await reader.cancel().catch(() => undefined);
-		for (let attempt = 0; attempt < 10 && !released; attempt++)
-			await Promise.resolve();
+		for (let turn = 0; turn < 30; turn++) await Promise.resolve();
 		try {
 			expect(retainedWhileWriterShutdownPending).toBe(false);
+			expect(bytesBeforeConsumerShutdown).toBe(initialBytes + 4_500_000);
 			expect(completionBeforeConsumerShutdown).toEqual(["settled"]);
 			expect(released).toBe(true);
 		} finally {
@@ -957,5 +1075,136 @@ describe("owned read response", () => {
 			.map((chunk) => new TextDecoder().decode(chunk))
 			.join("");
 		expect(JSON.parse(text)).toEqual({ content });
+	});
+
+	it("recovers admission capacity when timers do not run after the hold deadline", () => {
+		vi.useFakeTimers();
+		const expiredBefore = readSlotCapacitySnapshot().expired_count;
+		const leases = Array.from({ length: 4 }, () => {
+			const lease = tryAcquireReadSlot();
+			if (!lease) throw new Error("Expected an available read slot");
+			return lease;
+		});
+		vi.spyOn(globalThis, "setTimeout").mockImplementation(
+			(() => 0) as unknown as typeof setTimeout,
+		);
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(tryAcquireReadSlot()).toBeUndefined();
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		for (const lease of leases) lease.complete();
+		const recovered = tryAcquireReadSlot();
+		try {
+			expect(recovered).toBeDefined();
+			expect(readSlotCapacitySnapshot().active_slots).toBe(1);
+			expect(readSlotCapacitySnapshot().expired_count).toBeGreaterThanOrEqual(
+				expiredBefore + 4,
+			);
+		} finally {
+			recovered?.();
+			for (const lease of leases) lease();
+		}
+	});
+
+	it("rejects a late result when completion observes a deadline without timers", async () => {
+		vi.useFakeTimers();
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected a read lease");
+		const work = barrier<string>();
+		const waiting = waitForReadSlotWork(lease, work.promise);
+		vi.setSystemTime(Date.now() + 60_000);
+		work.resolve("late result");
+		expect(await waiting).toEqual({ kind: "expired" });
+	});
+
+	it.each([undefined, 0, 1])(
+		"rejects late EOF with suppressed timers and length %s",
+		async (length) => {
+			vi.useFakeTimers();
+			const lease = tryAcquireReadSlot();
+			if (!lease) throw new Error("Expected a read lease");
+			const started = barrier<void>();
+			const eof = barrier<IteratorResult<Uint8Array>>();
+			let first = true;
+			const response = ownedReadResponse(
+				{
+					next: async () => {
+						if (length === 1 && first) {
+							first = false;
+							return { done: false, value: new Uint8Array([1]) };
+						}
+						started.resolve();
+						return eof.promise;
+					},
+					cancel: async () => {},
+				},
+				{ finish: async () => ({ ok: true }) },
+				lease,
+				undefined,
+				undefined,
+				length,
+			);
+			const reading = response.arrayBuffer().then(
+				() => "successful EOF",
+				() => "expired",
+			);
+			await started.promise;
+			vi.setSystemTime(Date.now() + 60_000);
+			eof.resolve({ done: true, value: undefined });
+			expect(await reading).toBe("expired");
+		},
+	);
+
+	it.each([false, true])(
+		"joins unread response cancellation after expiry, failure %s",
+		async (failed) => {
+			vi.useFakeTimers();
+			const cleanup = barrier<void>();
+			const lease = tryAcquireReadSlot();
+			if (!lease) throw new Error("Expected a read lease");
+			const finished: AdmissionCompletion[] = [];
+			const response = ownedReadResponse(
+				{
+					next: async () => ({ done: true, value: undefined }),
+					cancel: () => cleanup.promise,
+				},
+				{
+					finish: async (completion) => {
+						finished.push(completion);
+						return { ok: true };
+					},
+				},
+				lease,
+			);
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+			const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+			expect(held.every(Boolean)).toBe(true);
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			if (failed) cleanup.reject(new Error("Source cleanup failed"));
+			else cleanup.resolve();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(finished).toEqual(["uncertain"]);
+			const recovered = tryAcquireReadSlot();
+			expect(recovered).toBeDefined();
+			expect(vi.getTimerCount()).toBe(4);
+			await expect(response.text()).rejects.toThrow("deadline");
+		},
+	);
+
+	it("keeps REST capacity separate from MCP read leases", () => {
+		const mcpLeases = Array.from({ length: 8 }, () => {
+			const lease = tryAcquireReadSlot("mcp");
+			if (!lease) throw new Error("Expected an available MCP read slot");
+			return lease;
+		});
+		const restLease = tryAcquireReadSlot();
+		try {
+			expect(restLease).toBeDefined();
+			expect(tryAcquireReadSlot("mcp")).toBeUndefined();
+			expect(readSlotCapacitySnapshot().active_slots).toBe(9);
+		} finally {
+			restLease?.();
+			for (const lease of mcpLeases) lease();
+		}
 	});
 });

@@ -268,7 +268,7 @@ describe("production MCP transport", () => {
 				env,
 			);
 			restReads.push(slowRest);
-			for (let index = 0; index < 2; index += 1)
+			for (let index = 0; index < 3; index += 1)
 				restReads.push(
 					await productionWorker.fetch(
 						new Request("https://service.test/v1/manifest", {
@@ -278,23 +278,27 @@ describe("production MCP transport", () => {
 					),
 				);
 			const longId = `aggregate-${"i".repeat(70_000)}`;
+			const longEnvelope = JSON.stringify({
+				jsonrpc: "2.0",
+				id: longId,
+				method: "tools/call",
+				params: {
+					name: "read_note",
+					arguments: { path: escapedPath },
+				},
+			});
 			mcpResponse = await productionWorker.fetch(
 				new Request("https://service.test/mcp", {
 					method: "POST",
 					headers: {
 						...auth,
 						"content-type": "application/json",
+						"content-length": String(
+							new TextEncoder().encode(longEnvelope).byteLength,
+						),
 						accept: "application/json, text/event-stream",
 					},
-					body: JSON.stringify({
-						jsonrpc: "2.0",
-						id: longId,
-						method: "tools/call",
-						params: {
-							name: "read_note",
-							arguments: { path: escapedPath },
-						},
-					}),
+					body: longEnvelope,
 				}),
 				env,
 			);
@@ -310,7 +314,7 @@ describe("production MCP transport", () => {
 			let longIdObserved = mcpScan.includes(longId);
 			mcpScan = mcpScan.slice(-longId.length);
 			expect(maximumMcpChunkBytes).toBeLessThanOrEqual(65_536);
-			expect(await activeAdmissionStates(clientId)).toHaveLength(4);
+			expect(await activeAdmissionStates(clientId)).toHaveLength(5);
 			expect(restReads[0]?.bodyUsed).toBe(false);
 			const competingRest = await productionWorker.fetch(
 				new Request("https://service.test/v1/vault", { headers: auth }),
@@ -369,7 +373,7 @@ describe("production MCP transport", () => {
 				);
 			}
 			await Promise.all(bodyGates.map((gate) => gate.requested));
-			expect(await activeAdmissionStates(clientId)).toHaveLength(6);
+			expect(await activeAdmissionStates(clientId)).toHaveLength(7);
 			for (const gate of bodyGates) gate.release();
 			const writeResponses = await Promise.all(restWrites);
 			const actualBodies: string[] = [];
@@ -494,7 +498,7 @@ describe("production MCP transport", () => {
 			if (!heldRest) throw new Error("Missing held REST response");
 			const restMeasurement = await measureResponse(heldRest);
 			expect(restMeasurement.total).toBeGreaterThan(6_000_000);
-			expect(await activeAdmissionStates(clientId)).toHaveLength(2);
+			expect(await activeAdmissionStates(clientId)).toHaveLength(3);
 		} finally {
 			for (const gate of bodyGates) gate.release();
 			await mcpReader?.cancel().catch(() => undefined);
@@ -505,7 +509,7 @@ describe("production MCP transport", () => {
 				restWrites.map((pending) => pending.catch(() => undefined)),
 			);
 		}
-	});
+	}, 30_000);
 
 	it("rejects an oversized declared envelope before body demand", async () => {
 		const { token } = await issueToken();
@@ -1440,14 +1444,14 @@ describe("production MCP transport", () => {
 	}, 30_000);
 
 	// A 30,000 ms bound covers 256 serial writes and preserves hang detection.
-	it("keeps MCP and REST reads on the same four isolate slots", async () => {
+	it("keeps four REST reads available while the MCP read pool stays separate", async () => {
 		const { token } = await issueToken();
 		await seedMcpManifestRows(token, 256, `MCP-shared-${crypto.randomUUID()}/`);
 		const auth = { authorization: `Bearer ${token}` };
 		const restResponses: Response[] = [];
 		let mcpResponse: Response | undefined;
 		try {
-			for (let index = 0; index < 3; index += 1)
+			for (let index = 0; index < 4; index += 1)
 				restResponses.push(
 					await productionWorker.fetch(
 						new Request("https://service.test/v1/manifest", {

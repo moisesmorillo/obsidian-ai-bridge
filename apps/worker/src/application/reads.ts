@@ -106,6 +106,22 @@ export type ReadOutcome<T> =
 			settle?: ReadAdmissionSettlement;
 	  };
 
+/** Discard late read data. Cancel successful sources and mark their durable result uncertain. */
+export async function discardReadOutcome<T>(
+	outcome: ReadOutcome<T>,
+	cancel?: (body: T) => Promise<void>,
+): Promise<void> {
+	if (!outcome.ok) {
+		if (outcome.settle) await settleReadAdmission(outcome.settle);
+		return;
+	}
+	try {
+		await cancel?.(outcome.body);
+	} finally {
+		await settleReadAdmission(() => outcome.finish("uncertain"));
+	}
+}
+
 /** One deadline for every response and preparation settlement path. */
 const READ_SETTLEMENT_DEADLINE_MS = 5_000;
 

@@ -9,13 +9,17 @@ import {
 	SearchRequestSchema,
 	searchQueryFailure,
 } from "@vaultwire/protocol";
+import { LOCAL_ADMISSION_RETRY_SECONDS } from "@worker/application/admission-budget";
 import {
 	tryAcquireReadSlot,
 	waitForReadSlotWork,
 } from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import type { ReadOutcome } from "@worker/application/reads";
-import { settleReadAdmission } from "@worker/application/reads";
+import {
+	discardReadOutcome,
+	settleReadAdmission,
+} from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import { readSearch } from "@worker/application/search";
 import type { Env } from "@worker/env";
@@ -43,7 +47,7 @@ export function createSearchRouter(
 		if (!release)
 			return failureResponse({
 				kind: "admission_limited",
-				retry_after_seconds: 1,
+				retry_after_seconds: LOCAL_ADMISSION_RETRY_SECONDS,
 			});
 		let outcome: ReadOutcome<SearchResult>;
 		try {
@@ -55,6 +59,7 @@ export function createSearchRouter(
 					parsed.request,
 					context.req.raw.signal,
 				),
+				discardReadOutcome,
 			);
 			if (result.kind === "expired")
 				return failureResponse({ kind: "internal_error" });

@@ -598,7 +598,7 @@ describe("real HTTP recovery and server acceptance", () => {
 				]) {
 					const refused = await testWorker.fetch(new Request(route), env);
 					expect(refused.status).toBe(429);
-					expect(refused.headers.get("Retry-After")).toBe("1");
+					expect(refused.headers.get("Retry-After")).toBe("2");
 					await refused.text();
 				}
 			} finally {

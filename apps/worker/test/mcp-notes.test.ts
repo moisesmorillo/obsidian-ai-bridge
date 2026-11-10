@@ -1,7 +1,7 @@
 import type { AuthorizationContext } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import { readMcpNote } from "@worker/application/mcp-notes";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import { acquireTestReadSlot as tryAcquireReadSlot } from "@worker/test-fixtures/read-slot";
 import { describe, expect, it } from "vitest";
 
 /** Hold started storage work until a test releases its completion barrier. */

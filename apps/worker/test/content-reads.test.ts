@@ -3,8 +3,9 @@ import type {
 	AuthorizationContext,
 } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import type { TextVaultGateway } from "@worker/application/text-files";
+import { acquireTestReadSlot as tryAcquireReadSlot } from "@worker/test-fixtures/read-slot";
 import { readContentResponse } from "@worker/transport/content-reads";
 import { describe, expect, it } from "vitest";
 
@@ -353,9 +354,8 @@ describe("content read ownership", () => {
 		expect(finished).toEqual([]);
 		cancellation.resolve();
 		await finishing.promise;
-		const slotAfterSourceWork = tryAcquireReadSlot();
-		expect(slotAfterSourceWork).toBeTypeOf("function");
-		slotAfterSourceWork?.();
+		expect(readSlotCapacitySnapshot().active_slots).toBe(3);
+		expect(tryAcquireReadSlot()).toBeUndefined();
 		cleanup.resolve();
 		await expect(response.arrayBuffer()).rejects.toThrow();
 		const free = tryAcquireReadSlot();
@@ -468,13 +468,12 @@ describe("content read ownership", () => {
 		cancellation.resolve();
 		await cleanupStarted.promise;
 		expect(finished).toEqual(["settled"]);
-		const availableAfterSourceWork = tryAcquireReadSlot();
-		expect(availableAfterSourceWork).toBeTypeOf("function");
-		availableAfterSourceWork?.();
+		expect(readSlotCapacitySnapshot().active_slots).toBe(3);
+		expect(tryAcquireReadSlot()).toBeUndefined();
 		cleanup.resolve();
 		await read;
 		let free: (() => void) | undefined;
-		for (let attempt = 0; attempt < 10 && free === undefined; attempt++) {
+		for (let turn = 0; turn < 30 && free === undefined; turn++) {
 			await Promise.resolve();
 			free = tryAcquireReadSlot();
 		}
@@ -572,7 +571,7 @@ describe("content read ownership", () => {
 			expect(cancellationJoinedFirst).toBe(true);
 			expect(retainedDuringCancellation).toBe(true);
 			expect(uncertainBeforeRelease).toBe(true);
-			expect(retainedDuringCleanup).toBe(false);
+			expect(retainedDuringCleanup).toBe(true);
 			expect(finished).toEqual(["uncertain"]);
 			expect(free).toBeTypeOf("function");
 		} finally {

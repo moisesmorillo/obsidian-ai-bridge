@@ -13,6 +13,7 @@ import {
 	parseETag,
 	TextMutationDescriptorSchema,
 } from "@vaultwire/protocol";
+import type { AdmissionByteReservation } from "@worker/application/admission-budget";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import {
 	executeFileCommand,
@@ -128,6 +129,7 @@ export function createMcpNote(
 	identity: AuthorizationContext,
 	input: McpCreateNoteInput,
 	responseProduction: Promise<void>,
+	byteReservation?: AdmissionByteReservation,
 ) {
 	const descriptor = TextMutationDescriptorSchema.parse({
 		op: "put",
@@ -151,6 +153,7 @@ export function createMcpNote(
 				async () => prepareTextPayload(new TextEncoder().encode(input.content)),
 				undefined,
 				responseProduction,
+				byteReservation,
 			),
 	);
 }
@@ -161,6 +164,7 @@ export function updateMcpNote(
 	identity: AuthorizationContext,
 	input: McpUpdateNoteInput,
 	responseProduction: Promise<void>,
+	byteReservation?: AdmissionByteReservation,
 ) {
 	const epoch = parseETag(input.etag).epoch;
 	const descriptor = TextMutationDescriptorSchema.parse({
@@ -185,6 +189,7 @@ export function updateMcpNote(
 				async () => prepareTextPayload(new TextEncoder().encode(input.content)),
 				undefined,
 				responseProduction,
+				byteReservation,
 			),
 	);
 }
@@ -195,6 +200,7 @@ export function appendUnderHeadingMcpNote(
 	identity: AuthorizationContext,
 	input: AppendUnderHeadingRequest,
 	responseProduction: Promise<void>,
+	byteReservation?: AdmissionByteReservation,
 ) {
 	const epoch = parseETag(input.etag).epoch;
 	const descriptor = OperationDescriptorSchema.parse({
@@ -236,6 +242,7 @@ export function appendUnderHeadingMcpNote(
 				input.idempotency_key,
 				async () => command,
 				responseProduction,
+				byteReservation,
 			);
 		},
 	);
@@ -247,6 +254,7 @@ export function appendMcpNote(
 	identity: AuthorizationContext,
 	input: McpAppendToNoteInput,
 	responseProduction: Promise<void>,
+	byteReservation?: AdmissionByteReservation,
 ) {
 	const intent = {
 		op: "append" as const,
@@ -287,6 +295,7 @@ export function appendMcpNote(
 				input.idempotency_key,
 				async () => ({ ...command, content: prepared.content }),
 				responseProduction,
+				byteReservation,
 			);
 		},
 	);
@@ -332,6 +341,7 @@ export async function restoreMcpNote(
 	identity: AuthorizationContext,
 	input: McpRestoreNoteInput,
 	responseProduction: Promise<void>,
+	byteReservation?: AdmissionByteReservation,
 ): Promise<McpMutationOutcome> {
 	const current = parseETag(input.current_etag);
 	const source = parseETag(input.source_etag);
@@ -398,6 +408,7 @@ export async function restoreMcpNote(
 					};
 				},
 				responseProduction,
+				byteReservation,
 			),
 	);
 }

@@ -5,6 +5,7 @@ import type {
 	ManifestPage,
 } from "@vaultwire/protocol";
 import { encodeFileFailure, ReadQuerySchema } from "@vaultwire/protocol";
+import { LOCAL_ADMISSION_RETRY_SECONDS } from "@worker/application/admission-budget";
 import {
 	type ReadSlotLease,
 	tryAcquireReadSlot,
@@ -19,6 +20,7 @@ import type {
 	ReadVaultGateway,
 } from "@worker/application/reads";
 import {
+	discardReadOutcome,
 	openChangesRead,
 	openHistoryRead,
 	openManifestRead,
@@ -34,9 +36,6 @@ import {
 	ownedReadResponse,
 } from "@worker/transport/read-response";
 import { Hono } from "hono";
-
-/** Retry delay returned when all isolate read slots have owners. */
-const READ_RETRY_AFTER = "1";
 
 /** Remove the MCP-only update time before transport exposes public manifest rows. */
 function openPublicManifestRead(
@@ -230,6 +229,7 @@ async function produce<T>(
 		const result = await waitForReadSlotWork(
 			releaseSlot,
 			read(resolveVault(env, request), identity),
+			discardReadOutcome,
 		);
 		if (result.kind === "expired")
 			return failureResponse({ kind: "internal_error" });
@@ -272,6 +272,7 @@ async function produceLazy<T, M>(
 		const result = await waitForReadSlotWork(
 			releaseSlot,
 			read(resolveVault(env, request), identity),
+			(outcome) => discardReadOutcome(outcome, (session) => session.cancel()),
 		);
 		if (result.kind === "expired")
 			return failureResponse({ kind: "internal_error" });
@@ -296,7 +297,11 @@ async function produceLazy<T, M>(
 	const session = opened.body;
 	let first: ReadBatch<T>;
 	try {
-		const result = await waitForReadSlotWork(releaseSlot, session.readBatch());
+		const result = await waitForReadSlotWork(
+			releaseSlot,
+			session.readBatch(),
+			() => discardReadOutcome(opened, (session) => session.cancel()),
+		);
 		if (result.kind === "expired")
 			return failureResponse({ kind: "internal_error" });
 		first = result.value;
@@ -395,10 +400,10 @@ function failureResponse(failure: FileHttpFailureInput): Response {
 	});
 }
 
-/** Reject a fifth concurrent read without waiting or starting native data work. */
+/** Reject local REST admission before starting native data work. */
 function limitedResponse(): Response {
 	return failureResponse({
 		kind: "admission_limited",
-		retry_after_seconds: Number(READ_RETRY_AFTER),
+		retry_after_seconds: LOCAL_ADMISSION_RETRY_SECONDS,
 	});
 }

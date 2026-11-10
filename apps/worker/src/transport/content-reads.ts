@@ -4,6 +4,7 @@ import {
 	type TextReadRequest,
 } from "@vaultwire/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
+import { LOCAL_ADMISSION_RETRY_SECONDS } from "@worker/application/admission-budget";
 import type { BlobContentStore } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 import {
@@ -37,7 +38,7 @@ export async function readContentResponse(
 	if (!release)
 		return fileFailureResponse({
 			kind: "admission_limited",
-			retry_after_seconds: 1,
+			retry_after_seconds: LOCAL_ADMISSION_RETRY_SECONDS,
 		});
 	let ticket: string | undefined;
 	let cleanup: ReturnType<TextVaultGateway["finishAdmission"]> | undefined;
@@ -62,6 +63,12 @@ export async function readContentResponse(
 				payload_hash: EMPTY_PAYLOAD_HASH,
 				size: 0,
 			}),
+			async (begun) => {
+				if (begun.ok)
+					await settleReadAdmission(() =>
+						gateway.finishAdmission(identity, begun.ticket.id, "uncertain"),
+					);
+			},
 		);
 		if (begunResult.kind === "expired")
 			return fileFailureResponse({ kind: "internal_error" });
@@ -76,6 +83,7 @@ export async function readContentResponse(
 		const selectedResult = await waitForReadSlotWork(
 			release,
 			gateway.readText(identity, selection, ticket),
+			() => settleReadAdmission(() => finish("uncertain")),
 		);
 		if (selectedResult.kind === "expired")
 			return fileFailureResponse({ kind: "internal_error" });
@@ -103,6 +111,13 @@ export async function readContentResponse(
 					ticket,
 					request.signal,
 				),
+				async (response) => {
+					try {
+						await response.body?.cancel();
+					} finally {
+						await settleReadAdmission(() => finish("uncertain"));
+					}
+				},
 			);
 			if (responseResult.kind === "expired")
 				return fileFailureResponse({ kind: "internal_error" });

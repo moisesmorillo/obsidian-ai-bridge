@@ -40,6 +40,7 @@ import {
 	McpUpdateNoteInputSchema,
 	McpUpdateNoteToolSchema,
 } from "@vaultwire/protocol";
+import type { AdmissionByteReservation } from "@worker/application/admission-budget";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type {
 	McpMutationGateway,
@@ -196,6 +197,7 @@ export function createMcpServer(
 	resolveResponseProduction: () => void,
 	signal?: AbortSignal,
 	reportBoundaryFailure: (kind: string) => void = () => {},
+	admissionReservation?: AdmissionByteReservation,
 ): McpServer {
 	const server = new McpServer(
 		{ name: "vaultwire", version: "1.0.0" },
@@ -266,6 +268,7 @@ export function createMcpServer(
 						identity,
 						McpCreateNoteInputSchema.parse(input),
 						responseProduction,
+						admissionReservation,
 					),
 				true,
 			),
@@ -286,6 +289,7 @@ export function createMcpServer(
 					identity,
 					McpUpdateNoteInputSchema.parse(input),
 					responseProduction,
+					admissionReservation,
 				),
 			),
 	);
@@ -305,6 +309,7 @@ export function createMcpServer(
 					identity,
 					McpAppendToNoteInputSchema.parse(input),
 					responseProduction,
+					admissionReservation,
 				),
 			),
 	);
@@ -327,6 +332,7 @@ export function createMcpServer(
 					identity,
 					AppendUnderHeadingRequestSchema.parse(input),
 					responseProduction,
+					admissionReservation,
 				),
 			),
 	);
@@ -366,6 +372,7 @@ export function createMcpServer(
 					identity,
 					McpRestoreNoteInputSchema.parse(input),
 					responseProduction,
+					admissionReservation,
 				),
 			),
 	);

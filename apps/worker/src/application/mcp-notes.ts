@@ -329,7 +329,10 @@ export async function readMcpNote(
 	return { ...outcome, owner };
 }
 
-/** Stream immutable UTF-8 bytes and retain only one bounded UTF-16 fragment. */
+/**
+ * Stream immutable UTF-8 bytes and retain only one bounded UTF-16 fragment.
+ * Join the first native cancellation before response ownership can transfer.
+ */
 async function readBlobTextFragment(
 	store: BlobContentStore,
 	hash: string,
@@ -345,9 +348,11 @@ async function readBlobTextFragment(
 	const end = offset + length;
 	let total = 0;
 	let selected = "";
-	/** Cancel pending R2 reader work when this MCP operation aborts. */
+	let cancellation: Promise<void> | undefined;
+	/** Retain the first native cancellation promise until blob cleanup settles. */
 	const abortRead = () => {
-		void reader.cancel(signal?.reason).catch(() => undefined);
+		cancellation ??= reader.cancel(signal?.reason);
+		void cancellation.catch(() => undefined);
 	};
 	if (signal?.aborted) abortRead();
 	else signal?.addEventListener("abort", abortRead, { once: true });
@@ -375,7 +380,8 @@ async function readBlobTextFragment(
 		return { content: selected, truncated: offset > 0 || end < total };
 	} finally {
 		signal?.removeEventListener("abort", abortRead);
-		await reader.cancel().catch(() => undefined);
+		abortRead();
+		await cancellation?.catch(() => undefined);
 		reader.releaseLock();
 	}
 }

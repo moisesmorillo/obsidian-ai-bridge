@@ -16,6 +16,10 @@ import {
 	RenameReservationSchema,
 	RestoreRequestSchema,
 } from "@vaultwire/protocol";
+import {
+	REST_BODY_BYTE_ALLOWANCE,
+	REST_HEADING_APPEND_BYTE_ALLOWANCE,
+} from "@worker/application/admission-budget";
 import { FileOperationDenied } from "@worker/application/files";
 import {
 	executeFileCommand,
@@ -94,6 +98,10 @@ export async function handleHistoryCommand(
 			commandRequest.key,
 			() => decodeHistoryCommand(request, path, commandRequest),
 			responseProduction,
+			undefined,
+			operation === "append-under-heading"
+				? REST_HEADING_APPEND_BYTE_ALLOWANCE
+				: REST_BODY_BYTE_ALLOWANCE,
 		);
 		if (!result.ok) return errorResponse(result.failure);
 		return Response.json(result.response.body, {
@@ -555,6 +563,7 @@ function parseCommandJson(bytes: Uint8Array): unknown {
 		}
 		if (character === ",") keyPosition = true;
 	}
-	// Only flat scalar objects reach JSON.parse. Repeated keys keep standard JSON semantics.
-	return JSON.parse(text);
+	// Preserve all parsed keys so canonical schemas reject unknown fields, including __proto__.
+	const parsed: unknown = JSON.parse(text);
+	return parsed;
 }

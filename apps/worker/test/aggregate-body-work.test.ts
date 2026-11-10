@@ -167,7 +167,7 @@ describe("aggregate body ownership", () => {
 				precondition: { kind: "absent" },
 			} as const;
 			const declaration = { payload_hash: "0".repeat(64), size: 1 };
-			const producers = Array.from({ length: 4 }, () => source(1, 65));
+			const producers = Array.from({ length: 8 }, () => source(1, 65));
 			const responses = await Promise.all(
 				producers.map((producer, index) =>
 					withMutationResponse(async (done) => {
@@ -253,7 +253,7 @@ describe("aggregate body ownership", () => {
 					env,
 				);
 				expect(refused.status).toBe(429);
-				expect(refused.headers.get("Retry-After")).toBe("1");
+				expect(refused.headers.get("Retry-After")).toBe("2");
 				expect(await refused.json()).toMatchObject({
 					error: "admission_limited",
 				});
@@ -291,9 +291,9 @@ describe("aggregate body ownership", () => {
 			}
 		},
 	);
-	it("holds four distinct native 25 MB uploads across clients, hosts, and router instances", async () => {
+	it("holds eight distinct native 25 MB uploads across clients, hosts, and router instances", async () => {
 		const hosts = Array.from(
-			{ length: 5 },
+			{ length: 9 },
 			(_, index) => `aggregate-blob-${index}.invalid`,
 		);
 		for (const host of hosts) await initialize(host);
@@ -358,7 +358,7 @@ describe("aggregate body ownership", () => {
 			resumeMultipartUpload: (...args) =>
 				env.R2_BUCKET.resumeMultipartUpload(...args),
 		};
-		const sources = Array.from({ length: 5 }, (_, index) =>
+		const sources = Array.from({ length: 9 }, (_, index) =>
 			source(25_000_000, 31 + index),
 		);
 		const hashes = await Promise.all(
@@ -371,7 +371,7 @@ describe("aggregate body ownership", () => {
 				() => new R2BlobStore(bucket),
 			),
 		);
-		const uploads = sources.slice(0, 4).map((item, index) => {
+		const uploads = sources.slice(0, 8).map((item, index) => {
 			const worker = workers[index];
 			if (!worker) throw new Error("Expected router");
 			return Promise.resolve(
@@ -392,19 +392,19 @@ describe("aggregate body ownership", () => {
 			);
 		});
 		try {
-			await Promise.all(sources.slice(0, 4).map((item) => item.reached));
-			expect(pendingPuts).toBe(4);
-			expect(maxPendingPuts).toBe(4);
-			const fifth = sources[4];
-			const worker = workers[4];
+			await Promise.all(sources.slice(0, 8).map((item) => item.reached));
+			expect(pendingPuts).toBe(8);
+			expect(maxPendingPuts).toBe(8);
+			const fifth = sources[8];
+			const worker = workers[8];
 			if (!fifth || !worker) throw new Error("Expected fifth request");
 			const refused = await worker.fetch(
-				new Request(`https://${hosts[4]}/v1/files/fifth.bin`, {
+				new Request(`https://${hosts[8]}/v1/files/fifth.bin`, {
 					method: "PUT",
 					headers: {
 						"If-None-Match": "*",
 						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
-						"X-Content-SHA256": hashes[4] ?? "",
+						"X-Content-SHA256": hashes[8] ?? "",
 						"X-Content-Size": "25000000",
 					},
 					body: fifth.body,
@@ -412,10 +412,10 @@ describe("aggregate body ownership", () => {
 				env,
 			);
 			expect(refused.status).toBe(429);
-			expect(refused.headers.get("Retry-After")).toBe("1");
+			expect(refused.headers.get("Retry-After")).toBe("2");
 			expect(fifth.stats().reads).toBe(0);
-			expect(await admissions(hosts[4] ?? "")).toHaveLength(0);
-			for (const item of sources.slice(0, 4)) {
+			expect(await admissions(hosts[8] ?? "")).toHaveLength(0);
+			for (const item of sources.slice(0, 8)) {
 				expect(item.stats().supplied).toBe(25_000_000);
 				expect(item.stats().maxView).toBeLessThanOrEqual(65_536);
 				expect(item.stats().maxPending).toBe(1);
@@ -436,17 +436,17 @@ describe("aggregate body ownership", () => {
 		}
 		const results = await Promise.all(uploads);
 		expect(results.map((result) => result.status)).toEqual([
-			201, 201, 201, 201,
+			201, 201, 201, 201, 201, 201, 201, 201,
 		]);
 		expect(pendingPuts).toBe(0);
 		expect(r2Calls).toEqual({
-			head: 4,
+			head: 8,
 			get: 0,
-			put: 4,
+			put: 8,
 			delete: 0,
 			list: 0,
 		});
-		for (const host of hosts.slice(0, 4)) {
+		for (const host of hosts.slice(0, 8)) {
 			expect(
 				Object.fromEntries(
 					[...rpcCalls]
@@ -465,7 +465,7 @@ describe("aggregate body ownership", () => {
 		"shares slots across inline PUT, blob PUT, append, and %s",
 		async (command) => {
 			const hosts = Array.from(
-				{ length: 5 },
+				{ length: 9 },
 				(_, index) => `aggregate-${command}-${index}.invalid`,
 			);
 			for (const host of hosts) await initialize(host);
@@ -475,6 +475,10 @@ describe("aggregate body ownership", () => {
 					: '{"source_rev":1,"as_conflict_copy":true}',
 			);
 			const sources = [
+				source(1_000_000, 97),
+				source(1_000_001, 101),
+				source(1_000_000, 97),
+				source(1_000_000, 32, bodyPrefix),
 				source(1_000_000, 97),
 				source(1_000_001, 101),
 				source(1_000_000, 97),
@@ -490,27 +494,28 @@ describe("aggregate body ownership", () => {
 				(bindings) => new R2BlobStore(bindings.R2_BUCKET),
 			);
 			const hash = await repeatedHash(1_000_001, 101);
-			const uploads = sources.slice(0, 4).map((item, index) => {
-				const operation = index === 2 ? "append" : command;
+			const uploads = sources.slice(0, 8).map((item, index) => {
+				const kind = index % 4;
+				const operation = kind === 2 ? "append" : command;
 				const path =
-					index < 2
-						? `content-${index}.${index === 0 ? "md" : "bin"}`
+					kind < 2
+						? `content-${index}.${kind === 0 ? "md" : "bin"}`
 						: `source.md:${operation}`;
 				const headers = new Headers({
 					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
 					"X-Aggregate-Client": `mixed-${index}`,
 				});
-				if (index < 2) headers.set("If-None-Match", "*");
-				if (index === 1) {
+				if (kind < 2) headers.set("If-None-Match", "*");
+				if (kind === 1) {
 					headers.set("X-Content-SHA256", hash);
 					headers.set("X-Content-Size", "1000001");
 				}
-				if (index === 2) headers.set("Idempotency-Key", "aggregate-append-key");
-				if (index === 3) headers.set("If-Match", `"${TEXT_FIXTURE_EPOCH}.1"`);
+				if (kind === 2) headers.set("Idempotency-Key", "aggregate-append-key");
+				if (kind === 3) headers.set("If-Match", `"${TEXT_FIXTURE_EPOCH}.1"`);
 				return Promise.resolve(
 					worker.fetch(
 						new Request(`https://${hosts[index]}/v1/files/${path}`, {
-							method: index < 2 ? "PUT" : "POST",
+							method: kind < 2 ? "PUT" : "POST",
 							headers,
 							body: item.body,
 						}),
@@ -519,12 +524,12 @@ describe("aggregate body ownership", () => {
 				);
 			});
 			try {
-				await Promise.all(sources.slice(0, 4).map((item) => item.reached));
-				const fifth = sources[4];
+				await Promise.all(sources.slice(0, 8).map((item) => item.reached));
+				const fifth = sources[8];
 				if (!fifth) throw new Error("Expected fifth body");
 				const refused = await worker.fetch(
 					new Request(
-						`https://${hosts[4]}/v1/files/source.md:${command === "rename" ? "restore" : "rename"}`,
+						`https://${hosts[8]}/v1/files/source.md:${command === "rename" ? "restore" : "rename"}`,
 						{
 							method: "POST",
 							headers: {
@@ -538,8 +543,8 @@ describe("aggregate body ownership", () => {
 				);
 				expect(refused.status).toBe(429);
 				expect(fifth.stats().reads).toBe(0);
-				expect(await admissions(hosts[4] ?? "")).toHaveLength(0);
-				for (const item of sources.slice(0, 4)) {
+				expect(await admissions(hosts[8] ?? "")).toHaveLength(0);
+				for (const item of sources.slice(0, 8)) {
 					expect(item.stats().maxView).toBeLessThanOrEqual(65_536);
 					expect(item.stats().maxPending).toBe(1);
 				}
@@ -555,17 +560,26 @@ describe("aggregate body ownership", () => {
 			}
 			expect(
 				(await Promise.all(uploads)).map((response) => response.status),
-			).toEqual([201, 201, 200, command === "rename" ? 201 : 200]);
+			).toEqual([
+				201,
+				201,
+				200,
+				command === "rename" ? 201 : 200,
+				201,
+				201,
+				200,
+				command === "rename" ? 201 : 200,
+			]);
 		},
 		15_000,
 	);
-	it("bounds four inline payloads and full failure bodies across native RPC delivery waits", async () => {
+	it("bounds eight inline payloads and full failure bodies across native RPC delivery waits", async () => {
 		const hosts = Array.from(
-			{ length: 5 },
+			{ length: 9 },
 			(_, index) => `aggregate-inline-rpc-${index}.invalid`,
 		);
-		const waits = hosts.slice(0, 4).map(() => gate());
-		const entered = hosts.slice(0, 4).map(() => gate());
+		const waits = hosts.slice(0, 8).map(() => gate());
+		const entered = hosts.slice(0, 8).map(() => gate());
 		const observed: {
 			inputUnits: number;
 			failureUnits: number;
@@ -603,7 +617,7 @@ describe("aggregate body ownership", () => {
 					body: item.body,
 				}),
 		);
-		const uploads = requests.slice(0, 4).map((request, index) => {
+		const uploads = requests.slice(0, 8).map((request, index) => {
 			const stub = env.VAULTS.get(env.VAULTS.idFromName(hosts[index] ?? ""));
 			const authority: TextVaultGateway = {
 				getCurrentEpoch: (...args) => stub.getCurrentEpoch(...args),
@@ -659,16 +673,16 @@ describe("aggregate body ownership", () => {
 				async () => prepareTextPayload(await readInlineBody(request)),
 			);
 		});
-		for (const item of sources.slice(0, 4)) item.resume();
+		for (const item of sources.slice(0, 8)) item.resume();
 		try {
 			await Promise.all(entered.map((item) => item.promise));
 			expect(rpcCalls).toEqual({
-				beginMutation: 4,
-				authorize: 4,
-				commitText: 4,
+				beginMutation: 8,
+				authorize: 8,
+				commitText: 8,
 				finishAdmission: 0,
 			});
-			expect(observed).toHaveLength(4);
+			expect(observed).toHaveLength(8);
 			for (const item of observed)
 				expect(item).toEqual({
 					inputUnits: 1_000_000,
@@ -694,17 +708,17 @@ describe("aggregate body ownership", () => {
 				200, 200, 200, 200,
 			]);
 			const fifthRead = await readWorker.fetch(
-				new Request(`https://${hosts[4]}/v1/vault`),
+				new Request(`https://${hosts[8]}/v1/vault`),
 				env,
 			);
 			expect(fifthRead.status).toBe(429);
-			expect(fifthRead.headers.get("Retry-After")).toBe("1");
+			expect(fifthRead.headers.get("Retry-After")).toBe("2");
 			await fifthRead.text();
 			for (const response of metadataResponses) await response.body?.cancel();
-			const fifth = requests[4];
+			const fifth = requests[8];
 			if (!fifth) throw new Error("Expected fifth request");
 			const denied = await executeTextMutation(
-				env.VAULTS.get(env.VAULTS.idFromName(hosts[4] ?? "")),
+				env.VAULTS.get(env.VAULTS.idFromName(hosts[8] ?? "")),
 				{
 					client_id: "rpc-fifth",
 					grant_id: "rpc-fifth-grant",
@@ -723,8 +737,8 @@ describe("aggregate body ownership", () => {
 				ok: false,
 				failure: { kind: "admission_limited" },
 			});
-			expect(sources[4]?.stats().reads).toBe(0);
-			expect(await admissions(hosts[4] ?? "")).toHaveLength(0);
+			expect(sources[8]?.stats().reads).toBe(0);
+			expect(await admissions(hosts[8] ?? "")).toHaveLength(0);
 			console.info("AGGREGATE_INLINE_RPC_DELIVERY", JSON.stringify(observed));
 		} finally {
 			for (const wait of waits) wait.release();
@@ -732,10 +746,10 @@ describe("aggregate body ownership", () => {
 		}
 		const results = await Promise.all(uploads);
 		expect(rpcCalls).toEqual({
-			beginMutation: 4,
-			authorize: 4,
-			commitText: 4,
-			finishAdmission: 4,
+			beginMutation: 8,
+			authorize: 8,
+			commitText: 8,
+			finishAdmission: 8,
 		});
 		for (const result of results)
 			expect(result).toMatchObject({
@@ -743,18 +757,18 @@ describe("aggregate body ownership", () => {
 				failure: { kind: "precondition_failed" },
 			});
 	});
-	it("holds four routed PUT and metadata slots until response cleanup settles", async () => {
+	it("holds eight routed PUT and four metadata slots until response cleanup settles", async () => {
 		const hosts = Array.from(
-			{ length: 5 },
+			{ length: 9 },
 			(_, index) => `aggregate-http-slots-${index}.invalid`,
 		);
 		for (const host of hosts) await initialize(host);
-		const commitEntered = hosts.slice(0, 4).map(() => gate());
-		const commitResume = hosts.slice(0, 4).map(() => gate());
+		const commitEntered = hosts.slice(0, 8).map(() => gate());
+		const commitResume = hosts.slice(0, 8).map(() => gate());
 		const finishEntered = gate();
 		const finishResume = gate();
 		const commitHold = new Map(
-			hosts.slice(0, 4).map((host, index) => [host, index]),
+			hosts.slice(0, 8).map((host, index) => [host, index]),
 		);
 		const calls = new Map<string, number>();
 		let holdFirstReadCleanup = false;
@@ -795,7 +809,7 @@ describe("aggregate body ownership", () => {
 			(bindings) => new R2BlobStore(bindings.R2_BUCKET),
 		);
 		const sources = hosts.map((_, index) => source(1_000_000, 31 + index));
-		const mutationRequests = sources.slice(0, 4).map((item, index) =>
+		const mutationRequests = sources.slice(0, 8).map((item, index) =>
 			worker.fetch(
 				new Request(`https://${hosts[index]}/v1/files/inline.md`, {
 					method: "PUT",
@@ -813,8 +827,8 @@ describe("aggregate body ownership", () => {
 		const metadataResponses: Response[] = [];
 		const deniedBody = source(1, 66);
 		try {
-			await Promise.all(sources.slice(0, 4).map((item) => item.reached));
-			for (const item of sources.slice(0, 4)) item.resume();
+			await Promise.all(sources.slice(0, 8).map((item) => item.reached));
+			for (const item of sources.slice(0, 8)) item.resume();
 			await Promise.all(commitEntered.map((item) => item.promise));
 
 			for (const [index, host] of hosts.slice(0, 4).entries()) {
@@ -832,7 +846,7 @@ describe("aggregate body ownership", () => {
 				expect(response.status).toBe(200);
 				metadataResponses.push(response);
 			}
-			const mutationOwners = 4;
+			const mutationOwners = 8;
 			const maximumMutationPhaseBytes = 4_000_000;
 			const inlineReadOwners = 3;
 			const maximumInlineUtf16Bytes = 1_000_000 * 2;
@@ -880,20 +894,20 @@ describe("aggregate body ownership", () => {
 				inlineReadOwners * (maximumInlineUtf16Bytes + inlineReadEncoderBytes) +
 				metadataResponseOwnerBytes;
 			const refusedRead = await worker.fetch(
-				new Request(`https://${hosts[4]}/v1/vault`),
+				new Request(`https://${hosts[8]}/v1/vault`),
 				env,
 			);
 			expect(refusedRead.status).toBe(429);
-			expect(refusedRead.headers.get("Retry-After")).toBe("1");
+			expect(refusedRead.headers.get("Retry-After")).toBe("2");
 			await refusedRead.text();
-			const refusedReadHost = hosts[4];
+			const refusedReadHost = hosts[8];
 			if (!refusedReadHost) throw new Error("Expected fifth host");
 			expect(
 				[...calls.keys()].some((key) => key.startsWith(`${refusedReadHost}:`)),
 			).toBe(false);
 
 			const refusedBody = await worker.fetch(
-				new Request(`https://${hosts[4]}/v1/files/fifth.md`, {
+				new Request(`https://${hosts[8]}/v1/files/fifth.md`, {
 					method: "PUT",
 					headers: {
 						"If-None-Match": "*",
@@ -904,7 +918,7 @@ describe("aggregate body ownership", () => {
 				env,
 			);
 			expect(refusedBody.status).toBe(429);
-			expect(refusedBody.headers.get("Retry-After")).toBe("1");
+			expect(refusedBody.headers.get("Retry-After")).toBe("2");
 			await refusedBody.json();
 			expect(deniedBody.stats().reads).toBe(0);
 			expect(
@@ -913,16 +927,16 @@ describe("aggregate body ownership", () => {
 
 			for (const release of commitResume) release.release();
 			mutationResponses.push(...(await Promise.all(mutationRequests)));
-			expect(mutationResponses).toHaveLength(4);
+			expect(mutationResponses).toHaveLength(8);
 			expect(metadataResponses).toHaveLength(4);
 			expect(metadataSummaryBytes).toBeLessThan(1_024);
-			expect(simultaneousOwnedPayloadBytes).toBeLessThan(24_000_000);
+			expect(simultaneousOwnedPayloadBytes).toBeLessThan(40_000_000);
 			expect(mutationResponses.map((response) => response.status)).toEqual([
-				201, 201, 201, 201,
+				201, 201, 201, 201, 201, 201, 201, 201,
 			]);
 
 			const refusedAfterCommit = await worker.fetch(
-				new Request(`https://${hosts[4]}/v1/files/still-held.md`, {
+				new Request(`https://${hosts[8]}/v1/files/still-held.md`, {
 					method: "PUT",
 					headers: {
 						"If-None-Match": "*",
@@ -945,16 +959,17 @@ describe("aggregate body ownership", () => {
 			const readCleanup = firstRead.body.cancel();
 			await finishEntered.promise;
 			const refusedDuringCleanup = await worker.fetch(
-				new Request(`https://${hosts[4]}/v1/vault`),
+				new Request(`https://${hosts[8]}/v1/vault`),
 				env,
 			);
-			expect(refusedDuringCleanup.status).toBe(200);
+			expect(refusedDuringCleanup.status).toBe(429);
+			expect(refusedDuringCleanup.headers.get("Retry-After")).toBe("2");
 			await refusedDuringCleanup.text();
 			holdFirstReadCleanup = false;
 			finishResume.release();
 			await readCleanup;
 			const recoveredRead = await worker.fetch(
-				new Request(`https://${hosts[4]}/v1/vault`),
+				new Request(`https://${hosts[8]}/v1/vault`),
 				env,
 			);
 			expect(recoveredRead.status).toBe(200);
@@ -965,7 +980,7 @@ describe("aggregate body ownership", () => {
 				throw new Error("Expected mutation response body");
 			await firstMutation.body.cancel();
 			const recoveredBody = await worker.fetch(
-				new Request(`https://${hosts[4]}/v1/files/recovered.md`, {
+				new Request(`https://${hosts[8]}/v1/files/recovered.md`, {
 					method: "PUT",
 					headers: {
 						"If-None-Match": "*",
@@ -982,8 +997,8 @@ describe("aggregate body ownership", () => {
 			finishResume.release();
 			for (const release of commitResume) release.release();
 			for (const item of sources) item.resume();
-			await Promise.allSettled(mutationRequests);
-			for (const response of mutationResponses) await response.body?.cancel();
+			for (const result of await Promise.allSettled(mutationRequests))
+				if (result.status === "fulfilled") await result.value.body?.cancel();
 			for (const response of metadataResponses) await response.body?.cancel();
 		}
 	}, 20_000);
@@ -1056,11 +1071,7 @@ describe("aggregate body ownership", () => {
 				async () => command,
 			);
 			await entered.promise;
-			const held = [
-				tryAcquireBodySlot(),
-				tryAcquireBodySlot(),
-				tryAcquireBodySlot(),
-			];
+			const held = Array.from({ length: 7 }, () => tryAcquireBodySlot());
 			let bodyReads = 0;
 			try {
 				expect(held.every((release) => release !== undefined)).toBe(true);

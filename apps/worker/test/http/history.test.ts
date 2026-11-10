@@ -50,6 +50,31 @@ describe("history mutation HTTP routes", () => {
 		});
 	});
 
+	it("rejects an unknown prototype key without publishing a rename", async () => {
+		const source = "https://worker.invalid/v1/files/source.md";
+		const created = await SELF.fetch(source, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "source bytes",
+		});
+		await created.text();
+		const renamed = await SELF.fetch(`${source}:rename`, {
+			method: "POST",
+			headers: {
+				"If-Match": created.headers.get("ETag") ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: '{"to":"destination.md","__proto__":null}',
+		});
+		expect(renamed.status).toBe(400);
+		expect(await renamed.json()).toMatchObject({ error: "invalid_request" });
+		const unchanged = await SELF.fetch(source);
+		expect(await unchanged.json()).toMatchObject({
+			content: "source bytes",
+			etag: created.headers.get("ETag"),
+		});
+	});
+
 	it("renames through HTTP and reads the immutable destination revision", async () => {
 		const base = "https://worker.invalid/v1/files/notes/source.md";
 		const created = await SELF.fetch(base, {

@@ -15,6 +15,11 @@ import {
 	type FileFailure,
 	McpToolErrorSchema,
 } from "@vaultwire/protocol";
+import {
+	acquireMcpAdmission,
+	MCP_ENVELOPE_BYTE_LIMIT,
+	mcpAdmissionBytes,
+} from "@worker/application/admission-budget";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type {
 	McpNotesGateway,
@@ -23,9 +28,12 @@ import type {
 import { currentMcpEpoch } from "@worker/application/mcp-notes";
 import {
 	type ReadSlotLease,
+	readSlotRetryAfterSeconds,
+	sweepExpiredReadSlots,
 	tryAcquireReadSlot,
 	waitForReadSlotWork,
 } from "@worker/application/read-budget";
+import { settleReadAdmission } from "@worker/application/reads";
 import type { Env } from "@worker/env";
 import {
 	createMcpServer,
@@ -39,43 +47,39 @@ import {
 } from "@worker/transport/read-response";
 
 /** Maximum wire bytes accepted for one MCP envelope. */
-const MCP_BODY_LIMIT = 6_100_000;
+const MCP_BODY_LIMIT = MCP_ENVELOPE_BYTE_LIMIT;
 /** Limit nesting before the SDK sees a materialized JSON value. */
 const MCP_MAX_DEPTH = 64;
 /** Bound all container separators and string tokens in the decoded envelope. */
 const MCP_MAX_STRUCTURAL_TOKENS = 65_536;
 /** Bound comma separators within one individual container. */
 const MCP_MAX_CONTAINER_ITEMS = 16_384;
-let mcpEnvelopeActive = false;
-
-/** Hold one MCP request across body demand, dispatch, response production, and cancellation. */
-function acquireMcpEnvelope(): (() => void) | undefined {
-	if (mcpEnvelopeActive) return undefined;
-	mcpEnvelopeActive = true;
-	let released = false;
-	return () => {
-		if (released) return;
-		released = true;
-		mcpEnvelopeActive = false;
-	};
+/** Return a checked wire upper bound before body demand. */
+function checkedEnvelopeWireBound(request: Request): number | undefined {
+	const declared = request.headers.get("content-length");
+	if (declared === null) return MCP_BODY_LIMIT;
+	if (!/^\d+$/.test(declared)) return undefined;
+	const length = Number(declared);
+	return Number.isSafeInteger(length) && length <= MCP_BODY_LIMIT
+		? length
+		: undefined;
 }
 
 /** Read a bounded request body before JSON parsing. */
 async function readEnvelope(request: Request): Promise<string> {
-	const declared = request.headers.get("content-length");
-	if (
-		declared !== null &&
-		(!/^\d+$/.test(declared) || Number(declared) > MCP_BODY_LIMIT)
-	)
+	const bodyLimit = checkedEnvelopeWireBound(request);
+	if (bodyLimit === undefined)
 		throw new RangeError("MCP request exceeds its byte limit");
 	const reader = request.body?.getReader();
 	if (!reader) throw new SyntaxError("MCP request body is empty");
-	const bytes = new Uint8Array(MCP_BODY_LIMIT);
+	const bytes = new Uint8Array(bodyLimit);
 	let total = 0;
 	let completed = false;
-	/** Stop a pending body read so abort cleanup can release its slot. */
+	let cancellation: Promise<void> | undefined;
+	/** Keep the first native cancellation promise until physical body cleanup settles. */
 	const cancelEnvelope = () => {
-		void reader.cancel(request.signal.reason).catch(() => undefined);
+		cancellation ??= reader.cancel(request.signal.reason);
+		void cancellation.catch(() => undefined);
 	};
 	if (request.signal.aborted) cancelEnvelope();
 	else request.signal.addEventListener("abort", cancelEnvelope, { once: true });
@@ -90,14 +94,17 @@ async function readEnvelope(request: Request): Promise<string> {
 				completed = true;
 				break;
 			}
-			if (total + item.value.byteLength > MCP_BODY_LIMIT)
+			if (total + item.value.byteLength > bodyLimit)
 				throw new RangeError("MCP request exceeds its byte limit");
 			bytes.set(item.value, total);
 			total += item.value.byteLength;
 		}
 	} finally {
 		request.signal.removeEventListener("abort", cancelEnvelope);
-		if (!completed) await reader.cancel().catch(() => undefined);
+		if (!completed) {
+			cancelEnvelope();
+			await cancellation?.catch(() => undefined);
+		}
 		reader.releaseLock();
 	}
 	try {
@@ -161,6 +168,23 @@ function checkEnvelopeStructure(source: string): void {
 /** Provide a no-op owner for SDK failures without an application admission. */
 const EMPTY_MCP_READ_OWNER = { finish: async () => ({ ok: true as const }) };
 
+/** Keep envelope bytes through durable response cleanup without changing uncertain admission deadlines. */
+function mcpResponseOwner(
+	owner: McpReadOwner | undefined,
+	release: () => void,
+) {
+	return {
+		/** Release the envelope only after the response owner settles. */
+		async finish(completion: Parameters<McpReadOwner["finish"]>[0]) {
+			try {
+				return await (owner ?? EMPTY_MCP_READ_OWNER).finish(completion);
+			} finally {
+				release();
+			}
+		},
+	};
+}
+
 /** Keep the read owner and local slots through JSON production and cancellation. */
 function encodedResponse(
 	message: JSONRPCMessage,
@@ -175,8 +199,8 @@ function encodedResponse(
 			encodeJsonChunks(message),
 			() => owner?.cancel() ?? Promise.resolve(),
 		),
-		owner ?? EMPTY_MCP_READ_OWNER,
-		release,
+		mcpResponseOwner(owner, release),
+		() => deadlineLease?.(),
 		{
 			status,
 			headers: {
@@ -314,8 +338,8 @@ function ownedHttpFailure(
 			encodeJsonChunks({ error: code }),
 			() => owner?.cancel() ?? Promise.resolve(),
 		),
-		owner ?? EMPTY_MCP_READ_OWNER,
-		release,
+		mcpResponseOwner(owner, release),
+		() => deadlineLease?.(),
 		{
 			status,
 			headers: httpFailureHeaders(challenge, serviceOrigin),
@@ -362,16 +386,27 @@ export async function handleMcpHttp(
 		)
 	)
 		return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
-	const releaseEnvelope = acquireMcpEnvelope();
-	if (!releaseEnvelope)
-		return new Response(null, { status: 429, headers: { "retry-after": "1" } });
+	const checkedWireBound = checkedEnvelopeWireBound(request);
+	if (checkedWireBound === undefined)
+		return httpFailure(413, "request_too_large");
+	sweepExpiredReadSlots();
+	const admission = await acquireMcpAdmission(
+		mcpAdmissionBytes(checkedWireBound),
+		request.signal,
+	);
+	if (admission.kind === "refused")
+		return new Response(null, {
+			status: 429,
+			headers: { "retry-after": String(admission.retryAfterSeconds) },
+		});
+	const admissionReservation = admission.reservation;
 	let releaseRead: ReadSlotLease | undefined;
 	let deadlineLease: ReadSlotLease | undefined;
 	/** Release every isolate slot acquired by this tool request. */
 	const release = () => {
 		releaseRead?.();
 		releaseRead = undefined;
-		releaseEnvelope();
+		admissionReservation.release();
 	};
 	let readOwner: McpReadOwner | undefined;
 	let closeServer: (() => Promise<void>) | undefined;
@@ -432,13 +467,13 @@ export async function handleMcpHttp(
 				release();
 				return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
 			}
-			releaseRead = tryAcquireReadSlot();
+			releaseRead = tryAcquireReadSlot("mcp");
 			deadlineLease = releaseRead;
 			if (!releaseRead) {
-				releaseEnvelope();
+				admissionReservation.release();
 				return new Response(null, {
 					status: 429,
-					headers: { "retry-after": "1" },
+					headers: { "retry-after": String(readSlotRetryAfterSeconds("mcp")) },
 				});
 			}
 		}
@@ -461,6 +496,7 @@ export async function handleMcpHttp(
 			(kind: string) => {
 				boundaryFailure = kind;
 			},
+			admissionReservation,
 		);
 		const inputFailure = mutationInputFailure(
 			callName,
@@ -476,8 +512,19 @@ export async function handleMcpHttp(
 			? await waitForReadSlotWork(deadlineLease, processing)
 			: { kind: "completed" as const, value: await processing };
 		if (processed.kind === "expired") {
-			void server.close().catch(() => undefined);
-			release();
+			/** Keep envelope bytes until late dispatch, source cancellation, and server closure settle. */
+			const discard = async () => {
+				try {
+					await server.close();
+					await readOwner?.cancel();
+					const owner = readOwner;
+					if (owner) await settleReadAdmission(() => owner.finish("uncertain"));
+				} finally {
+					release();
+					deadlineLease?.complete();
+				}
+			};
+			void processing.then(discard, discard).catch(() => undefined);
 			return httpFailure(500, "internal_error", false, env.SERVICE_ORIGIN);
 		}
 		const response = processed.value;

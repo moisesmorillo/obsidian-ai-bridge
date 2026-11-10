@@ -47,6 +47,7 @@ export interface ReadResponseOwner {
  * started source work and source cancellation settle, independent of durable settlement and consumer
  * drain. The acquisition lease deadline releases local capacity and errors unfinished responses even
  * when source or cancellation work remains unresolved. Unknown work keeps durable admission uncertain.
+ * Physical byte reservations remain held through writer shutdown and bounded durable settlement.
  * @param knownByteLength - Exact response bytes, or undefined for generic response framing.
  */
 export function ownedReadResponse(
@@ -91,7 +92,7 @@ export function ownedReadResponse(
 		expired = true;
 		stopping = true;
 		signalDeadline();
-		release();
+		lease?.();
 		const reason = new Error("Read slot hold deadline exceeded");
 		deadlineError = reason;
 		const controller = controllerRef;
@@ -101,7 +102,7 @@ export function ownedReadResponse(
 		} catch {
 			// The response may already be closed when the deadline fires.
 		}
-		if (!settlement) void cancelSource(reason).catch(() => {});
+		void finish(true, "uncertain", reason).catch(() => {});
 		void abortFixedWriter(reason);
 	}
 	const lease =
@@ -156,7 +157,8 @@ export function ownedReadResponse(
 			reason,
 		).finally(() => {
 			release();
-			completeDeadline();
+			// The fixed pump owns lease completion after writer shutdown.
+			if (!fixedWriter) completeDeadline();
 		});
 	}
 	/** Start one fixed-writer shutdown and retain its promise for release coordination. */
@@ -209,7 +211,7 @@ export function ownedReadResponse(
 				},
 				/** Wait for EOF and durable success before closing the zero-byte response. */
 				async pull(controller) {
-					if (stopping) return;
+					if (lease?.expired || stopping) return;
 					try {
 						pending = source.next();
 						const item = await Promise.race([
@@ -219,7 +221,7 @@ export function ownedReadResponse(
 							}),
 						]);
 						pending = undefined;
-						if (stopping || expired) return;
+						if (lease?.expired || stopping || expired) return;
 						if (item.done) {
 							await finish(false, "settled");
 							controller.close();
@@ -261,7 +263,7 @@ export function ownedReadResponse(
 		const pump = async (): Promise<void> => {
 			let buffered: Uint8Array | undefined;
 			let received = 0;
-			while (!stopping) {
+			while (!lease?.expired && !stopping) {
 				let item: IteratorResult<Uint8Array>;
 				try {
 					pending = source.next();
@@ -284,7 +286,7 @@ export function ownedReadResponse(
 					);
 					return;
 				}
-				if (stopping || expired) return;
+				if (lease?.expired || stopping || expired) return;
 				if (item.done) {
 					if (received !== knownByteLength) {
 						const error = new Error(
@@ -296,6 +298,7 @@ export function ownedReadResponse(
 					}
 					try {
 						await settleOwner(false, "settled");
+						if (lease?.expired || expired) return;
 						if (buffered) await writer.write(buffered);
 						await writer.close();
 					} catch (error) {
@@ -367,7 +370,7 @@ export function ownedReadResponse(
 		},
 		/** Request one chunk only under downstream demand, without a prefetch queue. */
 		async pull(controller) {
-			if (stopping) return;
+			if (lease?.expired || stopping) return;
 			try {
 				pending = source.next();
 				const item = await Promise.race([
@@ -377,7 +380,7 @@ export function ownedReadResponse(
 					}),
 				]);
 				pending = undefined;
-				if (stopping || expired) return;
+				if (lease?.expired || stopping || expired) return;
 				if (item.done) {
 					await finish(false, "settled");
 					controller.close();

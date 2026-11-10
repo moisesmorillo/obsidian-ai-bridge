@@ -1,11 +1,11 @@
 ---
 id: OAB-58
 title: Stop truncated feed bodies and REST read-slot exhaustion under MCP load
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-10T12:08:00Z'
-updated_date: '2026-11-10T16:18:00Z'
+updated_date: '2026-11-10T16:33:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -66,4 +66,12 @@ Review fixes (reviewer minors, owner wants no deferrals):
 Validation: bun run check exit 0 (protocol 314, tooling 107, plugin 878 + 1 skipped, worker 836 + http 134 + f2 149); docs:check green. AC 5 wording unchanged pending owner decision on deviation (b).
 
 Re-review minors: (1) RED read-slot-expiry.test.ts 'admits a REST write after stalled MCP envelopes pass their grace' (8 padded MCP reads, about 59 MB shared held, PUT before grace 429) failed with 'expected 429 to be 201' for the PUT after the grace with no read or measurement between. GREEN: tryAcquireBodySlot calls sweepExpiredReadSlots first; body-budget -> read-budget is application to application, no cycle. (2) MCP reclaim test now calls readNote(10) before any snapshot, so MCP admission alone reclaims. bun run check exit 0 (protocol 314, tooling 107, plugin 878 + 1 skipped, worker 837 + http 134 + f2 149).
+
+Production check 2026-11-10 after PR #156: Worker 1.0.3 deployed by Release Please run 42855445110. /v1/vault from the Mac plugin returns Cache-Control: no-transform. The owner measurements page shows held leases per pool, reserved bytes, oldest REST lease and the 60000 ms reclaim count. Mac at cursor 600 = head, settled, no failure.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Read leases that never settle now release their byte reservation once at lease deadline + 60 s, for REST and MCP pools. REST read, MCP and body admission sweep first. All JSON read, read-failure and MCP responses send Cache-Control: no-transform. The plugin treats a short or malformed 200 sync body as a retryable network failure. The owner measurements page shows held leases per pool, reserved bytes, the reclaim count and the oldest REST lease. Verified by RED/GREEN tests, bun run check, task and branch review, and a production check on Worker 1.0.3. Risk: reclaimed work can still use memory after the grace (owner decision D1). The edge zstd truncation cause stays a hypothesis.
+<!-- SECTION:FINAL_SUMMARY:END -->

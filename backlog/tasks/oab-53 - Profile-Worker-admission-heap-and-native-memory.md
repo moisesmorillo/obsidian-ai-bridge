@@ -1,10 +1,11 @@
 ---
 id: OAB-53
 title: Profile Worker admission heap and native memory
-status: Deferred
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-09T22:05:00Z'
-updated_date: '2026-11-10T00:28:00Z'
+updated_date: '2026-11-10T18:41:00Z'
 labels: []
 dependencies: []
 references:
@@ -25,8 +26,111 @@ The admission byte reservations bound identified application payloads but do not
 - [ ] #3 Keep application byte reservations distinct from measured heap and native memory
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Owner approved 2026-11-10 (combined with OAB-6.8.2 evidence).
+0. Read-only tool check: Cloudflare read-only token can query GraphQL invocation status (exceededResources); owner console shows isolate start; Mac plugin session token works on /mcp or not. No deploy.
+1. Local profile in this worktree: tooling load script against wrangler dev (workerd, compat 2025-07-12). REST (vault, changes, files, search), MCP, concurrent uploads, slow responses, cancellations, OAB-58 stalled reads past the 60 s grace. Concurrency 1/4/8/12. Measure V8 heap via inspector and workerd RSS. Separate app reservations, heap, native (RSS minus heap), total.
+2. Production confirmation by the supervisor: Mac sync paused, load sent through the plugin session from Obsidian, iPad and ChatGPT idle. Uploads into _vaultwire-loadtest/ then deleted (owner D1). Step up load, check exceededResources, isolate restarts and console after each level, stop at first failure. Resume sync, cursor = head.
+3. Record numbers in OAB-53 and OAB-6.8.2 notes. Check only proven criteria. Propose any limit change as a separate task.
+Owner decisions: D1 scratch-folder uploads in production; D2 iPad and ChatGPT idle about 30 min; D3 no deploy, small PR only with authorization; D4 one branch under OAB-53.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Owner-approved plan pn-f28109 defers complete heap and native-memory profiling. Start before another concurrency increase or after an exceeded-memory event. OAB-52 enforces application reservations only.
+
+Step 1 local profile, 2026-11-10 UTC. Local only: loopback workerd, synthetic Access key, synthetic vault under scratch persistence. No deploy, no Cloudflare API, no real vault. Acceptance criteria stay unchecked until the production confirmation (step 2).
+
+## Runtime
+
+- Tool: `apps/worker/tooling/memory-profile/local.ts` (runner, Node) and `workloads.ts` (portable workloads, Web APIs only). Run from `apps/worker`: `node tooling/memory-profile/local.ts --out <scratch dir> [--v8-flags "--expose-gc --max-heap-size=128"]`.
+- Bundle: real `src/index.ts` built by `wrangler deploy --dry-run` (no upload) with `wrangler.f2.jsonc`: compatibility date 2025-07-12, flag `unhandled_rejection_after_microtask_checkpoint`, synthetic Access team, OAUTH_KV, R2_BUCKET, BACKUP_BUCKET.
+- Engine: Wrangler 4.149.0 and Miniflare 5.20261006.1-alpha (workerd 1.20261006.1), the versions of the Workers test pool. The pinned deploy Wrangler 4.45.0 (workerd 1.20251011.0) rejects the production flag ("No such compatibility flag"). Node v26.13.0. macOS arm64.
+- Topology: two Miniflare Workers in one workerd process. `api` runs the Worker entry; `vault` hosts the Vault Durable Object through a cross-script binding. Each has its own V8 isolate, like production. A first attempt with `wrangler dev` put Worker and DO in one isolate and was discarded.
+- Auth: real dynamic registration, Access consent, PKCE code flow, and bearer token. An outbound service answers only the synthetic Access JWKS. No product code change and no auth bypass.
+- Two runs at the same time on separate ports: run B with V8 flags `--expose-gc --max-heap-size=128` (V8 heap capped at 128 MB, local proxy for the platform limit) and run A with `--expose-gc` only (no cap). Each run is one workerd process.
+
+## Method
+
+- V8 heap: `Runtime.getHeapUsage` every 50 ms on each isolate through the workerd inspector (usedSize, totalSize, backingStorageSize). `gc()` through `Runtime.evaluate` before each level gives the heap floor (workerd does not answer `HeapProfiler.collectGarbage`).
+- Process: `ps -o rss=` every 50 ms on the single workerd process.
+- Application reservations: `/owner/measurements?format=json` every 500 ms (worker_isolate: rest_read_bytes, shared_bytes, held REST/MCP leases). These are reservations, not memory.
+- Derived: RSS−heaps = RSS minus committed heaps of both isolates at the samples nearest the RSS peak. It includes backing stores, workerd runtime and code, SQLite, local R2/KV simulation, and Miniflare internal Workers. It is not a native-retention measure for production.
+- Fixtures under `_vaultwire-loadtest/`: 300 small notes (2,048 B), 12 notes of exactly 1,000,000 UTF-8 bytes (accented text, so V8 holds two-byte strings; quotes and newlines for JSON escaping), one 25,000,000-byte blob. Search needle only on line 1 of each note.
+- Workloads at concurrency 1/4/8/12, 8 s each, one client: REST `/v1/vault`, `/v1/changes` (limit 1000), 1 MB text GET, `/v1/search` (limit 50); MCP `read_note` (1 MB), `list_notes`, `search_notes` (limit 50); uploads of 1 MB text (4 per loop) and 25 MB blobs (2 per loop); slow consumers (50 ms between reads, cancel after 10 s text/MCP or 6 s blob); cancel right after headers (text, blob, MCP). After each level the runner waits until held leases and reserved bytes are zero (max 135 s). OAB-58 phase: 4 REST blob GETs + 8 MCP 1 MB reads held unread after the first chunk for 125 s, then REST text c4 + MCP read c8 for 8 s, then client release.
+
+## Peaks, run B (V8 heap cap 128 MB). Decimal MB. "used / total+backing" per isolate.
+
+| Workload | C | Statuses | API used / total+backing | Vault used / total+backing | RSS | RSS−heaps | REST read / shared MB | Held R/M | Release ms |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| idle-cold | | | 21.1 / 28.6 | 20.5 / 27.8 | 170.3 | 114.3 | 0 / 0 | 0/0 | |
+| baseline after warm-up + gc | | | 18.3 / 28.9 | 15.4 / 28.4 | 381.9 | 325.1 | 0 / 0 | 0/0 | |
+| rest-vault | 1/4/8/12 | 429 at 8 (10) and 12 (121) | ≤ 25.0 / 51.4 | ≤ 35.9 / 41.5 | ≤ 643.6 | ≤ 572.3 | 0 / 0 | 0/0 | ≤ 393 |
+| rest-changes-1000 | 1/4/8/12 | 429 at 8 (1), 12 (31) | ≤ 38.8 / 65.7 | ≤ 18.8 / 36.0 | ≤ 645.0 | ≤ 576.4 | 0 / 0 | 0/0 | ≤ 248 |
+| rest-text-1mb | 1 | 200×521 | 54.1 / 66.1 | 22.3 / 36.2 | 659.2 | 593.3 | 0 / 0 | 0/0 | 220 |
+| rest-text-1mb | 4 | 200×597 | 52.3 / 65.1 | 113.2 / 129.3 | 730.2 | 556.7 | 0 / 0 | 0/0 | 419 |
+| rest-text-1mb | 8 | 200×609 429×3 | 52.1 / 63.6 | 117.0 / 131.3 | 746.2 | 586.6 | 0 / 0 | 0/0 | 296 |
+| rest-text-1mb | 12 | 200×601 429×106 | 53.7 / 67.0 | 117.3 / 131.0 | 751.8 | 596.8 | 0 / 0 | 0/0 | 26 |
+| rest-search-50 | 1/4/8/12 | 429 at 8 (3), 12 (107) | ≤ 25.4 / 61.9 | ≤ 27.3 / 33.4 | ≤ 646.8 | ≤ 584.3 | 0 / 0 | 0/0 | ≤ 389 |
+| mcp-read-note-1mb | 1 | 200×498 | 47.4 / 60.8 | 117.6 / 132.1 | 770.8 | 593.4 | 0 / 0 | 0/0 | 364 |
+| mcp-read-note-1mb | 4 | 200×573 | 53.5 / 67.7 | 117.2 / 131.3 | 773.3 | 597.0 | 0 / 0 | 0/0 | 323 |
+| mcp-read-note-1mb | 8 | 200×592 | 49.2 / 64.9 | 118.0 / 131.0 | 795.1 | 630.9 | 0 / 0 | 0/0 | 189 |
+| mcp-read-note-1mb | 12 | 200×613 | 57.7 / 72.3 | 115.0 / 128.2 | 805.0 | 620.8 | 0 / 0 | 0/0 | 346 |
+| mcp-list-notes | 1/4/8/12 | all 200 | ≤ 29.8 / 46.4 | ≤ 33.7 / 39.9 | ≤ 757.0 | ≤ 683.7 | 0 / 0 | 0/0 | ≤ 312 |
+| mcp-search-notes-50 | 1/4/8/12 | all 200 | ≤ 27.7 / 64.0 | ≤ 25.7 / 37.0 | ≤ 756.1 | ≤ 689.4 | 0 / 0 | 0/0 | ≤ 450 |
+| upload-text-1mb | 1/4/8/12 | 201; 429×11 at 12 | ≤ 55.6 / 90.4 | ≤ 55.0 / 70.3 | ≤ 799.8 | ≤ 673.0 | 0 / 0 | 0/0 | ≤ 399 |
+| upload-blob-25mb | 1/4/8/12 | 201; 429×3 at 12 | ≤ 22.5 / 79.1 | ≤ 18.8 / 25.2 | ≤ 764.1 | ≤ 711.5 | 0 / 0 | 0/0 | ≤ 435 |
+| slow-text-1mb | 1/4/8/12 | 200; 429 at 8 (2), 12 (3) | ≤ 38.9 / 52.3 | ≤ 53.3 / 64.0 | ≤ 737.7 | ≤ 651.2 | 0 / 0 | 0/0 | ≤ 331 |
+| slow-blob-25mb | 1 | 200×2 | 19.8 / 38.5 | 18.1 / 23.9 | 696.7 | 643.5 | 9.0 / 0 | 2/0 | 113,891 |
+| slow-blob-25mb | 4/8/12 | 200×4; 429×28/132/236 | ≤ 28.5 / 38.4 | ≤ 20.6 / 27.3 | ≤ 702.2 | ≤ 640.9 | 18.0 / 0 | 4/0 | ≈ 111,700 |
+| slow-mcp-read-note-1mb | 1/4/8/12 | all 200 | ≤ 35.5 / 47.9 | ≤ 52.1 / 61.7 | ≤ 744.0 | ≤ 646.1 | 0 / 0 | 0/0 | ≤ 374 |
+| cancel-text-1mb | 1/4/8/12 | 200; 429 at 8 (103), 12 (198) | ≤ 44.7 / 58.0 | ≤ 117.7 / 131.0 | ≤ 852.1 | ≤ 693.7 | 0 / 0 | 0/0 | ≤ 407 |
+| cancel-blob-25mb | 1/4/8/12 | 200×4; 429×31/124/249/372 | ≤ 30.4 / 37.4 | ≤ 23.3 / 28.9 | ≤ 729.6 | ≤ 674.4 | 18.0 / 0 | 4/0 | ≈ 111,500–112,000 |
+| cancel-mcp-read-note-1mb | 1/4/8/12 | all 200 | ≤ 46.6 / 61.7 | ≤ 117.7 / 130.7 | ≤ 814.3 | ≤ 635.6 | 0 / 0 | 0/0 | ≤ 369 |
+| stall hold 125 s (4 REST + 8 MCP) | | 12×200 | 30.0 / 46.3 | 28.0 / 39.5 | 706.8 | 632.9 | 18.0 / 0 | 4/0 | |
+| stall + REST text c4 + MCP read c8 | | 200×203; 200×400 | 46.9 / 62.3 | 117.3 / 128.9 | 817.2 | 652.2 | 0 / 0 | 0/0 | |
+| overall | | | 57.7 / 90.4 | 118.0 / 132.1 | 852.1 | 693.7 | 18.0 / 0 | 4/0 | |
+
+Post-collection estimate, run B: the largest heap value right after a drop of at least 4 MB between samples was ≤ 33 MB for API and ≤ 25 MB for Vault in every level. Heap floor after `gc()` before each level: API 15–19 MB, Vault 14–18 MB.
+
+## Peaks, run A (no V8 cap)
+
+V8 grows the heap lazily without a cap, so peaks are an upper bound of garbage, not demand. API used ≤ 81.7 MB (total+backing ≤ 172.8 MB). Vault used ≤ 676.4 MB (total+backing ≤ 707.5 MB), reached by 1 MB text and MCP reads and cancels (for example mcp-read-note-1mb c4: Vault 603.5 / 684.3 MB). RSS ≤ 1,592.7 MB, RSS−heaps ≤ 863 MB. Statuses and release times match run B, except the 7 client-side failures noted below. Run A is not a demand measurement; it shows that without heap pressure the Vault isolate keeps hundreds of MB of collectable garbage.
+
+## Comparison with the 128 MB isolate limit
+
+- API Worker isolate, capped run: peak heap used 57.7 MB, peak committed heap plus backing stores 90.4 MB (upload-text c12). Headroom ≥ 37.6 MB to 128,000,000 B. Post-collection heap ≤ 33 MB.
+- Vault DO isolate, capped run: the heap fills to the cap (used ≤ 118.0 MB) during 1 MB text and MCP reads at every concurrency, then V8 collects. Committed heap plus backing stores peaked at 132.1 MB (= 126.0 MiB): above 128,000,000 B, below 128 MiB. Post-collection heap ≤ 25 MB. Run B had no isolate failure, no workerd exit, no 5xx, and no client failure. Run A had no 5xx and no workerd exit, but 7 client-side failures (status 0: rest-changes c12 ×3, upload-blob c12 ×4) with no server error logged; the cause was not isolated.
+- Interpretation: under a 128 MB V8 heap cap every workload at concurrency 1–12 completed. The Vault peak is V8 sizing near its cap, not live data. The `--max-heap-size` flag excludes backing stores, and the platform accounting of backing stores is not known here. The Vault isolate has the smallest margin; production must confirm it.
+
+## Application reservations (kept apart from heap and native memory)
+
+- REST read pool peaked at 18,000,000 B (4 × 4,500,000) only while REST leases were held (stalled, slow-blob, cancel-blob). Shared pool peaked at 0 B in the sampled snapshots (MCP reservations last only for the request; 500 ms sampling missed them). Peaks of reservations do not coincide with heap peaks: Vault heap peaks happened with 0 reserved bytes in the API isolate snapshot.
+- The 82,000,000 B combined reservation ceiling describes the API isolate. Measured API heap peaks (≤ 57.7 MB used, ≤ 90.4 MB committed+backing) stayed below 128 MB with these workloads. The Vault isolate holds no admission byte reservations; its memory is outside the admission model.
+
+## Findings
+
+1. Cancelled or abandoned blob reads hold REST capacity until the OAB-58 reclaim. A 25 MB blob GET cancelled after headers, or mid-body, kept its REST lease and 4,500,000 reserved bytes for about 111–114 s after the level, which matches the 60 s lease plus 60 s grace. Four cancelled blob reads filled the REST pool and refused later REST reads with 429. Workerd logged `READ_SETTLEMENT_FAILED`. Text and MCP cancels released at once. The S4 local run saw the same 429 pattern. Local R2 simulation may differ from production R2; step 2 should check `held_rest_slots` after one cancelled blob read.
+2. OAB-58 reclaim works locally: after 125 s of 4 stalled REST blob reads (18,000,000 B held), new REST text reads at c4 returned 200×203 with no 429. The 8 stalled MCP reads were fully buffered by the socket (1 MB), so they held no MCP lease; the MCP stall case is not exercised by 1 MB notes.
+3. Search cost: a needle on every line of 12 × 1 MB notes made one REST or MCP search take about 15.6 s locally, after which the local Vault DO restarted and then failed in its constructor ("Unexpected vault table: __miniflare_do_name", a Miniflare 5 local table that the strict schema check rejects). The restart cause was not isolated. The fixture now puts the needle on line 1 only (≈ 15 ms per search). Production impact unknown.
+4. Local harness limits found: Bun does not complete requests through the Wrangler dev proxy (runner uses Node). Miniflare fails to start the api Worker when the working directory is `apps/worker` (runner changes to the output directory). Wrangler's inspector proxy rejects Node WebSockets without Origin.
+
+## Limits
+
+- Local workerd is not the production engine build. Production version, isolate placement, GC heuristics, and memory accounting may differ.
+- Two runs shared the machine (separate processes and ports); timing and GC moments can differ from a solo run.
+- RSS is one process for both isolates, Miniflare internal Workers, SQLite, and local R2/KV simulation. RSS−heaps is not production native retention. It grew from 114 MB idle to about 690 MB (B) and 863 MB (A) and did not return, which can be allocator retention or local storage caches.
+- Categories that cannot be separated here: transport-retained RPC results, native response fragments, native stream buffers, SQLite page cache. backingStorageSize covers only ArrayBuffer backing stores.
+- 50 ms heap and RSS sampling can miss shorter spikes. Heap "used" includes uncollected garbage.
+- One client; no distributed-isolate fan-in; production spreads requests over many Worker isolates and one DO isolate.
+- `--max-heap-size=128` is a local proxy for the 128 MB limit, not the platform enforcement mechanism.
+
+Raw results (not committed): scratch `runA/results.json`, `runB/results.json` with all samples and phases.
+
+## Step 2 reuse
+
+`workloads.ts` exports `seedFixtures`, `createWorkloads`, `runLevel`, `openStalledReads`, and `deleteLoadtestFiles`. Each takes a `ProfileTarget` with `origin`, `token`, and an optional streaming `fetch`. The Worker sends no CORS headers, so a renderer `window.fetch` from `app://obsidian.md` cannot read responses. Obsidian `requestUrl` buffers whole bodies, so it suits only drain workloads, not slow or cancel workloads. A streaming `fetch` adapter over Node `https` in the desktop renderer, or Node on the Mac with the session token, covers all workloads. `bun build apps/worker/tooling/memory-profile/workloads.ts --format esm` gives one JavaScript module. Production seeding should lower `smallNotes`. Uploaded 25 MB blobs stay in R2 after `deleteLoadtestFiles` until blob GC. `/owner/measurements` needs the Access browser session. Check `held_rest_slots` after one cancelled blob read (finding 1).
 <!-- SECTION:NOTES:END -->

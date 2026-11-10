@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-07T13:38:00Z'
+updated_date: '2026-11-10T18:41:00Z'
 labels: []
 dependencies: []
 references:
@@ -286,6 +286,17 @@ Validation evidence: the completed earlier `bun run check` exited 0. It checked 
 Acceptance: all four criteria remain unchecked. Keep status Deferred. Local RSS is not a deployed runtime envelope or native release bound. The 32 MiB limit is payload/application accounting only. It does not count native copies and does not show active application memory.
 
 Final branch review: APPROVE at 61832c54dcf9274424e71aa34351c7d4493114f9 against origin/main f72db9c. The reviewer examined both commits, raw local samples, scripts, server logs, production observations, and the task record. R1 closes the incomplete report, not the historical cap violation. R2 closes the mixed-run byte figures. R3 closes the missing phase and sample-gap context. R4 closes the false reproduction claim through explicit limits. No actionable finding remains. No TypeScript declaration or structural candidate changed. The reviewer ran git diff --check and confirmed a clean tree. The review used existing check evidence and did not repeat tests or workloads. All four acceptance criteria stay unchecked and the task stays Deferred. The owner brief waives human review gates for this scope. Parent publication follows. No production content operation or resource change occurred.
+
+2026-11-10: owner approved a combined plan under OAB-53 (local workerd profile plus production pass/fail confirmation). Evidence for this task is recorded here when measured.
+
+OAB-53 step 1 local evidence, 2026-11-10 UTC. Local workerd only. This is not a deployed measurement, so all four criteria stay unchecked. Full method, tables, and limits are in OAB-53 notes.
+
+- Runtime: real `src/index.ts` bundled by `wrangler deploy --dry-run` (no upload), compatibility date 2025-07-12 with flag `unhandled_rejection_after_microtask_checkpoint`, Wrangler 4.149.0, Miniflare 5.20261006.1-alpha (workerd 1.20261006.1). The Worker (`api`) and the Vault DO (`vault`) run in separate isolates in one workerd process. Real OAuth token with a synthetic Access key. Tooling: `apps/worker/tooling/memory-profile/`.
+- Workloads at concurrency 1/4/8/12: concurrent 1 MB text and 25 MB blob uploads, 1 MB REST and MCP reads (RPC results from the DO), slow consumers, cancellation after headers, and OAB-58 stalled reads.
+- Capped run (V8 `--max-heap-size=128`): API isolate peak heap used 57.7 MB, committed heap + ArrayBuffer backing stores 90.4 MB. Vault isolate peak heap used 118.0 MB, committed + backing 132.1 MB (126.0 MiB), during 1 MB text and MCP reads. Post-collection heap ≤ 33 MB (API) and ≤ 25 MB (Vault). No isolate failure, no 5xx, no client failure. Uncapped run: Vault heap grew to 676 MB of collectable garbage, and 7 client-side failures occurred with no server error logged.
+- Separation of categories: application reservations (REST read pool up to 18,000,000 B, shared pool 0 B in 500 ms samples) are separate from V8 heap and backing stores per isolate. Process RSS (≤ 852 MB capped, ≤ 1,593 MB uncapped) covers both isolates, Miniflare internal Workers, SQLite, and local R2/KV simulation. RSS minus heaps is not a native-retention measure. Transport-retained RPC results, native response fragments, and native stream buffers cannot be separated with these interfaces.
+- Release observations: text and MCP cancellations released leases at once. Cancelled or abandoned 25 MB blob reads kept the REST lease and 4,500,000 reserved bytes until the OAB-58 reclaim, about 111–114 s, and refused later REST reads with 429 (`READ_SETTLEMENT_FAILED` logged). Local R2 simulation may differ from production.
+- Trigger stays: deployed measurement in step 2 (owner-approved plan, D1–D4).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

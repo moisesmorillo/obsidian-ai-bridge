@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-09T22:05:00Z'
-updated_date: '2026-11-10T20:47:00Z'
+updated_date: '2026-11-10T20:52:00Z'
 labels: []
 dependencies: []
 references:
@@ -160,4 +160,6 @@ Production runtime for run 2 (review L4): Worker 1.0.4 = release commit df96129 
 Cleanup rule for production drivers (review L11): call deleteLoadtestFiles(target) in a finally block around seeding and workloads, so a failed or interrupted run still removes _vaultwire-loadtest/ files. Blob bytes stay in R2 until blob GC.
 
 Final AC1 conclusion (review M2): AC1 stays checked on this evidence only. Heap: per-isolate V8 heap used and committed, locally, for the Worker isolate and the Vault DO isolate. Native memory: the only per-isolate native figure is the local ArrayBuffer backing store (off-heap) from Runtime.getHeapUsage. Local workerd process RSS counts only as a whole-process upper bound; it is cumulative over the run and shared with SQLite, local R2/KV simulation, and Miniflare internals, so it is not native retention. Production gives pass/fail only: no memory failure up to concurrency 12 on Workers Paid; production heap and native memory stay unmeasured. Transport-retained RPC results and native response fragments stay unmeasured everywhere (OAB-6.8.2, Deferred).
+
+Follow-up for the run findings: OAB-61 fixes the cancelled-blob lease hold, the Durable Object overload HTTP 500, the slow full feed, and the local Miniflare __miniflare_do_name schema failure. PR #163 (limits.cpu_ms 30000 on Workers Paid) removes the CPU-cut HTTP 200.
 <!-- SECTION:NOTES:END -->

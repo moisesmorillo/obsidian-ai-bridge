@@ -409,6 +409,58 @@ export class PublicationController {
 				}
 				return;
 			}
+			if (parsed.type === "rename" && !base) {
+				const queuedCreate = state.pending_ops.find(
+					(item) =>
+						item.op === "put" &&
+						item.path === parsed.path &&
+						item.state === "queued" &&
+						item.precondition.kind === "absent",
+				);
+				const unresolvedSourcePut = state.pending_ops.some(
+					(item) =>
+						item.op === "put" &&
+						item.path === parsed.path &&
+						item.state !== "resolved" &&
+						item.state !== "queued",
+				);
+				if (queuedCreate && !unresolvedSourcePut) {
+					const destinationBase = state.base[parsed.to];
+					if (destinationBase && !state.epoch) {
+						await this.journal.recordAttention(
+							parsed.to,
+							"Confirmed base has no vault epoch",
+						);
+						return;
+					}
+					const destinationBytes = await this.readRenameDestination(parsed.to);
+					this.assertOpen();
+					if (destinationBytes === null) return;
+					const destinationPut = state.pending_ops.some(
+						(item) => item.op === "put" && item.path === parsed.to,
+					);
+					if (destinationPut)
+						await this.journal.discardQueued(queuedCreate.key);
+					else
+						await this.journal.relocateQueuedCreate(
+							queuedCreate.key,
+							{
+								op: "put",
+								path: parsed.to,
+								precondition:
+									destinationBase && state.epoch
+										? {
+												kind: "match",
+												epoch: state.epoch,
+												rev: destinationBase.rev,
+											}
+										: { kind: "absent" },
+							},
+							destinationBytes,
+						);
+					return;
+				}
+			}
 			if (!base || base.deleted || !state.epoch) return;
 			const precondition = {
 				kind: "match" as const,

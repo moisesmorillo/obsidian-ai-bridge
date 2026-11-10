@@ -836,6 +836,85 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Replaces one queued absent-precondition create with verified bytes and the destination's current exact precondition in one queue commit. */
+	async relocateQueuedCreate(
+		key: string,
+		input: EnqueueInput,
+		bytes: Uint8Array,
+	): Promise<PendingOperation> {
+		const capturedInput = structuredClone(input);
+		const capturedBytes = bytes.slice();
+		return this.serialize(async () => {
+			this.assertOpen();
+			const source = this.state.pending_ops.find((item) => item.key === key);
+			if (
+				source?.op !== "put" ||
+				source.state !== "queued" ||
+				source.precondition.kind !== "absent" ||
+				capturedInput.op !== "put" ||
+				capturedInput.path === source.path
+			)
+				throw new Error("Only a queued absent-precondition create can move");
+			const destinationBase = this.state.base[capturedInput.path];
+			if (
+				(capturedInput.precondition.kind === "absent" && destinationBase) ||
+				(capturedInput.precondition.kind === "match" &&
+					(!this.state.epoch ||
+						capturedInput.precondition.epoch !== this.state.epoch ||
+						destinationBase?.rev !== capturedInput.precondition.rev))
+			)
+				throw new Error(
+					"Destination precondition changed during create relocation",
+				);
+			const operationKey = createUuidV7();
+			const payloadRef = `${DEVICE_PAYLOAD_DIRECTORY}${operationKey}`;
+			let hash: string;
+			try {
+				hash = await digest(capturedBytes);
+				await this.storage.writePayload(payloadRef, capturedBytes);
+			} catch (error) {
+				this.markAttention("payload_write");
+				throw error;
+			}
+			let stored: Uint8Array;
+			try {
+				stored = await this.storage.readPayload(payloadRef);
+			} catch (error) {
+				this.markAttention("payload_read");
+				throw error;
+			}
+			let storedHash: string;
+			try {
+				storedHash = await digest(stored);
+			} catch (error) {
+				this.markAttention("payload_hash_error");
+				throw error;
+			}
+			if (storedHash !== hash) {
+				this.markAttention("payload_hash_mismatch");
+				throw new Error("Payload verification failed");
+			}
+			this.assertOpen();
+			const operation = PendingOperationSchema.parse({
+				...capturedInput,
+				key: operationKey,
+				payload_hash: hash,
+				payload_ref: payloadRef,
+				created_at: Date.now(),
+				attempts: 0,
+				state: "queued",
+			});
+			await this.commit({
+				...this.state,
+				pending_ops: [
+					...this.state.pending_ops.filter((item) => item.key !== source.key),
+					operation,
+				],
+			});
+			return cloneOperation(operation);
+		});
+	}
+
 	/** Drops one unsent queue reference after confirmed remote state makes its bytes redundant. */
 	async discardQueued(key: string): Promise<void> {
 		return this.serialize(async () => {

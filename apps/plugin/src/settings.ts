@@ -127,54 +127,9 @@ export class VaultwireSettingTab extends PluginSettingTab {
 			.setName("Device connection")
 			.setDesc("Connect this Obsidian device with browser authorization.")
 			.addButton((button) =>
-				button.setButtonText("Connect").onClick(async () => {
-					const viewGeneration = this.settingsGeneration;
-					const actionGeneration = ++this.connectionActionGeneration;
-					const session = this.getSession();
-					this.authorizationElement?.remove();
-					this.authorizationElement = null;
-					this.connectionMessage?.setText("");
-					this.hasPendingInstructions = false;
-					button.setDisabled(true);
-					try {
-						await session.connect();
-						if (
-							!this.isCurrentConnectionAction(
-								viewGeneration,
-								actionGeneration,
-								session,
-							)
-						)
-							return;
-						const url = session.getAuthorizationUrl();
-						if (url) {
-							this.renderAuthorizationControl(url);
-							this.showAuthorizationInstructions();
-						}
-					} catch {
-						if (
-							this.isCurrentConnectionAction(
-								viewGeneration,
-								actionGeneration,
-								session,
-							)
-						) {
-							this.hasPendingInstructions = false;
-							this.connectionMessage?.setText(
-								"Could not start device authorization",
-							);
-						}
-					} finally {
-						if (
-							this.isCurrentConnectionAction(
-								viewGeneration,
-								actionGeneration,
-								session,
-							)
-						)
-							button.setDisabled(false);
-					}
-				}),
+				button
+					.setButtonText("Connect")
+					.onClick(() => this.startConnection(button)),
 			)
 			.addButton((button) =>
 				button
@@ -251,6 +206,57 @@ export class VaultwireSettingTab extends PluginSettingTab {
 					}
 				});
 			});
+	}
+
+	/** Starts authorization from settings or status controls with one stale-result fence and safe errors. */
+	async startConnection(button?: {
+		/** Disables the initiating control until this action settles. */
+		setDisabled(disabled: boolean): void;
+	}): Promise<void> {
+		const viewGeneration = this.settingsGeneration;
+		const actionGeneration = ++this.connectionActionGeneration;
+		const session = this.getSession();
+		this.authorizationElement?.remove();
+		this.authorizationElement = null;
+		this.connectionMessage?.setText("");
+		this.hasPendingInstructions = false;
+		button?.setDisabled(true);
+		try {
+			await session.connect();
+			if (
+				!this.isCurrentConnectionAction(
+					viewGeneration,
+					actionGeneration,
+					session,
+				)
+			)
+				return;
+			const url = session.getAuthorizationUrl();
+			if (url) {
+				this.renderAuthorizationControl(url);
+				this.showAuthorizationInstructions();
+			}
+		} catch {
+			if (
+				this.isCurrentConnectionAction(
+					viewGeneration,
+					actionGeneration,
+					session,
+				)
+			) {
+				this.hasPendingInstructions = false;
+				this.connectionMessage?.setText("Could not start device authorization");
+			}
+		} finally {
+			if (
+				this.isCurrentConnectionAction(
+					viewGeneration,
+					actionGeneration,
+					session,
+				)
+			)
+				button?.setDisabled(false);
+		}
 	}
 
 	/** Updates the visible status with a fixed enum value and no OAuth response data. */

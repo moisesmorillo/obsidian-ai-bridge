@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-10T21:32:00Z'
-updated_date: '2026-11-10T22:09:00Z'
+updated_date: '2026-11-10T22:14:00Z'
 labels: []
 dependencies:
   - OAB-61
@@ -73,4 +73,9 @@ F4: new 'keeps a generic body one 16 KB chunk ahead of an idle consumer' (BYOB r
 Spec 6.5: mutation body pump, 60 s response deadline, 60 s reclaim grace, demand bounds.
 Validation: bun run check exit 0 (protocol 314, tooling 107, plugin 879 + 1 skipped, worker 870 + http 138 + f2 150); docs:check inside check green; timing-sensitive files repeated 3x green.
 Risks: a client cancel while the inner mutation body or a read source has a pending read is seen only after that read settles (inner mutation bodies are in-memory failure or JSON bodies, so they do not stall in practice; the 60 s deadline bounds it). Zero-byte read responses still rely on the lease deadline and reclaim after a cross-boundary cancel. Not proven in production.
+
+Review round 2 (approve with two lows), fixed in the commit after bf809df.
+L1: mutation-response.ts finish cleared the deadline timer before inner cleanup settled, so after a consumer cancel or inner read failure a hanging inner reader.cancel left the keep-alive bounded only by the platform. Every cancelling finish now races cleanup against MUTATION_RESPONSE_SETTLEMENT_GRACE_MS (5,000 ms, same value as READ_SETTLEMENT_DEADLINE_MS) and then ends the keep-alive; expire() now only aborts the writer and calls finish. New test mutation-response-keepalive.test.ts 'ends keep-alive within the grace when inner cancellation hangs after a consumer cancel' (waitUntil mocked, fake timers): not settled at grace - 1 ms, settled at grace, no timers left, slot still held for reclaim. Mutation check: disabling the grace block made it fail; source restored.
+L2: mutation-response.test.ts 'waits_for_pending_read_and_cancel_cleanup' no longer swallows the pending consumer read. Its real outcome in this test is a rejection 'Stream was cancelled' (not done as in the metadata pending-batch test), and the test asserts exactly that; comment corrected.
+Validation: bun run check exit 0 (protocol 314, tooling 107, plugin 879 + 1 skipped, worker 871 + http 138 + f2 150). AC #5 left open for the parent.
 <!-- SECTION:NOTES:END -->

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/moisesmorillo/vaultwire/compare/worker-v1.0.0...worker-v1.0.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **worker:** recover read slots and bound burst admission ([#147](https://github.com/moisesmorillo/vaultwire/issues/147)) ([965d95a](https://github.com/moisesmorillo/vaultwire/commit/965d95a0910d7e3d1180c11ea1f31c9ecb47d07b))
+
 ## [1.0.0](https://github.com/moisesmorillo/vaultwire/compare/worker-v0.6.0...worker-v1.0.0) (2026-11-09)
 
 

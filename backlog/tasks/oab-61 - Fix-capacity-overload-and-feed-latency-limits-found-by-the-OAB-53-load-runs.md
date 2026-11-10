@@ -1,11 +1,11 @@
 ---
 id: OAB-61
 title: Fix capacity, overload, and feed latency limits found by the OAB-53 load runs
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-10T20:51:00Z'
-updated_date: '2026-11-10T21:29:00Z'
+updated_date: '2026-11-10T21:32:00Z'
 labels: []
 dependencies: []
 references:
@@ -27,7 +27,7 @@ The OAB-53 production load runs on 2026-11-10 (Worker 1.0.4, Workers Paid, see O
 - [x] #2 A regression first shows that a Durable Object overload error becomes HTTP 500, and the fix then returns a retryable refusal (503 or 429 with Retry-After) on REST and an equivalent retryable MCP error.
 - [x] #3 The cause of slow full-feed pages is identified with a measurement, and a fix or bounded change brings a 1000-entry page well below the observed 5 s median, with a test that guards the change.
 - [x] #4 The startup schema check accepts the Miniflare-internal __miniflare_do_name table without weakening production schema validation, with a test.
-- [ ] #5 Spec sections match the change and bun run check, task review, and branch review pass before the pull request.
+- [x] #5 Spec sections match the change and bun run check, task review, and branch review pass before the pull request.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,4 +64,12 @@ F2 RED: read-response-keepalive.test.ts (mocks cloudflare:workers waitUntil). Ag
 F3 BLOCKED: a cancel-after-first-chunk test for GET /v1/changes limit=1000 fails with 'expected 4500000 to be +0' even after 15 s (held_rest_slots 1, route changes). Instrumentation: the generic JS byte stream gets 3 pulls and its cancel callback never runs after the SELF consumer cancels, with or without waitUntil and with or without type bytes. Miniflare 4 (workerd 1.20251011) socket probe: default-type streams got cancel with waitUntil, byte streams did not. Piping the generic stream through IdentityTransformStream made the test pass but broke 22 existing ownership tests (expiry errors, demand, cancellation joins), so it was reverted. No test committed; spec 6.5 states the known limit. Needs an owner decision: a writer-pump redesign of generic responses (separate task) or a deferred task with a runtime trigger.
 F5: spec schema version 9 (blob_gc table and metadata, OAB-13, 0e390af) in 802558c.
 bun run check exit 0 (protocol 314, tooling 107, plugin 879 + 1 skipped, worker 867 + http 136 + f2 149); docs:check green.
+
+Round 2 review: approve. Finding 3 (cancelled JSON byte streams keep their lease until reclaim) moves to OAB-62, which starts right after this branch. Spec §6.5 and the keepResponseWorkAlive TSDoc reference it.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Cancelled blob reads now release REST capacity promptly (waitUntil keeps response work alive after disconnect, bounded 5 s after the lease deadline). Durable Object overload errors become 429 admission_limited with Retry-After 5 on REST and MCP, keeping the admission uncertain. Full feed pages coalesce JSON into 16 KB chunks (about 470 ms to 33 ms per 1000-entry page locally). The startup schema check accepts the exact Miniflare __miniflare_do_name table. Spec schema version is 9. Cancelled JSON byte streams still hold their lease until reclaim; OAB-62 fixes that.
+<!-- SECTION:FINAL_SUMMARY:END -->

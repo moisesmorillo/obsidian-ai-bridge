@@ -34,7 +34,9 @@ async function abortResponseWriter(
  * resolves `work` when response work completes, or at most READ_SETTLEMENT_DEADLINE_MS after its
  * lease deadline. A response without a deadline lease (some MCP failure bodies) has no such bound and
  * relies on the platform waitUntil limit. Outside a request context (for example a direct unit call
- * with no invocation) there is nothing to extend, so a registration failure is ignored.
+ * with no invocation) there is nothing to extend, so a registration failure is ignored. This fixes
+ * fixed-length bodies only: generic JSON byte streams still miss consumer cancellation (spec §6.5
+ * known limit, OAB-62).
  */
 function keepResponseWorkAlive(work: Promise<void>): void {
 	try {

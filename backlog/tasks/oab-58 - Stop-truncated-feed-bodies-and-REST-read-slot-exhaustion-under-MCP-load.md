@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-10T12:08:00Z'
-updated_date: '2026-11-10T15:56:00Z'
+updated_date: '2026-11-10T16:00:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -64,4 +64,6 @@ Review fixes (reviewer minors, owner wants no deferrals):
 7. Plugin truncated readPinned, readCurrent, put, rename, delete 200 bodies: green without earlier failing test (parseJson fixed in dd3e4bc); mutation check with the old plain Error made all 9 truncated cases fail; source restored.
 8. Spec 6.5 and 12 updated.
 Validation: bun run check exit 0 (protocol 314, tooling 107, plugin 878 + 1 skipped, worker 836 + http 134 + f2 149); docs:check green. AC 5 wording unchanged pending owner decision on deviation (b).
+
+Re-review minors: (1) RED read-slot-expiry.test.ts 'admits a REST write after stalled MCP envelopes pass their grace' (8 padded MCP reads, about 59 MB shared held, PUT before grace 429) failed with 'expected 429 to be 201' for the PUT after the grace with no read or measurement between. GREEN: tryAcquireBodySlot calls sweepExpiredReadSlots first; body-budget -> read-budget is application to application, no cycle. (2) MCP reclaim test now calls readNote(10) before any snapshot, so MCP admission alone reclaims. bun run check exit 0 (protocol 314, tooling 107, plugin 878 + 1 skipped, worker 837 + http 134 + f2 149).
 <!-- SECTION:NOTES:END -->

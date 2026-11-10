@@ -1,11 +1,11 @@
 ---
 id: OAB-53
 title: Profile Worker admission heap and native memory
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-09T22:05:00Z'
-updated_date: '2026-11-10T20:52:00Z'
+updated_date: '2026-11-10T20:53:00Z'
 labels: []
 dependencies: []
 references:
@@ -163,3 +163,9 @@ Final AC1 conclusion (review M2): AC1 stays checked on this evidence only. Heap:
 
 Follow-up for the run findings: OAB-61 fixes the cancelled-blob lease hold, the Durable Object overload HTTP 500, the slow full feed, and the local Miniflare __miniflare_do_name schema failure. PR #163 (limits.cpu_ms 30000 on Workers Paid) removes the CPU-cut HTTP 200.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Measured Worker and Vault DO memory locally (Worker 57.7/90.4 MB, Vault 118.0/132.1 MB heap and heap+buffers against 128 MB) and confirmed in production. On Workers Free the 10 ms CPU limit failed first and caused cut HTTP 200 bodies; Workers Paid plus cpu_ms 30000 (PR #163) removed them. On Paid no memory failure up to concurrency 12; the single Vault DO queue is the first limit. Native categories stay unmeasured in production (OAB-6.8.2 Deferred). Follow-up defects fixed in OAB-61.
+<!-- SECTION:FINAL_SUMMARY:END -->

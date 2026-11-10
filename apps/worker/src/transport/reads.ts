@@ -29,6 +29,7 @@ import {
 	settleReadAdmission,
 } from "@worker/application/reads";
 import type { Env } from "@worker/env";
+import { jsonReadHeaders } from "@worker/transport/json-read-headers";
 import { decodeAndNormalizePath } from "@worker/transport/path";
 import {
 	encodeJsonChunks,
@@ -332,9 +333,7 @@ async function produceLazy<T, M>(
 		jsonReadSource(pageChunks(session, first, paged), () => session.cancel()),
 		session,
 		releaseSlot,
-		{
-			headers: { "Content-Type": "application/json; charset=UTF-8" },
-		},
+		{ headers: jsonReadHeaders() },
 		request.signal,
 	);
 }
@@ -384,9 +383,7 @@ function ownedJsonResponse<T>(
 		jsonReadSource(encodeJsonChunks(session.body)),
 		session,
 		releaseSlot,
-		{
-			headers: { "Content-Type": "application/json; charset=UTF-8" },
-		},
+		{ headers: jsonReadHeaders() },
 		signal,
 	);
 }
@@ -396,7 +393,7 @@ function failureResponse(failure: FileHttpFailureInput): Response {
 	const encoded = encodeFileFailure(failure);
 	return Response.json(encoded.body, {
 		status: encoded.status,
-		headers: encoded.headers,
+		headers: jsonReadHeaders(encoded.headers),
 	});
 }
 

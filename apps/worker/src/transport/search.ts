@@ -23,6 +23,7 @@ import {
 import type { SearchVaultGateway } from "@worker/application/search";
 import { readSearch } from "@worker/application/search";
 import type { Env } from "@worker/env";
+import { jsonReadHeaders } from "@worker/transport/json-read-headers";
 import {
 	encodeJsonChunks,
 	jsonReadSource,
@@ -89,7 +90,7 @@ export function createSearchRouter(
 			jsonReadSource(encodeJsonChunks(outcome.body)),
 			outcome,
 			release,
-			{ headers: { "Content-Type": "application/json" } },
+			{ headers: jsonReadHeaders({ "Content-Type": "application/json" }) },
 			context.req.raw.signal,
 		);
 	});
@@ -144,9 +145,9 @@ function failureResponse(failure: FileHttpFailureInput): Response {
 	const encoded = encodeFileFailure(failure);
 	return new Response(JSON.stringify(encoded.body), {
 		status: encoded.status,
-		headers: {
+		headers: jsonReadHeaders({
 			"Content-Type": "application/json",
 			...encoded.headers,
-		},
+		}),
 	});
 }

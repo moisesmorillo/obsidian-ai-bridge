@@ -68,6 +68,40 @@ describe("bounded read HTTP routes", () => {
 		});
 	});
 
+	it("sends no-transform on every JSON read and read failure", async () => {
+		const created = await SELF.fetch(
+			"https://worker.invalid/v1/files/note.md",
+			{
+				method: "PUT",
+				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+				body: "read me",
+			},
+		);
+		await created.text();
+		const routes = [
+			["/v1/vault", 200],
+			["/v1/manifest", 200],
+			[`/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0`, 200],
+			["/v1/history/note.md", 200],
+			["/v1/search?q=read", 200],
+			["/v1/changes", 400],
+			["/v1/manifest?unknown=1", 400],
+			["/v1/search?unknown=1", 400],
+		] as const;
+		for (const [route, status] of routes) {
+			const response = await SELF.fetch(`https://worker.invalid${route}`);
+			expect({ route, status: response.status }).toEqual({ route, status });
+			expect({
+				route,
+				cacheControl: response.headers.get("Cache-Control"),
+			}).toEqual({ route, cacheControl: "no-transform" });
+			expect(response.headers.get("Content-Type")).toMatch(
+				/^application\/json/,
+			);
+			await response.text();
+		}
+	});
+
 	it("holds four response slots while a page remains unread", async () => {
 		const responses = await Promise.all(
 			Array.from({ length: 5 }, () =>

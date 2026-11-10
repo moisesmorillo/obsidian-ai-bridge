@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/moisesmorillo/vaultwire/compare/worker-v1.0.3...worker-v1.0.4) (2026-11-10)
+
+
+### Bug Fixes
+
+* **worker:** declare a 30 s CPU limit for production ([#163](https://github.com/moisesmorillo/vaultwire/issues/163)) ([9624be4](https://github.com/moisesmorillo/vaultwire/commit/9624be4a8bd1db246f2da69baf7894e23ce0155b))
+
 ## [1.0.3](https://github.com/moisesmorillo/vaultwire/compare/worker-v1.0.2...worker-v1.0.3) (2026-11-10)
 
 

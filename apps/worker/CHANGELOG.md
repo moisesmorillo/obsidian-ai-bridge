@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/moisesmorillo/vaultwire/compare/worker-v1.0.1...worker-v1.0.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **worker:** compact consent scope layout ([#152](https://github.com/moisesmorillo/vaultwire/issues/152)) ([37ad057](https://github.com/moisesmorillo/vaultwire/commit/37ad05763ddba5548136fb7d63187f9244289eb3))
+
 ## [1.0.1](https://github.com/moisesmorillo/vaultwire/compare/worker-v1.0.0...worker-v1.0.1) (2026-11-10)
 
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-10T20:51:00Z'
-updated_date: '2026-11-10T21:14:00Z'
+updated_date: '2026-11-10T21:29:00Z'
 labels: []
 dependencies: []
 references:
@@ -57,4 +57,11 @@ Plugin: no change needed. publication.ts handleFailure retries 429 admission_lim
 Validation: bun run docs:check passed. bun run check exit 0 (protocol 314, tooling 107, plugin 879 + 1 skipped, worker 861 + http 136 + f2 149). Spec: section 5 schema paragraph (startup check ignores the exact Miniflare table), section 6.5 (waitUntil keep-alive for owned read responses, 16,384-byte JSON chunk coalescing with measurements, overload refusal 429 admission_limited Retry-After 5 for REST and MCP). Commits: 2752e30, 3bfc0ab, 765cc13, 6f1cd3c, 3bbf0c3, cb98669, 1b29d97. AC 1-4 checked with the RED/GREEN evidence above; AC 5 left for the parent (task review, branch review, PR).
 Deviations: (a) item 1 keeps the 4,500,000-byte REST reservation for blob streams; the defect was the missed cancellation, not the charge; changing blob accounting is an owner decision. (b) no compatibility flag change: enable_request_signal is not needed for the fix. (c) item 3 keeps 64-row storage batches (17 DO RPCs per 1,000-entry page); the chunk count was the measured cost. Production latency after deploy is not yet measured. (d) The overload refusal uses the existing 429 admission_limited code, not a new 503 code, so protocol shapes stay unchanged.
 Risks: waitUntil keeps the invocation alive until lease completion; a response that nobody consumes or cancels stays bounded by the lease deadline and platform waitUntil limits. The real-network disconnect path is proven with a local Miniflare socket probe and the SELF cancel test, not in production. A refused overloaded mutation can still have reached the object; retries stay conditional.
+
+Review round 1 (rebased onto origin/main f7d003f).
+F1 RED: vault-overload.test.ts now asserts remaining admission states. Seven cases failed with 'expected [] to deeply equal [uncertain]': REST blob PUT at commitBlob, vault read, content read, history read, search; MCP search_notes and get_history. GREEN: knownFailureCompletion keeps VaultOverloaded uncertain in application/blobs.ts, transport/content-reads.ts, application/reads.ts (finishReadFailure completion), application/search.ts; still 429 admission_limited. Commit 86bfb56. Rename (commitFileCommand), PUT authorize/commit, update_note and create_note commit already stayed uncertain (F4 cases added there, green on first run).
+F2 RED: read-response-keepalive.test.ts (mocks cloudflare:workers waitUntil). Against the previous read-response.ts: 'expected [Promise] to have a length of +0' (keep-alive registered before the RangeError) and 'expected false to be true' (keep-alive still pending 5 s after a deadline whose cancellation never settles). GREEN: length validated first; expire() ends keep-alive when finish settles or after READ_SETTLEMENT_DEADLINE_MS (now exported). Commit 8ec0f9a.
+F3 BLOCKED: a cancel-after-first-chunk test for GET /v1/changes limit=1000 fails with 'expected 4500000 to be +0' even after 15 s (held_rest_slots 1, route changes). Instrumentation: the generic JS byte stream gets 3 pulls and its cancel callback never runs after the SELF consumer cancels, with or without waitUntil and with or without type bytes. Miniflare 4 (workerd 1.20251011) socket probe: default-type streams got cancel with waitUntil, byte streams did not. Piping the generic stream through IdentityTransformStream made the test pass but broke 22 existing ownership tests (expiry errors, demand, cancellation joins), so it was reverted. No test committed; spec 6.5 states the known limit. Needs an owner decision: a writer-pump redesign of generic responses (separate task) or a deferred task with a runtime trigger.
+F5: spec schema version 9 (blob_gc table and metadata, OAB-13, 0e390af) in 802558c.
+bun run check exit 0 (protocol 314, tooling 107, plugin 879 + 1 skipped, worker 867 + http 136 + f2 149); docs:check green.
 <!-- SECTION:NOTES:END -->

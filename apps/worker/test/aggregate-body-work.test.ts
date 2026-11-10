@@ -7,6 +7,7 @@ import {
 	executeFileCommand,
 	type HistoryVaultGateway,
 } from "@worker/application/history";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { executeTextMutation } from "@worker/application/text-files";
 import { prepareTextPayload } from "@worker/application/text-payload";
@@ -20,7 +21,7 @@ import {
 import { readInlineBody } from "@worker/transport/body";
 import { withMutationResponse } from "@worker/transport/mutation-response";
 import { createWorker } from "@worker/transport/worker";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 /** Resolve controlled waits without retaining request bytes. */
 function gate() {
@@ -968,6 +969,10 @@ describe("aggregate body ownership", () => {
 			holdFirstReadCleanup = false;
 			finishResume.release();
 			await readCleanup;
+			// A native body observes cancellation at its next write; await cancel does not join cleanup.
+			await vi.waitFor(() =>
+				expect(readSlotCapacitySnapshot().held_rest_slots).toBe(3),
+			);
 			const recoveredRead = await worker.fetch(
 				new Request(`https://${hosts[8]}/v1/vault`),
 				env,

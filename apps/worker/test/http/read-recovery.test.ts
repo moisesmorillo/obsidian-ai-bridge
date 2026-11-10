@@ -13,11 +13,12 @@ import {
 	type HistoryPage,
 	type ManifestPage,
 } from "@vaultwire/protocol";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
 import { TEXT_FIXTURE_EPOCH as epoch } from "@worker/test-fixtures/text-files";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const host = "recovery.invalid";
 const identity: AuthorizationContext = {
@@ -537,14 +538,17 @@ describe("real HTTP recovery and server acceptance", () => {
 			);
 			expect(count, route).toBe(1);
 			await response.body?.cancel();
-			const after = await runInDurableObject(
-				vault(),
-				async (_instance, state) =>
-					state.storage.sql
-						.exec("SELECT count(*) AS n FROM operation_admissions")
-						.one().n,
-			);
-			expect(after, route).toBe(0);
+			// A native body observes cancellation at its next write; await cancel does not join cleanup.
+			await vi.waitFor(async () => {
+				const after = await runInDurableObject(
+					vault(),
+					async (_instance, state) =>
+						state.storage.sql
+							.exec("SELECT count(*) AS n FROM operation_admissions")
+							.one().n,
+				);
+				expect(after, route).toBe(0);
+			});
 		}
 	});
 	it("shares metadata slots with current, exact, whole-blob, and range responses across vault hosts", async () => {
@@ -603,6 +607,10 @@ describe("real HTTP recovery and server acceptance", () => {
 				}
 			} finally {
 				for (const response of held) await response.body?.cancel();
+				// A native body observes cancellation at its next write; await cancel does not join cleanup.
+				await vi.waitFor(() =>
+					expect(readSlotCapacitySnapshot().held_rest_slots).toBe(0),
+				);
 			}
 		}
 	});

@@ -200,6 +200,8 @@ CREATE TABLE packed_export_chunks (
 
 The canonical schema version is 8. Versions 1 through 5 fail closed without writes. The service upgrades exact version-6 and version-7 stores in one transaction and rejects other unsupported storage without repair. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Version 6 adds nullable `files.renamed_to` for the immediate destination of a source rename tombstone. Version 7 adds the owner registry and one-use CSRF tables. Version 8 adds resumable packed-export tables, bounded payload chunks, and their unique indexes. Fresh version-8 vaults initialize all history counters and the feed boundary to zero.
 
+The startup check rejects every catalog object that the schema does not define. It ignores only platform objects: SQLite internals, native FTS shadow tables, the `_cf_METADATA` alarm table, and the local Miniflare table `__miniflare_do_name` with its exact definition `(id INTEGER PRIMARY KEY, name TEXT)`. A different definition or another `__miniflare_` name still fails.
+
 A rename writes the immediate destination path to the source tombstone in the same transaction as the destination row and change entry. The hint survives feed pruning and remains until a later mutation replaces the source row. Recreate, restore, ordinary delete, and rename to another destination clear or replace any prior hint. Live rows and ordinary delete tombstones have no hint. The hint is diagnostic metadata, not a redirect.
 
 Version 2 adds `operation_admissions`:
@@ -349,11 +351,15 @@ This boundary does not prove client receipt or release by the last native owner.
 
 Mutation failure responses preserve complete authorized text through bounded JSON chunks. Encoding does not create a complete escaped content string or a complete JSON body. Response reads and encoded chunks stay at or below 65,536 bytes.
 
+JSON read and MCP responses join encoded tokens into chunks of at most 16,384 bytes. A token part that does not fit flushes the chunk first. Feed, manifest, and history pages also flush before each storage batch request, so batch demand stays one at a time. Each response chunk crosses the runtime output pipe on its own. Token-sized chunks made a 1,000-entry feed page (219 KB) 54,017 chunks. Local reads took about 470 ms, and production reads took 5 to 15 s (OAB-53, 2026-11-10). Coalesced, the same local page takes about 33 ms.
+
 Native body reads request at most 65,536 bytes at a time. Raw inline text bodies and decoded note text remain limited to 1,000,000 bytes. The REST heading-append JSON body has a separate 6,100,000-byte wire limit for JSON escaping. Inline readers allocate at most their per-request wire limit and do not retain borrowed chunks. Blob reads and writes use bounded native streams, without a complete blob buffer.
 
 REST reads use four isolate-local slots and a separate 18,000,000-byte pool. Each REST read reserves 4,500,000 bytes. MCP reads use eight separate slots and cannot consume REST capacity.
 
 Each read lease expires after 60,000 ms. Admission, completion checks, and capacity observations sweep overdue leases when request timers stop. Expiry frees logical capacity but does not prove that physical source work stopped.
+
+Every owned read response registers its remaining work with `waitUntil` until its lease completes. The platform cancels every task of a request whose client disconnects unless `waitUntil` holds it. Without this registration a canceled body never sees its failed write or cancels its source. Its lease and bytes then stayed held until the reclaim deadline, about 120 s (OAB-53). With it, a canceled 25 MB blob read returns its REST slot and 4,500,000 bytes after the pending storage read and source cancellation settle. Native fixed-length framing and the OAB-36 ordering stay unchanged.
 
 Byte ownership continues until started source work and cancellation settle, or until the reclaim deadline. The reclaim deadline is the lease deadline plus a 60,000 ms grace. At that deadline the Worker releases the byte reservations of unsettled work once and counts the lease as reclaimed unsettled. A REST lease releases its REST read bytes. An MCP read lease releases its MCP envelope reservation in the shared pool, which also frees one MCP admission count. A later settlement releases nothing a second time. Admission and capacity observations apply the reclaim without a timer. Reclaim bounds the time a stalled read can fill the REST or shared pool. It does not prove that physical source work stopped. Count or byte refusal occurs before metadata or R2 demand.
 
@@ -372,6 +378,8 @@ Eight MCP envelopes can run at the same time if their bytes fit. MCP admission w
 A full logical MCP read pool returns `Retry-After` from its earliest active lease deadline. The estimate uses whole seconds rounded upward, bounded from 2 through 60. This estimate does not predict physical-byte release.
 
 Unknown physical-byte completion returns `Retry-After: 2`. Logical read expiry does not establish physical completion. Durable authority retry values stay unchanged.
+
+A Vault Durable Object call that the platform refuses as overloaded (`overloaded === true`, for example "Durable Object is overloaded. Requests queued for too long.") returns `429 admission_limited` with `Retry-After: 5` on REST. An MCP tool result carries the `admission_limited` tool error. An overload in the MCP request epoch check returns HTTP 429 with `retry-after: 5`. The Worker does not retry the call. The refused call can still have reached the object, so durable admission stays uncertain where a rejected call already keeps it so, and mutation retries stay conditional on the observed revision. Other unknown RPC failures remain `500 internal_error`. The plugin retries the refusal after the larger of its backoff and `Retry-After`.
 
 The plugin treats a 2xx response whose body is not valid JSON as a truncated transfer. It raises the retryable network failure class, so status reports a network failure and the next cycle retries. A valid JSON body that fails its schema stays a protocol fault.
 

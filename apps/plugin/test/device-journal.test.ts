@@ -17,6 +17,8 @@ class MemoryStorage {
 	failStateWrite = false;
 	throwStateWrite = false;
 	failPayloadWrite = false;
+	/** Corrupts one persisted payload to exercise read-back hash validation. */
+	corruptPayloadWrite = false;
 	throwStateRead = false;
 	throwPayloadRead = false;
 
@@ -41,7 +43,12 @@ class MemoryStorage {
 	/** Stores a defensive copy or injects a payload persistence failure. */
 	async writePayload(path: string, bytes: Uint8Array): Promise<void> {
 		if (this.failPayloadWrite) throw new Error("payload write failed");
-		this.payloads.set(path, bytes.slice());
+		const saved = bytes.slice();
+		if (this.corruptPayloadWrite) {
+			this.corruptPayloadWrite = false;
+			saved[0] = (saved[0] ?? 0) ^ 0xff;
+		}
+		this.payloads.set(path, saved);
 	}
 }
 
@@ -705,6 +712,127 @@ describe("DeviceJournal", () => {
 		).rejects.toThrow("payload write failed");
 		expect(journal.snapshot().pending_ops).toEqual([]);
 		expect(journal.attentionStage).toBe("payload_write");
+	});
+
+	it.each([
+		{
+			failure: "write",
+			setup: (store: MemoryStorage) => {
+				store.failPayloadWrite = true;
+			},
+		},
+		{
+			failure: "read",
+			setup: (store: MemoryStorage) => {
+				store.throwPayloadRead = true;
+			},
+		},
+		{
+			failure: "verification",
+			setup: (store: MemoryStorage) => {
+				store.corruptPayloadWrite = true;
+			},
+		},
+	])(
+		"preserves queued create bytes after relocation payload $failure failure and restart",
+		async ({ setup }) => {
+			const journal = await DeviceJournal.open(storage);
+			const sourceBytes = new TextEncoder().encode("source durable bytes");
+			const source = await journal.enqueue(
+				{ op: "put", path: "source.md", precondition: { kind: "absent" } },
+				sourceBytes,
+			);
+			setup(storage);
+
+			await expect(
+				journal.relocateQueuedCreate(
+					source.key,
+					{ op: "put", path: "target.md", precondition: { kind: "absent" } },
+					new TextEncoder().encode("destination bytes"),
+				),
+			).rejects.toThrow();
+			storage.failPayloadWrite = false;
+			storage.throwPayloadRead = false;
+
+			const reopened = await DeviceJournal.open(storage);
+			const pending = reopened.snapshot().pending_ops;
+			expect(pending).toHaveLength(1);
+			expect(pending[0]).toMatchObject({
+				key: source.key,
+				path: "source.md",
+				state: "queued",
+			});
+			expect(
+				await reopened.readPayload(source.payload_ref, source.payload_hash),
+			).toEqual(sourceBytes);
+		},
+	);
+
+	it("preserves queued create bytes after relocation state commit failure and restart", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const sourceBytes = new TextEncoder().encode("source durable bytes");
+		const source = await journal.enqueue(
+			{ op: "put", path: "source.md", precondition: { kind: "absent" } },
+			sourceBytes,
+		);
+		storage.failStateWrite = true;
+
+		await expect(
+			journal.relocateQueuedCreate(
+				source.key,
+				{ op: "put", path: "target.md", precondition: { kind: "absent" } },
+				new TextEncoder().encode("destination bytes"),
+			),
+		).rejects.toThrow();
+		storage.failStateWrite = false;
+
+		const reopened = await DeviceJournal.open(storage);
+		const pending = reopened.snapshot().pending_ops;
+		expect(pending).toHaveLength(1);
+		expect(pending[0]).toMatchObject({
+			key: source.key,
+			path: "source.md",
+			state: "queued",
+		});
+		expect(
+			await reopened.readPayload(source.payload_ref, source.payload_hash),
+		).toEqual(sourceBytes);
+	});
+
+	it("retains a relocated create after restart and supports another unsent rename", async () => {
+		let journal = await DeviceJournal.open(storage);
+		const sourceBytes = new TextEncoder().encode("latest moved bytes");
+		const source = await journal.enqueue(
+			{ op: "put", path: "first.md", precondition: { kind: "absent" } },
+			sourceBytes,
+		);
+		const firstMove = await journal.relocateQueuedCreate(
+			source.key,
+			{ op: "put", path: "second.md", precondition: { kind: "absent" } },
+			sourceBytes,
+		);
+		journal = await DeviceJournal.open(storage);
+		const restarted = journal.snapshot().pending_ops[0];
+		if (!restarted) throw new Error("Expected relocated create after restart");
+		expect(restarted).toMatchObject({ key: firstMove.key, path: "second.md" });
+		expect(
+			await journal.readPayload(restarted.payload_ref, restarted.payload_hash),
+		).toEqual(sourceBytes);
+
+		const secondMove = await journal.relocateQueuedCreate(
+			restarted.key,
+			{ op: "put", path: "third.md", precondition: { kind: "absent" } },
+			sourceBytes,
+		);
+		expect(journal.snapshot().pending_ops).toMatchObject([
+			{ key: secondMove.key, path: "third.md", state: "queued" },
+		]);
+		expect(
+			await journal.readPayload(
+				secondMove.payload_ref,
+				secondMove.payload_hash,
+			),
+		).toEqual(sourceBytes);
 	});
 
 	it("rejects a payload that changes after enqueue", async () => {

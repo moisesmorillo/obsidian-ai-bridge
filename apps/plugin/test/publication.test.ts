@@ -436,6 +436,38 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("follows repeated renames of one unsent create to the newest destination", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		vault.files.set("first.md", "moving bytes");
+		await controller.observe({ type: "create", path: "first.md" });
+		vault.files.delete("first.md");
+		vault.files.set("second.md", "moving bytes");
+		await controller.observe({
+			type: "rename",
+			path: "first.md",
+			to: "second.md",
+		});
+		vault.files.delete("second.md");
+		vault.files.set("third.md", "moving bytes");
+		await controller.observe({
+			type: "rename",
+			path: "second.md",
+			to: "third.md",
+		});
+
+		expect(journal.snapshot().pending_ops).toMatchObject([
+			{ op: "put", path: "third.md", state: "queued" },
+		]);
+		expect(journal.snapshot().attention).toEqual([]);
+		await controller.flush();
+		expect(remote.writes.map(({ path, text }) => ({ path, text }))).toEqual([
+			{ path: "third.md", text: "moving bytes" },
+		]);
+		expect(remote.deletes).toEqual([]);
+		expect(remote.renames).toEqual([]);
+		controller.close();
+	});
+
 	it("retires a redundant source create when destination work already owns the bytes", async () => {
 		const { controller, journal, vault } = await openController();
 		vault.files.set("source.md", "source bytes");

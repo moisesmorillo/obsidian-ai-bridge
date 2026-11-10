@@ -451,6 +451,35 @@ describe("SyncTransport", () => {
 		},
 	);
 
+	it.each(["readPinned", "readCurrent", "put", "rename", "delete"] as const)(
+		"raises a retryable network failure for a truncated %s 200 body",
+		async (operation) => {
+			const session = new ResponseSession();
+			const etag = `"${epoch}.4"`;
+			const text = `{"path":"notes/a.md","etag":"${epoch}.4","con`;
+			session.responses.push({
+				status: 200,
+				headers: { etag, "content-type": "application/json" },
+				text,
+			});
+			const transport = new SyncTransport("https://service.test", session);
+			const match = { kind: "match" as const, epoch, rev: 4 };
+			const pending =
+				operation === "readPinned"
+					? transport.readPinned("notes/a.md", epoch, 4)
+					: operation === "readCurrent"
+						? transport.readCurrent("notes/a.md")
+						: operation === "put"
+							? transport.put("notes/a.md", "text", match, "key-1", epoch)
+							: operation === "rename"
+								? transport.rename("notes/a.md", "notes/b.md", match, "key-1")
+								: transport.delete("notes/a.md", match, "key-1");
+			const error = await pending.catch((caught: unknown) => caught);
+			expect(error).toBeInstanceOf(DeviceSessionNetworkError);
+			expect(String(error)).not.toContain(text);
+		},
+	);
+
 	it("rejects a partial JSON read as a full pinned revision", async () => {
 		const session = new ResponseSession();
 		session.responses.push({

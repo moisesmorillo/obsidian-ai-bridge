@@ -17,9 +17,10 @@ export const READ_SLOT_LIMIT = REST_READ_SLOT_LIMIT + MCP_READ_SLOT_LIMIT;
 export const READ_SLOT_HOLD_DEADLINE_MS = 60_000;
 /**
  * Grace, in milliseconds after the logical hold deadline, that unsettled response work keeps its
- * physical byte reservation. At the end of the grace the reservation is reclaimed once, even when
- * late source work or cancellation never settles, so stalled reads cannot fill the REST pool for the
- * isolate lifetime. Owner decision D1 of OAB-58.
+ * physical byte reservations: the REST read reservation of a REST lease and the attached MCP
+ * envelope reservation of an MCP lease. At the end of the grace these reservations are released
+ * once, even when late source work or cancellation never settles, so stalled reads cannot fill the
+ * REST or shared pool for the isolate lifetime. Owner decision D1 of OAB-58.
  */
 export const READ_SLOT_RECLAIM_GRACE_MS = 60_000;
 const activeLeases = new Map<number, ReadSlotLeaseState>();
@@ -27,7 +28,10 @@ const activeLeases = new Map<number, ReadSlotLeaseState>();
 const heldLeases = new Map<number, HeldReadSlotState>();
 let nextLeaseId = 0;
 let expiredReadSlots = 0;
-/** Expired leases whose byte reservation was reclaimed before their work settled. */
+/**
+ * REST and MCP leases whose work was still unsettled at the reclaim deadline. Each count released
+ * that lease's byte reservations: REST read bytes for REST, attached shared bytes for MCP.
+ */
 let reclaimedUnsettledReadSlots = 0;
 /** Opaque process-local identifier used only in owner observations, created on first use. */
 let isolateId: string | undefined;
@@ -52,7 +56,7 @@ interface HeldReadSlotState {
 	acquiredAt: number;
 	/** Physical reclaim deadline: the logical deadline plus the reclaim grace, in Unix milliseconds. */
 	reclaimAt: number;
-	/** Release the byte reservation of unsettled work once and count the reclaim. */
+	/** Release the byte reservations of unsettled work once and count the reclaim. */
 	reclaim: () => void;
 }
 
@@ -201,10 +205,14 @@ export function readSlotRetryAfterSeconds(leaseClass: ReadSlotClass): number {
 /**
  * Reserve a REST or MCP read slot without queueing.
  * @param route - Route family recorded for owner measurements; it does not change admission.
+ * @param reclaimable - Reservation the caller owns and releases on completion, such as an MCP
+ * envelope. The lease releases it only at the reclaim deadline of unsettled work; the handle must be
+ * idempotent so a late caller release is harmless.
  */
 export function tryAcquireReadSlot(
 	leaseClass: ReadSlotClass = "rest",
-	route: ReadSlotRoute = "other",
+	route: ReadSlotRoute = leaseClass === "mcp" ? "mcp" : "other",
+	reclaimable?: AdmissionByteReservation,
 ): ReadSlotLease | undefined {
 	sweepExpiredReadSlots();
 	const classLimit =
@@ -276,11 +284,12 @@ export function tryAcquireReadSlot(
 	/** Reclaim the physical reservation of unsettled work once at its reclaim deadline. */
 	const reclaim = () => {
 		if (completed || reclaimed) return;
-		// An unexpired lease is still within its logical hold; expire it before reclaiming bytes.
+		// Defensive: make sure logical expiry happened before releasing bytes.
 		expire();
 		reclaimed = true;
 		heldLeases.delete(id);
 		byteReservation?.release();
+		reclaimable?.release();
 		reclaimedUnsettledReadSlots += 1;
 	};
 	release.onExpire = (listener) => {

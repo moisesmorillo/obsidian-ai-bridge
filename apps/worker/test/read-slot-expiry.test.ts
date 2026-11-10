@@ -221,3 +221,105 @@ describe("unsettled REST read reclaim", () => {
 		);
 	});
 });
+
+describe("unsettled MCP read reclaim", () => {
+	it("releases shared bytes of eight stalled MCP reads after their grace", async () => {
+		const host = "mcp-reclaim.invalid";
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			state.storage.sql.exec("PRAGMA foreign_keys = ON");
+			initializeVaultStorage(
+				state.storage,
+				() => TEXT_FIXTURE_EPOCH,
+				() => 10_000,
+			);
+			await seedLiveTextState(state.storage, {
+				path: "task.md",
+				content: "task",
+			});
+			state.storage.sql.exec("DELETE FROM operation_admissions");
+		});
+		const stalled = gate();
+		const allStarted = gate();
+		let started = 0;
+		const gateway = new Proxy(stub, {
+			/** Stall the first eight note reads after native work, as a never-settling RPC would. */
+			get(target, property) {
+				const method = Reflect.get(target, property, target);
+				if (typeof method !== "function") return method;
+				return async (...args: unknown[]) => {
+					const result = await Reflect.apply(method, target, args);
+					if (property === "readText" && started < 8) {
+						started += 1;
+						if (started === 8) allStarted.resolve();
+						await stalled.promise;
+					}
+					return result;
+				};
+			},
+		});
+		const worker = createWorker(
+			async () => identity,
+			() => gateway,
+			() => new R2BlobStore(env.R2_BUCKET),
+		);
+		/** Build one MCP read_note request with an exact Content-Length. */
+		const readNote = (id: number) => {
+			const body = JSON.stringify({
+				jsonrpc: "2.0",
+				id,
+				method: "tools/call",
+				params: { name: "read_note", arguments: { path: "task.md" } },
+			});
+			return worker.fetch(
+				new Request(`https://${host}/mcp`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+						"content-length": String(body.length),
+					},
+					body,
+				}),
+				env,
+			);
+		};
+		vi.useFakeTimers();
+		const before = readSlotCapacitySnapshot().reclaimed_unsettled_count ?? 0;
+		const reads = Array.from({ length: 8 }, (_, index) => readNote(index + 1));
+		await allStarted.promise;
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		for (const response of await Promise.all(reads)) {
+			expect(response.status).toBe(500);
+			await response.text();
+		}
+		expect(admissionByteSnapshot().shared_bytes).toBeGreaterThan(0);
+		const refused = readNote(9);
+		await vi.advanceTimersByTimeAsync(2_000);
+		const limited = await refused;
+		expect(limited.status).toBe(429);
+		await limited.text();
+		vi.setSystemTime(Date.now() + 58_000);
+		expect(readSlotCapacitySnapshot()).toMatchObject({
+			shared_bytes: 0,
+			held_mcp_slots: 0,
+			reclaimed_unsettled_count: before + 8,
+		});
+		const admitted = await readNote(10);
+		expect(admitted.status).toBe(200);
+		await admitted.text();
+		stalled.resolve();
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.waitFor(() =>
+			expect(admissionByteSnapshot()).toMatchObject({
+				shared_bytes: 0,
+				active_reservations: 0,
+			}),
+		);
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 8,
+		);
+	});
+});

@@ -467,7 +467,7 @@ export async function handleMcpHttp(
 				release();
 				return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
 			}
-			releaseRead = tryAcquireReadSlot("mcp");
+			releaseRead = tryAcquireReadSlot("mcp", "mcp", admissionReservation);
 			deadlineLease = releaseRead;
 			if (!releaseRead) {
 				admissionReservation.release();

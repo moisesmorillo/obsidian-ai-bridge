@@ -12,8 +12,8 @@ const TimestampSchema = z.number().int().nonnegative().safe();
 /** Nonnegative safe count or duration used by measurement contracts. */
 const CountSchema = z.number().int().nonnegative().safe();
 /**
- * Route family that acquired a REST read lease, reported only in owner measurements.
- * `other` labels acquisitions without a route, such as test fixtures.
+ * Route family that acquired a REST or MCP read lease, reported only in owner measurements.
+ * `mcp` labels MCP tool reads; `other` labels acquisitions without a route, such as test fixtures.
  */
 export const ReadSlotRouteSchema = z.enum([
 	"vault",
@@ -22,6 +22,7 @@ export const ReadSlotRouteSchema = z.enum([
 	"history",
 	"search",
 	"files",
+	"mcp",
 	"other",
 ]);
 /** Verified request observation recorded at the resource-router boundary. */
@@ -270,7 +271,7 @@ export const MeasurementResponseSchema = z
 				limit: CountSchema,
 				expired_count: CountSchema,
 				deadline_ms: CountSchema,
-				/** Expired leases whose unsettled work lost its byte reservation at the reclaim deadline. */
+				/** REST and MCP leases whose unsettled work had its byte reservations released at the reclaim deadline. */
 				reclaimed_unsettled_count: CountSchema.optional(),
 				/** Grace after the hold deadline before unsettled bytes are reclaimed, in milliseconds. */
 				reclaim_grace_ms: CountSchema.optional(),
@@ -285,6 +286,7 @@ export const MeasurementResponseSchema = z
 				/** Oldest held REST lease, or null when no REST lease is held. */
 				oldest_rest_lease: z
 					.object({
+						/** Route family of the lease; only REST families appear here, never `mcp`. */
 						route: ReadSlotRouteSchema,
 						/** Lease age at observation, in milliseconds. */
 						age_ms: CountSchema,
@@ -310,7 +312,7 @@ export type MeasurementAggregate = z.infer<typeof MeasurementAggregateSchema>;
 export type OwnerMeasurementsRequest = z.infer<
 	typeof OwnerMeasurementsRequestSchema
 >;
-/** Route family label of one REST read lease. */
+/** Route family label of one REST or MCP read lease. */
 export type ReadSlotRoute = z.infer<typeof ReadSlotRouteSchema>;
 /** Validated owner response with explicit unknown, stale, and coverage states. */
 export type MeasurementResponse = z.infer<typeof MeasurementResponseSchema>;

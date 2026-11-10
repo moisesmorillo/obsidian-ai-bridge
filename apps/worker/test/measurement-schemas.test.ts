@@ -2,6 +2,7 @@ import {
 	MEASUREMENT_LIMITS,
 	MeasurementAggregateSchema,
 	MeasurementResponseSchema,
+	ReadSlotRouteSchema,
 	RequestObservationSchema,
 } from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
@@ -104,6 +105,7 @@ describe("measurement schemas", () => {
 				worker_isolate: { ...isolate, ...pool },
 			}).success,
 		).toBe(true);
+		expect(ReadSlotRouteSchema.options).toContain("mcp");
 		expect(
 			MeasurementResponseSchema.safeParse({
 				...response,

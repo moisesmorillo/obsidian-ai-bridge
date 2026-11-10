@@ -87,6 +87,8 @@ describe("bounded read HTTP routes", () => {
 			["/v1/changes", 400],
 			["/v1/manifest?unknown=1", 400],
 			["/v1/search?unknown=1", 400],
+			["/v1/files/missing.md", 404],
+			["/v1/files/note.md?rev=abc", 400],
 		] as const;
 		for (const [route, status] of routes) {
 			const response = await SELF.fetch(`https://worker.invalid${route}`);

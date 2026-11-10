@@ -71,6 +71,29 @@ export const SCHEMA = [
 /** Platform catalog table used to persist native Durable Object alarm state. */
 const ALARM_METADATA_TABLE = "_cf_METADATA";
 
+/**
+ * Local-only table that Miniflare's Durable Object wrapper creates to remember the instance name.
+ * Only this exact name with this exact stored DDL is treated as platform-owned; any other table,
+ * including a lookalike name or definition, still fails the startup check. Production storage never
+ * contains it.
+ */
+const MINIFLARE_NAME_TABLE = {
+	name: "__miniflare_do_name",
+	sql: "CREATE TABLE __miniflare_do_name (id INTEGER PRIMARY KEY, name TEXT)",
+} as const;
+
+/** True for platform-owned catalog rows: SQLite internals, alarm metadata, and the exact Miniflare name table. */
+function isPlatformCatalogObject({ type, name, sql }: CatalogObject): boolean {
+	if (name.startsWith("sqlite_")) return true;
+	if (type !== "table") return false;
+	if (name === ALARM_METADATA_TABLE) return true;
+	return (
+		name === MINIFLARE_NAME_TABLE.name &&
+		sql !== null &&
+		normalizeSchemaSql(sql) === MINIFLARE_NAME_TABLE.sql
+	);
+}
+
 /** SQLite catalog kinds used by this module's private frozen-DDL compatibility check. */
 type SchemaObjectKind = "table" | "index";
 
@@ -159,8 +182,7 @@ export function initializeVaultStorage(
 			"SELECT type, name, sql FROM sqlite_master",
 		);
 		const applicationObjects = catalogObjects.filter(
-			({ name }) =>
-				!name.startsWith("sqlite_") && name !== ALARM_METADATA_TABLE,
+			(object) => !isPlatformCatalogObject(object),
 		);
 		if (applicationObjects.length === 0) {
 			createFreshVault(tx, createEpoch, now);
@@ -282,9 +304,7 @@ function rejectUnexpectedCatalogObjects(
 	const expectedNames = new Set(schemaObjects(schema).map(({ name }) => name));
 	for (const actual of catalogObjects) {
 		if (expectedNames.has(actual.name)) continue;
-		if (actual.type === "table" && actual.name === ALARM_METADATA_TABLE)
-			continue;
-		if (actual.name.startsWith("sqlite_")) continue;
+		if (isPlatformCatalogObject(actual)) continue;
 		if (actual.type === "table" && tableKinds.get(actual.name) === "shadow")
 			continue;
 		throw new Error(`Unexpected vault ${actual.type}: ${actual.name}`);

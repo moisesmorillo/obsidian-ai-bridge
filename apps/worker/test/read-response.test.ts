@@ -350,8 +350,8 @@ describe("owned read response", () => {
 			previousCalls = sourceCalls;
 		}
 		expect(stableTurns).toBeGreaterThanOrEqual(3);
-		expect(sourceCalls).toBeGreaterThan(1);
-		expect(sourceCalls).toBeLessThan(chunkCount + 1);
+		// One buffered chunk plus one unread write.
+		expect(sourceCalls).toBe(2);
 		await vi.advanceTimersByTimeAsync(60_000);
 		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
@@ -482,13 +482,19 @@ describe("owned read response", () => {
 		vi.useFakeTimers();
 		const release = tryAcquireReadSlot();
 		if (!release) throw new Error("Expected an available read slot");
+		const eofDemanded = barrier<void>();
+		const eof = barrier<IteratorResult<Uint8Array>>();
 		const response = ownedReadResponse(
 			{
-				next: async () => {
+				next: () => {
 					demands++;
-					return demands === 1
-						? { done: false, value: new Uint8Array([1]) }
-						: { done: true, value: undefined };
+					if (demands === 1)
+						return Promise.resolve({
+							done: false,
+							value: new Uint8Array([1]),
+						});
+					eofDemanded.resolve();
+					return eof.promise;
 				},
 				cancel: async () => {},
 			},
@@ -504,13 +510,56 @@ describe("owned read response", () => {
 		if (!response.body) throw new Error("Read response has no body");
 		const reader = response.body.getReader();
 		expect((await reader.read()).done).toBe(false);
-		expect(demands).toBe(1);
+		// The EOF demand starts only after the consumer read the final data chunk.
+		await eofDemanded.promise;
+		expect(demands).toBe(2);
 		expect(finished).toEqual([]);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(1);
-		expect((await reader.read()).done).toBe(true);
+		const ending = reader.read();
+		await Promise.resolve();
+		expect(finished).toEqual([]);
+		eof.resolve({ done: true, value: undefined });
+		expect((await ending).done).toBe(true);
 		expect(finished).toEqual(["settled"]);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
 		expect(vi.getTimerCount()).toBe(0);
+	});
+	it("keeps a generic body one 16 KB chunk ahead of an idle consumer", async () => {
+		const release = tryAcquireReadSlot();
+		if (!release) throw new Error("Expected an available read slot");
+		const chunk = new Uint8Array(JSON_CHUNK_TARGET_BYTES).fill(7);
+		let demands = 0;
+		const response = ownedReadResponse(
+			{
+				next: async () =>
+					demands++ < 4
+						? { done: false, value: chunk }
+						: { done: true, value: undefined },
+				cancel: async () => {},
+			},
+			{ finish: async () => ({ ok: true }) },
+			release,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader({ mode: "byob" });
+		try {
+			await scheduler.wait(20);
+			expect(demands).toBe(1);
+			const half = await reader.read(
+				new Uint8Array(JSON_CHUNK_TARGET_BYTES / 2),
+			);
+			expect(half.value?.byteLength).toBe(JSON_CHUNK_TARGET_BYTES / 2);
+			await scheduler.wait(20);
+			expect(demands).toBe(1);
+			const rest = await reader.read(
+				new Uint8Array(JSON_CHUNK_TARGET_BYTES / 2),
+			);
+			expect(rest.value?.byteLength).toBe(JSON_CHUNK_TARGET_BYTES / 2);
+			await scheduler.wait(20);
+			expect(demands).toBe(2);
+		} finally {
+			await reader.cancel().catch(() => undefined);
+		}
 	});
 	it("rejects source completion that arrives after the deadline", async () => {
 		vi.useFakeTimers();

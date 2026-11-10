@@ -1,6 +1,7 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { admissionByteSnapshot } from "@worker/application/admission-budget";
 import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
+import { Vault } from "@worker/infrastructure/durable-object/vault";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
@@ -285,6 +286,7 @@ describe("full feed page cost", () => {
 	});
 
 	it("returns REST read capacity promptly after a client cancels a feed page", async () => {
+		const batches = vi.spyOn(Vault.prototype, "readBatch");
 		const response = await SELF.fetch(
 			`https://worker.invalid/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0&limit=1000`,
 		);
@@ -303,5 +305,12 @@ describe("full feed page cost", () => {
 			await scheduler.wait(20);
 		expect(admissionByteSnapshot().rest_read_bytes).toBe(0);
 		expect(readSlotCapacitySnapshot().held_rest_slots).toBe(0);
+		// Source-side evidence: a full 1,000-entry page needs 16 batch RPCs of 64 rows.
+		const cancelledBatches = batches.mock.calls.length;
+		await scheduler.wait(100);
+		expect(batches.mock.calls.length).toBe(cancelledBatches);
+		expect(cancelledBatches).toBeGreaterThan(0);
+		expect(cancelledBatches).toBeLessThan(16);
+		batches.mockRestore();
 	});
 });

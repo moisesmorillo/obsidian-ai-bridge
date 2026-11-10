@@ -1253,8 +1253,9 @@ describe("production MCP mutation safety", () => {
 					}
 				}
 				// A native body observes cancellation at its next write; await cancel does not join cleanup.
-				await vi.waitFor(async () =>
-					expect(await activeAdmissionStates(clientId)).toEqual([]),
+				await vi.waitFor(
+					async () => expect(await activeAdmissionStates(clientId)).toEqual([]),
+					{ timeout: 5_000 },
 				);
 			} finally {
 				await reader.cancel();

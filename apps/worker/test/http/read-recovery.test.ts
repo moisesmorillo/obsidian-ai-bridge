@@ -539,16 +539,19 @@ describe("real HTTP recovery and server acceptance", () => {
 			expect(count, route).toBe(1);
 			await response.body?.cancel();
 			// A native body observes cancellation at its next write; await cancel does not join cleanup.
-			await vi.waitFor(async () => {
-				const after = await runInDurableObject(
-					vault(),
-					async (_instance, state) =>
-						state.storage.sql
-							.exec("SELECT count(*) AS n FROM operation_admissions")
-							.one().n,
-				);
-				expect(after, route).toBe(0);
-			});
+			await vi.waitFor(
+				async () => {
+					const after = await runInDurableObject(
+						vault(),
+						async (_instance, state) =>
+							state.storage.sql
+								.exec("SELECT count(*) AS n FROM operation_admissions")
+								.one().n,
+					);
+					expect(after, route).toBe(0);
+				},
+				{ timeout: 5_000 },
+			);
 		}
 	});
 	it("shares metadata slots with current, exact, whole-blob, and range responses across vault hosts", async () => {

@@ -480,16 +480,16 @@ describe("metadata HTTP response demand", () => {
 			while (!(await reader.read()).done) {
 				/* Demand until the second RPC blocks. */
 			}
-		})().catch(() => {
-			// A native stream rejects the pending read when its consumer cancels.
-		});
+		})();
+		// With no write pending, the native stream ends the pending read as done when its consumer cancels.
+		const drained = expect(drain).resolves.toBeUndefined();
 		await fixture.started.promise;
 		expect(fixture.state.calls).toBe(2);
 		const cancelled = reader.cancel();
 		expect(tryAcquireReadSlot()).toBeUndefined();
 		expect(fixture.state.finished).toEqual([]);
 		fixture.release.resolve();
-		await Promise.all([drain, cancelled]);
+		await Promise.all([drained, cancelled]);
 		// A native body observes cancellation at its next write; await cancel does not join cleanup.
 		await vi.waitFor(() => expect(fixture.state.finished).toEqual(["settled"]));
 		expect(fixture.state.calls).toBe(2);

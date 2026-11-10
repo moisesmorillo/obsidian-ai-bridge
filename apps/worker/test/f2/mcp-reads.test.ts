@@ -1318,21 +1318,35 @@ describe("production MCP transport", () => {
 		);
 		expect(written.status).toBe(201);
 		await written.text();
+		/** Call read_note for the seeded note over the runtime boundary. */
+		const readNote = () =>
+			SELF.fetch("https://service.test/mcp", {
+				method: "POST",
+				headers: {
+					...auth,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "tools/call",
+					params: { name: "read_note", arguments: { path } },
+				}),
+			});
+		// Source-side evidence: the JSON encoder calls TextEncoder.encode for each token and each
+		// 8,192-character content window, so a full read makes many more calls than a cancelled one.
+		const encodes = vi.spyOn(TextEncoder.prototype, "encode");
+		const full = await readNote();
+		expect((await full.text()).length).toBeGreaterThan(1_000_000);
+		await vi.waitFor(
+			async () => expect(await activeAdmissionStates(clientId)).toEqual([]),
+			{ timeout: 5_000 },
+		);
+		const fullEncodes = encodes.mock.calls.length;
+		encodes.mockClear();
 		const sharedBefore = admissionByteSnapshot().shared_bytes;
-		const response = await SELF.fetch("https://service.test/mcp", {
-			method: "POST",
-			headers: {
-				...auth,
-				"content-type": "application/json",
-				accept: "application/json, text/event-stream",
-			},
-			body: JSON.stringify({
-				jsonrpc: "2.0",
-				id: 1,
-				method: "tools/call",
-				params: { name: "read_note", arguments: { path } },
-			}),
-		});
+		const response = await readNote();
 		expect(response.status).toBe(200);
 		const reader = response.body?.getReader();
 		expect((await reader?.read())?.done).toBe(false);
@@ -1349,6 +1363,10 @@ describe("production MCP transport", () => {
 		expect(readSlotCapacitySnapshot().held_mcp_slots).toBe(0);
 		expect(admissionByteSnapshot().shared_bytes).toBe(sharedBefore);
 		expect(await activeAdmissionStates(clientId)).toEqual([]);
+		const cancelledEncodes = encodes.mock.calls.length;
+		encodes.mockRestore();
+		expect(fullEncodes).toBeGreaterThan(100);
+		expect(cancelledEncodes).toBeLessThan(fullEncodes / 2);
 	});
 
 	it("keeps real durable admission until MCP response EOF and cancellation", async () => {
@@ -1407,8 +1425,9 @@ describe("production MCP transport", () => {
 			expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
 			await cancelledReader.cancel();
 			// A native body observes cancellation at its next write; await cancel does not join cleanup.
-			await vi.waitFor(async () =>
-				expect(await activeAdmissionStates(clientId)).toEqual([]),
+			await vi.waitFor(
+				async () => expect(await activeAdmissionStates(clientId)).toEqual([]),
+				{ timeout: 5_000 },
 			);
 		} finally {
 			await cancelledReader.cancel();
@@ -1467,8 +1486,10 @@ describe("production MCP transport", () => {
 			await competingRest.body?.cancel();
 			await cancelMcp;
 			// A native body observes cancellation at its next write; await cancel does not join cleanup.
-			await vi.waitFor(async () =>
-				expect(await activeAdmissionStates(clientId)).toHaveLength(3),
+			await vi.waitFor(
+				async () =>
+					expect(await activeAdmissionStates(clientId)).toHaveLength(3),
+				{ timeout: 5_000 },
 			);
 			const reusedRest = await productionWorker.fetch(
 				new Request("https://service.test/v1/vault", { headers: auth }),

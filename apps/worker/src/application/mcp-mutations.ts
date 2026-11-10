@@ -23,6 +23,7 @@ import type { McpReadOwner } from "@worker/application/mcp-notes";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { executeTextMutation } from "@worker/application/text-files";
 import { prepareTextPayload } from "@worker/application/text-payload";
+import { unexpectedFailure } from "@worker/application/vault-overload";
 
 /** Mutation gateway limited to the existing text and history authorities. */
 export type McpMutationGateway = TextVaultGateway & HistoryVaultGateway;
@@ -102,9 +103,9 @@ async function runMutation(
 			epoch: current.current_epoch,
 			owner,
 		};
-	const result = await operation(ownedGateway).catch(() => ({
+	const result = await operation(ownedGateway).catch((error: unknown) => ({
 		ok: false as const,
-		failure: { kind: "internal_error" as const },
+		failure: unexpectedFailure(error),
 	}));
 	if (result.ok)
 		return {

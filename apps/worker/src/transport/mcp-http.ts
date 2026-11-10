@@ -34,6 +34,7 @@ import {
 	waitForReadSlotWork,
 } from "@worker/application/read-budget";
 import { settleReadAdmission } from "@worker/application/reads";
+import { VaultOverloaded } from "@worker/application/vault-overload";
 import type { Env } from "@worker/env";
 import {
 	createMcpServer,
@@ -595,6 +596,23 @@ export async function handleMcpHttp(
 				readOwner,
 				deadlineLease,
 			);
+		if (error instanceof VaultOverloaded) {
+			const refused = ownedHttpFailure(
+				429,
+				error.failure.kind,
+				release,
+				request.signal,
+				false,
+				undefined,
+				readOwner,
+				deadlineLease,
+			);
+			refused.headers.set(
+				"retry-after",
+				String(error.failure.retry_after_seconds),
+			);
+			return refused;
+		}
 		return ownedHttpFailure(
 			500,
 			"internal_error",

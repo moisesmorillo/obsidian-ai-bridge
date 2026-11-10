@@ -28,6 +28,7 @@ import {
 	readVault,
 	settleReadAdmission,
 } from "@worker/application/reads";
+import { unexpectedFailure } from "@worker/application/vault-overload";
 import type { Env } from "@worker/env";
 import { jsonReadHeaders } from "@worker/transport/json-read-headers";
 import { decodeAndNormalizePath } from "@worker/transport/path";
@@ -328,7 +329,7 @@ async function produceLazy<T, M>(
 		return failureResponse(
 			error instanceof ReadBatchFailure
 				? error.failure
-				: { kind: "internal_error" },
+				: unexpectedFailure(error),
 		);
 	}
 	return ownedReadResponse(

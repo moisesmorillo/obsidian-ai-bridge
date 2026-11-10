@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.1...vaultwire-v1.0.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* stop truncated feed bodies and read-slot exhaustion under MCP load ([#156](https://github.com/moisesmorillo/vaultwire/issues/156)) ([6a81f29](https://github.com/moisesmorillo/vaultwire/commit/6a81f29091f205886dc2a0b8d20dfea629fe623d))
+
 ## [1.0.1](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.0...vaultwire-v1.0.1) (2026-11-10)
 
 

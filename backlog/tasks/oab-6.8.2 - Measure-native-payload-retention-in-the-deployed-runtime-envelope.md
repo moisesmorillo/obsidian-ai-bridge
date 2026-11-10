@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-10T20:42:00Z'
+updated_date: '2026-11-10T20:47:00Z'
 labels: []
 dependencies: []
 references:
@@ -21,7 +21,7 @@ ordinal: 35000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Trigger: measure native retention in a real deployment when OAB-6.8 runtime-envelope work starts. The owner closes the remaining OAB-6.5 R1 native-retention scope as intentionally deferred. The OAB-6.5 32 MiB application limit excludes native workerd buffers, transport-retained RPC results, and fragments retained by native layers. Local actor-gate and unread-body tests do not prove a deployed heap breach or native release bound. Deployment and Cloudflare resource changes still need explicit owner authorization.
+Trigger: Deferred until Cloudflare exposes isolate memory telemetry or an owner-approved workload can observe native memory categories in a real deployment. The 2026-11-10 OAB-53 runs found no memory failure, but production telemetry gives only invocation outcomes. The owner closes the remaining OAB-6.5 R1 native-retention scope as intentionally deferred. The OAB-6.5 32 MiB application limit excludes native workerd buffers, transport-retained RPC results, and fragments retained by native layers. Local actor-gate and unread-body tests do not prove a deployed heap breach or native release bound. Deployment and Cloudflare resource changes still need explicit owner authorization.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

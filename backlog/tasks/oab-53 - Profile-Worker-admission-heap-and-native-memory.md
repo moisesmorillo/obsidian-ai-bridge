@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-09T22:05:00Z'
-updated_date: '2026-11-10T20:42:00Z'
+updated_date: '2026-11-10T20:47:00Z'
 labels: []
 dependencies: []
 references:
@@ -152,4 +152,12 @@ Production run 2 on Workers Paid, 2026-11-10 20:20-21:05Z, Worker 1.0.4 with lim
 - The single Vault Durable Object queue is the first production limit on Paid, not isolate memory.
 - Cleanup deleted 87 files. Mac resumed to cursor 902 = head, settled, 298 files, no attention. Empty local folders removed.
 Conclusion: AC1 is met by local heap and RSS peaks per workload plus production pass evidence up to concurrency 12. AC2: local peaks (Worker 90.4 MB heap+buffers, Vault DO 132.1 MB) compared with the 128 MB limit, and production showed no memory failure. AC3: reservations stay separate from heap and native observations.
+
+Correction (review M1), 2026-11-10: the run 1 sentence "REST reads above concurrency 4 got 429 by design (18 MB / 4.5 MB)" is superseded. The 4-slot, 18,000,000-byte REST pool (4,500,000 bytes per read) refuses only when concurrent reads land on one isolate. Local run B shows this: one isolate, 429 at concurrency 8 and 12. Production spreads requests across Worker isolates; run 2 returned only 200 for REST reads up to concurrency 12. Leases held by CPU-cut responses explain the run 1 refusals.
+
+Production runtime for run 2 (review L4): Worker 1.0.4 = release commit df96129 on origin/main (chore(main): release worker 1.0.4 (#164), after 9624be4 fix(worker): declare a 30 s CPU limit for production (#163)). Compatibility date 2025-07-12, flag unhandled_rejection_after_microtask_checkpoint, limits.cpu_ms 30000 (apps/worker/wrangler.production.jsonc). Run 1 used Worker 1.0.3 on Workers Free without limits.cpu_ms.
+
+Cleanup rule for production drivers (review L11): call deleteLoadtestFiles(target) in a finally block around seeding and workloads, so a failed or interrupted run still removes _vaultwire-loadtest/ files. Blob bytes stay in R2 until blob GC.
+
+Final AC1 conclusion (review M2): AC1 stays checked on this evidence only. Heap: per-isolate V8 heap used and committed, locally, for the Worker isolate and the Vault DO isolate. Native memory: the only per-isolate native figure is the local ArrayBuffer backing store (off-heap) from Runtime.getHeapUsage. Local workerd process RSS counts only as a whole-process upper bound; it is cumulative over the run and shared with SQLite, local R2/KV simulation, and Miniflare internals, so it is not native retention. Production gives pass/fail only: no memory failure up to concurrency 12 on Workers Paid; production heap and native memory stay unmeasured. Transport-retained RPC results and native response fragments stay unmeasured everywhere (OAB-6.8.2, Deferred).
 <!-- SECTION:NOTES:END -->

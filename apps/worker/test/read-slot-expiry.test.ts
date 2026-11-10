@@ -309,6 +309,10 @@ describe("unsettled MCP read reclaim", () => {
 		});
 		const admitted = await readNote(10);
 		expect(admitted.status).toBe(200);
+		expect(admitted.headers.get("cache-control")).toBe(
+			"no-store, no-transform",
+		);
+		expect(admitted.headers.get("content-type")).toBe("application/json");
 		await admitted.text();
 		stalled.resolve();
 		await vi.advanceTimersByTimeAsync(0);

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-10T12:08:00Z'
-updated_date: '2026-11-10T15:47:00Z'
+updated_date: '2026-11-10T15:56:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -55,4 +55,13 @@ Step 4 RED: plugin sync-transport.test.ts 'raises a retryable network failure fo
 Step 5 RED: read-budget.test.ts 'reports physical holds per pool and the oldest REST lease route' failed with 'AssertionError: expected { …(7) } to match object { held_rest_slots: +0, …(4) }'; owner-pages.test.ts 'renders measurements with explicit unknowns…' failed with 'expected ... to contain Held leases: REST 4, MCP 1'. GREEN: optional additive worker_isolate fields in packages/protocol (ReadSlotRouteSchema enum, held_rest_slots, held_mcp_slots, rest_read_bytes, shared_bytes, reclaim_grace_ms, reclaimed_unsettled_count, oldest_rest_lease); route label passed by vault, manifest, changes, history, search, files; new card and About text on the page; snapshot updated for the new card and the unknown line.
 
 Validation: bun run check exit 0 (protocol 314, tooling 107, plugin 873 + 1 skipped, worker 835 + http 134 + f2 149 tests). bun run docs:check green. Deviations: (a) reclaim is lazy in sweepExpiredReadSlots, not a timer, so existing zero-timer assertions hold and every admission and measurement applies it; (b) measurement fields required additive optional fields in packages/protocol MeasurementResponseSchema.worker_isolate plus a new ReadSlotRouteSchema enum; (c) truncated JSON uses the existing DeviceSessionNetworkError, not SyncTransportError; (d) fileFailureResponse (file content read failures, shared with mutations) does not send no-transform, out of the listed routes. AC 6 left for parent review.
+
+Review fixes (reviewer minors, owner wants no deferrals):
+1. MCP reclaim RED: read-slot-expiry.test.ts 'releases shared bytes of eight stalled MCP reads after their grace' failed with shared_bytes 32116416 (expected 0) after deadline + grace, while held_mcp_slots 0 and reclaimed count 8. GREEN: tryAcquireReadSlot takes an optional reclaimable reservation; mcp-http passes the MCP envelope reservation; reclaim releases it once, caller release stays idempotent. A new MCP read is then admitted (200); before the grace a ninth read got 429.
+2/5/6. Reclaim counter TSDoc now covers REST and MCP; defensive expiry comment reworded; MCP leases use route 'mcp', added to ReadSlotRouteSchema, TSDoc no longer REST-only.
+3. MCP no-transform RED: same test, 'expected no-store to be no-store, no-transform'. GREEN: encodedResponse sends no-store, no-transform.
+4. File failure RED: http/reads.test.ts no-transform case /v1/files/missing.md got cacheControl null. GREEN: fileFailureResponse uses jsonReadHeaders (applies to file read and mutation failures).
+7. Plugin truncated readPinned, readCurrent, put, rename, delete 200 bodies: green without earlier failing test (parseJson fixed in dd3e4bc); mutation check with the old plain Error made all 9 truncated cases fail; source restored.
+8. Spec 6.5 and 12 updated.
+Validation: bun run check exit 0 (protocol 314, tooling 107, plugin 878 + 1 skipped, worker 836 + http 134 + f2 149); docs:check green. AC 5 wording unchanged pending owner decision on deviation (b).
 <!-- SECTION:NOTES:END -->

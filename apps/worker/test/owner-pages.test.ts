@@ -438,6 +438,42 @@ describe("owner page rendering", () => {
 		expect(html).toContain("/owner/measurements");
 		expect(html).toContain("Earlier samples were removed by the daily cap.");
 		expect(html).toMatchSnapshot();
+		const isolate = view.worker_isolate;
+		if (!isolate) throw new Error("Fixture has no isolate observation");
+		const pressured = renderMeasurementsPage({
+			...view,
+			worker_isolate: {
+				...isolate,
+				reclaimed_unsettled_count: 2,
+				reclaim_grace_ms: 60_000,
+				held_rest_slots: 4,
+				held_mcp_slots: 1,
+				rest_read_bytes: 18_000_000,
+				shared_bytes: 4_136_000,
+				oldest_rest_lease: { route: "changes", age_ms: 61_000 },
+			},
+		});
+		expect(pressured).toContain("Held leases: REST 4, MCP 1");
+		expect(pressured).toContain(
+			"Reserved bytes: REST read 18.0 MB, shared 4.1 MB",
+		);
+		expect(pressured).toContain(
+			"Oldest held REST lease: changes, held 61000 ms",
+		);
+		expect(pressured).toContain(
+			"Leases reclaimed after the 60000 ms grace with unsettled work since isolate start: 2",
+		);
+		expect(pressured).toContain("REST read leases held");
+		const idle = renderMeasurementsPage({
+			...view,
+			worker_isolate: {
+				...isolate,
+				held_rest_slots: 0,
+				held_mcp_slots: 0,
+				oldest_rest_lease: null,
+			},
+		});
+		expect(idle).toContain("Oldest held REST lease: none");
 	});
 
 	it("renders export forms, completed links, retained summary, and empty failures", () => {

@@ -1,3 +1,4 @@
+import type { ReadSlotRoute } from "@vaultwire/protocol";
 import { admissionByteSnapshot } from "@worker/application/admission-budget";
 import {
 	type ReadSlotClass,
@@ -12,8 +13,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const leases: ReadSlotLease[] = [];
 
 /** Reserve a real lease and keep complete physical cleanup under fixture ownership. */
-function acquire(leaseClass: ReadSlotClass = "rest") {
-	const lease = tryAcquireReadSlot(leaseClass);
+function acquire(leaseClass: ReadSlotClass = "rest", route?: ReadSlotRoute) {
+	const lease = tryAcquireReadSlot(leaseClass, route);
 	if (!lease) throw new Error("Expected an available read lease");
 	leases.push(lease);
 	return lease;
@@ -121,6 +122,36 @@ describe("absolute read lease ownership", () => {
 		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
 			before + 4,
 		);
+	});
+
+	it("reports physical holds per pool and the oldest REST lease route", () => {
+		vi.useFakeTimers();
+		expect(readSlotCapacitySnapshot()).toMatchObject({
+			held_rest_slots: 0,
+			held_mcp_slots: 0,
+			rest_read_bytes: 0,
+			oldest_rest_lease: null,
+			reclaim_grace_ms: 60_000,
+		});
+		const oldest = acquire("rest", "changes");
+		vi.setSystemTime(Date.now() + 1_000);
+		acquire("rest", "vault");
+		acquire("mcp");
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(readSlotCapacitySnapshot()).toMatchObject({
+			active_slots: 0,
+			held_rest_slots: 2,
+			held_mcp_slots: 1,
+			rest_read_bytes: 9_000_000,
+			shared_bytes: admissionByteSnapshot().shared_bytes,
+			oldest_rest_lease: { route: "changes", age_ms: 61_000 },
+		});
+		oldest.complete();
+		expect(readSlotCapacitySnapshot()).toMatchObject({
+			held_rest_slots: 1,
+			rest_read_bytes: 4_500_000,
+			oldest_rest_lease: { route: "vault", age_ms: 60_000 },
+		});
 	});
 
 	it("notifies other listeners when one expiry listener throws", () => {

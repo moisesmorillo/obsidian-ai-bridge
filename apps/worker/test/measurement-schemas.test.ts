@@ -44,6 +44,78 @@ describe("measurement schemas", () => {
 		expect(parsed.feed_latency.p95).toBeNull();
 	});
 
+	it("accepts additive isolate pool fields and rejects an unknown lease route", () => {
+		const isolate = {
+			isolate_id: "isolate-1",
+			active_slots: 0,
+			available_slots: 12,
+			limit: 12,
+			expired_count: 4,
+			deadline_ms: 60_000,
+		};
+		const response = {
+			status: "unknown",
+			coverage: "unknown",
+			day_start: 1_700_000_000_000,
+			day_end: 1_700_086_400_000,
+			observed_from: null,
+			observed_through: null,
+			requests: {
+				status: "unknown",
+				count: null,
+				observed_from: null,
+				observed_through: null,
+				rest_count: null,
+				mcp_count: null,
+				stale: false,
+				clients: [],
+			},
+			feed_latency: {
+				status: "unknown",
+				unit: "milliseconds",
+				sample_count: 0,
+				total_sample_count: 0,
+				p95: null,
+				stale: false,
+			},
+			storage: {
+				database_bytes: { status: "unknown", reason: "storage_error" },
+				referenced_blob_bytes: { status: "unknown", reason: "storage_error" },
+			},
+		};
+		const pool = {
+			reclaimed_unsettled_count: 4,
+			reclaim_grace_ms: 60_000,
+			held_rest_slots: 4,
+			held_mcp_slots: 0,
+			rest_read_bytes: 18_000_000,
+			shared_bytes: 0,
+			oldest_rest_lease: { route: "changes", age_ms: 119_000 },
+		};
+		expect(
+			MeasurementResponseSchema.safeParse({
+				...response,
+				worker_isolate: isolate,
+			}).success,
+		).toBe(true);
+		expect(
+			MeasurementResponseSchema.safeParse({
+				...response,
+				worker_isolate: { ...isolate, ...pool },
+			}).success,
+		).toBe(true);
+		expect(
+			MeasurementResponseSchema.safeParse({
+				...response,
+				worker_isolate: {
+					...isolate,
+					...pool,
+					oldest_rest_lease: { route: "/v1/changes?since=0", age_ms: 1 },
+				},
+			}).success,
+		).toBe(false);
+	});
+
 	it("rejects malformed windows and inconsistent retained sample counts", () => {
 		const valid = {
 			version: 1,

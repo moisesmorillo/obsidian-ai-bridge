@@ -210,6 +210,7 @@ export type {
 	MeasurementAggregate,
 	MeasurementResponse,
 	OwnerMeasurementsRequest,
+	ReadSlotRoute,
 	RequestObservation,
 } from "@protocol/schemas/measurements";
 export {
@@ -219,6 +220,7 @@ export {
 	MeasurementClientAggregateSchema,
 	MeasurementResponseSchema,
 	OwnerMeasurementsRequestSchema,
+	ReadSlotRouteSchema,
 	RequestObservationSchema,
 } from "@protocol/schemas/measurements";
 export { PathSchema } from "@protocol/schemas/path";

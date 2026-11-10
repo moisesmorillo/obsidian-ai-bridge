@@ -44,7 +44,7 @@ export function createSearchRouter(
 		if (identity === null) return failureResponse({ kind: "unauthorized" });
 		if (!identity.scopes.includes("vault:read"))
 			return failureResponse({ kind: "forbidden_scope" });
-		const release = tryAcquireReadSlot();
+		const release = tryAcquireReadSlot("rest", "search");
 		if (!release)
 			return failureResponse({
 				kind: "admission_limited",

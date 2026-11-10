@@ -34,7 +34,7 @@ export async function readContentResponse(
 	selection: TextReadRequest,
 	request: Request,
 ): Promise<Response> {
-	const release = tryAcquireReadSlot();
+	const release = tryAcquireReadSlot("rest", "files");
 	if (!release)
 		return fileFailureResponse({
 			kind: "admission_limited",

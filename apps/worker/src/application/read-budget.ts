@@ -1,6 +1,7 @@
-import type { MeasurementResponse } from "@vaultwire/protocol";
+import type { MeasurementResponse, ReadSlotRoute } from "@vaultwire/protocol";
 import {
 	type AdmissionByteReservation,
+	admissionByteSnapshot,
 	LOCAL_ADMISSION_RETRY_SECONDS,
 	REST_READ_BYTE_ALLOWANCE,
 	tryReserveAdmissionBytes,
@@ -45,6 +46,8 @@ interface ReadSlotLeaseState {
 /** Physical ownership retained from acquisition until completion or reclaim. */
 interface HeldReadSlotState {
 	leaseClass: ReadSlotClass;
+	/** Route family that acquired the lease, for owner evidence only. */
+	route: ReadSlotRoute;
 	/** Acquisition time, in Unix milliseconds. */
 	acquiredAt: number;
 	/** Physical reclaim deadline: the logical deadline plus the reclaim grace, in Unix milliseconds. */
@@ -129,12 +132,27 @@ export async function waitForReadSlotWork<T>(
 	return result;
 }
 
-/** Return an isolate-local aggregate snapshot after recovering overdue leases. */
+/**
+ * Return an isolate-local snapshot after recovering overdue leases and reclaiming overdue bytes.
+ * Active slots count logical leases; held slots also count leases past their deadline whose work has
+ * not settled, which is the physical capacity a stalled read keeps.
+ */
 export function readSlotCapacitySnapshot(): ReadSlotCapacitySnapshot {
-	sweepExpiredReadSlots();
+	const now = Date.now();
+	sweepExpiredReadSlots(now);
 	const activeSlots = [...activeLeases.values()].filter(
 		(lease) => !lease.released,
 	).length;
+	const held = [...heldLeases.values()];
+	const heldRest = held.filter((lease) => lease.leaseClass === "rest");
+	const oldestRest = heldRest.reduce<HeldReadSlotState | undefined>(
+		(oldest, lease) =>
+			oldest === undefined || lease.acquiredAt < oldest.acquiredAt
+				? lease
+				: oldest,
+		undefined,
+	);
+	const bytes = admissionByteSnapshot();
 	return {
 		isolate_id: currentIsolateId(),
 		active_slots: activeSlots,
@@ -143,6 +161,17 @@ export function readSlotCapacitySnapshot(): ReadSlotCapacitySnapshot {
 		expired_count: expiredReadSlots,
 		deadline_ms: READ_SLOT_HOLD_DEADLINE_MS,
 		reclaimed_unsettled_count: reclaimedUnsettledReadSlots,
+		reclaim_grace_ms: READ_SLOT_RECLAIM_GRACE_MS,
+		held_rest_slots: heldRest.length,
+		held_mcp_slots: held.length - heldRest.length,
+		rest_read_bytes: bytes.rest_read_bytes,
+		shared_bytes: bytes.shared_bytes,
+		oldest_rest_lease: oldestRest
+			? {
+					route: oldestRest.route,
+					age_ms: Math.max(0, now - oldestRest.acquiredAt),
+				}
+			: null,
 	};
 }
 
@@ -169,9 +198,13 @@ export function readSlotRetryAfterSeconds(leaseClass: ReadSlotClass): number {
 	);
 }
 
-/** Reserve a REST or MCP read slot without queueing. */
+/**
+ * Reserve a REST or MCP read slot without queueing.
+ * @param route - Route family recorded for owner measurements; it does not change admission.
+ */
 export function tryAcquireReadSlot(
 	leaseClass: ReadSlotClass = "rest",
+	route: ReadSlotRoute = "other",
 ): ReadSlotLease | undefined {
 	sweepExpiredReadSlots();
 	const classLimit =
@@ -265,6 +298,7 @@ export function tryAcquireReadSlot(
 	activeLeases.set(id, { leaseClass, expiresAt, released, expire });
 	heldLeases.set(id, {
 		leaseClass,
+		route,
 		acquiredAt,
 		reclaimAt: expiresAt + READ_SLOT_RECLAIM_GRACE_MS,
 		reclaim,

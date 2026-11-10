@@ -257,6 +257,8 @@ export const MeasurementResponseSchema = z
 				limit: CountSchema,
 				expired_count: CountSchema,
 				deadline_ms: CountSchema,
+				/** Expired leases whose unsettled work lost its byte reservation at the reclaim deadline. */
+				reclaimed_unsettled_count: CountSchema.optional(),
 			})
 			.strict()
 			.optional(),

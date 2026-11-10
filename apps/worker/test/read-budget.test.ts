@@ -100,6 +100,29 @@ describe("absolute read lease ownership", () => {
 		expect(tryAcquireReadSlot()).toBeUndefined();
 	});
 
+	it("reclaims unsettled bytes once at the deadline plus grace without a timer", () => {
+		vi.useFakeTimers();
+		const before = readSlotCapacitySnapshot().reclaimed_unsettled_count ?? 0;
+		const stalled = Array.from({ length: 4 }, () => acquire());
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(tryAcquireReadSlot()).toBeUndefined();
+		vi.setSystemTime(Date.now() + 59_999);
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(18_000_000);
+		vi.setSystemTime(Date.now() + 1);
+		const admitted = acquire();
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(4_500_000);
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 4,
+		);
+		for (const lease of stalled) lease.complete();
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(4_500_000);
+		admitted.complete();
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(0);
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 4,
+		);
+	});
+
 	it("notifies other listeners when one expiry listener throws", () => {
 		vi.useFakeTimers();
 		const lease = acquire();

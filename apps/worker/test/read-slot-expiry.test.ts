@@ -134,3 +134,90 @@ describe("read preparation expiry ownership", () => {
 		},
 	);
 });
+
+describe("unsettled REST read reclaim", () => {
+	it("admits a device read after four stalled feed reads pass their grace", async () => {
+		const host = "reclaim.invalid";
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			state.storage.sql.exec("PRAGMA foreign_keys = ON");
+			initializeVaultStorage(
+				state.storage,
+				() => TEXT_FIXTURE_EPOCH,
+				() => 10_000,
+			);
+			await seedLiveTextState(state.storage, {
+				path: "task.md",
+				content: "task",
+			});
+			state.storage.sql.exec("DELETE FROM operation_admissions");
+		});
+		const stalled = gate();
+		let started = 0;
+		const allStarted = gate();
+		const gateway = new Proxy(stub, {
+			/** Stall the first four feed batches after native work, as a never-settling RPC would. */
+			get(target, property) {
+				const method = Reflect.get(target, property, target);
+				if (typeof method !== "function") return method;
+				return async (...args: unknown[]) => {
+					const result = await Reflect.apply(method, target, args);
+					if (property === "readBatch" && started < 4) {
+						started += 1;
+						if (started === 4) allStarted.resolve();
+						await stalled.promise;
+					}
+					return result;
+				};
+			},
+		});
+		const worker = createWorker(
+			async () => identity,
+			() => gateway,
+			() => new R2BlobStore(env.R2_BUCKET),
+		);
+		vi.useFakeTimers();
+		const before = readSlotCapacitySnapshot().reclaimed_unsettled_count ?? 0;
+		const feeds = Array.from({ length: 4 }, () =>
+			worker.fetch(
+				new Request(
+					`https://${host}/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0`,
+				),
+				env,
+			),
+		);
+		await allStarted.promise;
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		for (const response of await Promise.all(feeds)) {
+			expect(response.status).toBe(500);
+			await response.text();
+		}
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(18_000_000);
+		const limited = await worker.fetch(
+			new Request(`https://${host}/v1/vault`),
+			env,
+		);
+		expect(limited.status).toBe(429);
+		await limited.text();
+		vi.setSystemTime(Date.now() + 60_000);
+		const admitted = await worker.fetch(
+			new Request(`https://${host}/v1/vault`),
+			env,
+		);
+		expect(admitted.status).toBe(200);
+		expect(await admitted.json()).toMatchObject({ epoch: TEXT_FIXTURE_EPOCH });
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 4,
+		);
+		stalled.resolve();
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.waitFor(() =>
+			expect(admissionByteSnapshot().rest_read_bytes).toBe(0),
+		);
+		expect(readSlotCapacitySnapshot().reclaimed_unsettled_count).toBe(
+			before + 4,
+		);
+	});
+});

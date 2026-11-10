@@ -14,9 +14,20 @@ export const MCP_READ_SLOT_LIMIT = 8;
 export const READ_SLOT_LIMIT = REST_READ_SLOT_LIMIT + MCP_READ_SLOT_LIMIT;
 /** Maximum logical lease duration, in milliseconds, regardless of timer delivery. */
 export const READ_SLOT_HOLD_DEADLINE_MS = 60_000;
+/**
+ * Grace, in milliseconds after the logical hold deadline, that unsettled response work keeps its
+ * physical byte reservation. At the end of the grace the reservation is reclaimed once, even when
+ * late source work or cancellation never settles, so stalled reads cannot fill the REST pool for the
+ * isolate lifetime. Owner decision D1 of OAB-58.
+ */
+export const READ_SLOT_RECLAIM_GRACE_MS = 60_000;
 const activeLeases = new Map<number, ReadSlotLeaseState>();
+/** Leases whose physical work has not completed or been reclaimed, keyed by lease id. */
+const heldLeases = new Map<number, HeldReadSlotState>();
 let nextLeaseId = 0;
 let expiredReadSlots = 0;
+/** Expired leases whose byte reservation was reclaimed before their work settled. */
+let reclaimedUnsettledReadSlots = 0;
 /** Opaque process-local identifier used only in owner observations, created on first use. */
 let isolateId: string | undefined;
 
@@ -29,6 +40,17 @@ interface ReadSlotLeaseState {
 	expiresAt: number;
 	released: boolean;
 	expire: () => void;
+}
+
+/** Physical ownership retained from acquisition until completion or reclaim. */
+interface HeldReadSlotState {
+	leaseClass: ReadSlotClass;
+	/** Acquisition time, in Unix milliseconds. */
+	acquiredAt: number;
+	/** Physical reclaim deadline: the logical deadline plus the reclaim grace, in Unix milliseconds. */
+	reclaimAt: number;
+	/** Release the byte reservation of unsettled work once and count the reclaim. */
+	reclaim: () => void;
 }
 
 /** Return the isolate identifier, creating it inside request context. */
@@ -68,10 +90,16 @@ export type ReadSlotCapacitySnapshot = NonNullable<
 	MeasurementResponse["worker_isolate"]
 >;
 
-/** Expire overdue leases before admission or observation, even if timers did not run. */
+/**
+ * Expire overdue leases and reclaim the bytes of work still unsettled at its reclaim deadline,
+ * before admission or observation, even if timers did not run. Reclaim needs no timer because every
+ * admission and measurement runs this sweep first.
+ */
 export function sweepExpiredReadSlots(now = Date.now()): void {
 	for (const lease of activeLeases.values())
 		if (now >= lease.expiresAt) lease.expire();
+	for (const held of heldLeases.values())
+		if (now >= held.reclaimAt) held.reclaim();
 }
 
 /**
@@ -114,6 +142,7 @@ export function readSlotCapacitySnapshot(): ReadSlotCapacitySnapshot {
 		limit: READ_SLOT_LIMIT,
 		expired_count: expiredReadSlots,
 		deadline_ms: READ_SLOT_HOLD_DEADLINE_MS,
+		reclaimed_unsettled_count: reclaimedUnsettledReadSlots,
 	};
 }
 
@@ -160,6 +189,7 @@ export function tryAcquireReadSlot(
 	let released = false;
 	let expired = false;
 	let completed = false;
+	let reclaimed = false;
 	let signalExpiration!: () => void;
 	const expiration = new Promise<void>((resolve) => {
 		signalExpiration = resolve;
@@ -205,8 +235,20 @@ export function tryAcquireReadSlot(
 		completed = true;
 		clearTimeout(timer);
 		activeLeases.delete(id);
-		byteReservation?.release();
+		heldLeases.delete(id);
+		// A reclaimed reservation was already released; the handle is idempotent.
+		if (!reclaimed) byteReservation?.release();
 		listeners.clear();
+	};
+	/** Reclaim the physical reservation of unsettled work once at its reclaim deadline. */
+	const reclaim = () => {
+		if (completed || reclaimed) return;
+		// An unexpired lease is still within its logical hold; expire it before reclaiming bytes.
+		expire();
+		reclaimed = true;
+		heldLeases.delete(id);
+		byteReservation?.release();
+		reclaimedUnsettledReadSlots += 1;
 	};
 	release.onExpire = (listener) => {
 		if (expired) {
@@ -217,8 +259,15 @@ export function tryAcquireReadSlot(
 		listeners.add(listener);
 		return () => listeners.delete(listener);
 	};
-	const expiresAt = Date.now() + READ_SLOT_HOLD_DEADLINE_MS;
+	const acquiredAt = Date.now();
+	const expiresAt = acquiredAt + READ_SLOT_HOLD_DEADLINE_MS;
 	const timer = setTimeout(expire, READ_SLOT_HOLD_DEADLINE_MS);
 	activeLeases.set(id, { leaseClass, expiresAt, released, expire });
+	heldLeases.set(id, {
+		leaseClass,
+		acquiredAt,
+		reclaimAt: expiresAt + READ_SLOT_RECLAIM_GRACE_MS,
+		reclaim,
+	});
 	return release;
 }

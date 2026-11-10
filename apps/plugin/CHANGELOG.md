@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.0...vaultwire-v1.0.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **plugin:** restore reconnect and unsent rename flows ([#149](https://github.com/moisesmorillo/vaultwire/issues/149)) ([dc7161f](https://github.com/moisesmorillo/vaultwire/commit/dc7161f5418db36c77c36172225f9b0d91a53166))
+
 ## [1.0.0](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v0.3.0...vaultwire-v1.0.0) (2026-11-09)
 
 

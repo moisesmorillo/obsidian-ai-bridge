@@ -32,7 +32,9 @@ import type { Env } from "@worker/env";
 import { jsonReadHeaders } from "@worker/transport/json-read-headers";
 import { decodeAndNormalizePath } from "@worker/transport/path";
 import {
+	coalesceChunks,
 	encodeJsonChunks,
+	encodeJsonParts,
 	jsonReadSource,
 	ownedReadResponse,
 } from "@worker/transport/read-response";
@@ -338,37 +340,67 @@ async function produceLazy<T, M>(
 	);
 }
 
-/** Serialize one bounded batch at a time, without requesting the next batch before row consumption. */
+/**
+ * Serialize one bounded batch at a time, without requesting the next batch before row consumption.
+ * Token parts of the page header, each batch, and the trailer are coalesced separately, so a pending
+ * chunk is flushed before the next native batch request starts.
+ */
 async function* pageChunks<T, M>(
 	session: LazyReadSession<T, M>,
 	batch: ReadBatch<T>,
 	paged: boolean,
 ): AsyncGenerator<Uint8Array> {
-	const encoder = new TextEncoder();
-	yield encoder.encode("{");
-	for (const [key, value] of Object.entries(session.body as object)) {
-		yield* encodeJsonChunks(key);
-		yield encoder.encode(":");
-		yield* encodeJsonChunks(value);
-		yield encoder.encode(",");
-	}
-	yield encoder.encode('"entries":[');
-	let separator = "";
+	yield* coalesceChunks(pageHeaderParts(session.body as object));
+	const entries = { emitted: false };
 	while (true) {
-		for (const row of batch.rows) {
-			if (separator) yield encoder.encode(separator);
-			separator = ",";
-			yield* encodeJsonChunks(row);
-		}
+		yield* coalesceChunks(batchParts(batch.rows, entries));
 		if (batch.done) break;
 		// Drop the consumed batch before the next native request starts.
 		batch = { rows: [], done: false, next_page: null };
 		batch = await session.readBatch();
 	}
+	yield* coalesceChunks(pageTrailerParts(paged, batch.next_page));
+}
+
+/** Encode the page metadata fields and open the entries array. */
+function* pageHeaderParts(body: object): Generator<Uint8Array> {
+	const encoder = new TextEncoder();
+	yield encoder.encode("{");
+	for (const [key, value] of Object.entries(body)) {
+		yield* encodeJsonParts(key);
+		yield encoder.encode(":");
+		yield* encodeJsonParts(value);
+		yield encoder.encode(",");
+	}
+	yield encoder.encode('"entries":[');
+}
+
+/**
+ * Encode one batch of entries. A separator precedes every row except the first row of the page,
+ * including when earlier batches were empty; `entries.emitted` carries that state across batches.
+ */
+function* batchParts<T>(
+	rows: readonly T[],
+	entries: { emitted: boolean },
+): Generator<Uint8Array> {
+	const separator = new TextEncoder().encode(",");
+	for (const row of rows) {
+		if (entries.emitted) yield separator;
+		entries.emitted = true;
+		yield* encodeJsonParts(row);
+	}
+}
+
+/** Close the entries array, add the continuation token on paged collections, and close the page. */
+function* pageTrailerParts(
+	paged: boolean,
+	nextPage: string | null,
+): Generator<Uint8Array> {
+	const encoder = new TextEncoder();
 	yield encoder.encode("]");
 	if (paged) {
 		yield encoder.encode(',"next_page":');
-		yield* encodeJsonChunks(batch.next_page);
+		yield* encodeJsonParts(nextPage);
 	}
 	yield encoder.encode("}");
 }

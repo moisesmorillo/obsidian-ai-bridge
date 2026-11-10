@@ -8,7 +8,9 @@ import {
 } from "@worker/application/read-budget";
 import { ReadBatchFailure } from "@worker/application/reads";
 import {
+	coalesceChunks,
 	encodeJsonChunks,
+	JSON_CHUNK_TARGET_BYTES,
 	ownedReadResponse,
 } from "@worker/transport/read-response";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1112,6 +1114,36 @@ describe("owned read response", () => {
 			.map((chunk) => new TextDecoder().decode(chunk))
 			.join("");
 		expect(JSON.parse(text)).toEqual({ content });
+	});
+
+	it("coalesces small JSON tokens into few chunks below the target size", () => {
+		const rows = Array.from({ length: 1000 }, (_, index) => ({
+			seq: index + 1,
+			op: "put",
+			path: `Agents/feed/${index}.md`,
+			etag: `"e-${index}"`,
+		}));
+		const chunks = [...encodeJsonChunks({ entries: rows })];
+		const bytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+		expect(chunks.length).toBe(Math.ceil(bytes / JSON_CHUNK_TARGET_BYTES));
+		expect(
+			chunks.every((chunk) => chunk.byteLength <= JSON_CHUNK_TARGET_BYTES),
+		).toBe(true);
+		const text = chunks
+			.map((chunk) => new TextDecoder().decode(chunk))
+			.join("");
+		expect(JSON.parse(text)).toEqual({ entries: rows });
+	});
+
+	it("passes a part at or above the target through alone after flushing the buffer", () => {
+		const small = new Uint8Array([1, 2]);
+		const large = new Uint8Array(JSON_CHUNK_TARGET_BYTES);
+		const chunks = [...coalesceChunks([small, large, small, small])];
+		expect(chunks.map((chunk) => chunk.byteLength)).toEqual([
+			2,
+			JSON_CHUNK_TARGET_BYTES,
+			4,
+		]);
 	});
 
 	it("recovers admission capacity when timers do not run after the hold deadline", () => {

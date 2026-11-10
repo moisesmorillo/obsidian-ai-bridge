@@ -425,7 +425,15 @@ export class PublicationController {
 						item.state !== "queued",
 				);
 				if (queuedCreate && !unresolvedSourcePut) {
-					const destinationBytes = await this.vault.read(parsed.to);
+					const destinationBase = state.base[parsed.to];
+					if (destinationBase && !state.epoch) {
+						await this.journal.recordAttention(
+							parsed.to,
+							"Confirmed base has no vault epoch",
+						);
+						return;
+					}
+					const destinationBytes = await this.readRenameDestination(parsed.to);
 					this.assertOpen();
 					if (destinationBytes === null) return;
 					const destinationPut = state.pending_ops.some(
@@ -439,9 +447,16 @@ export class PublicationController {
 							{
 								op: "put",
 								path: parsed.to,
-								precondition: { kind: "absent" },
+								precondition:
+									destinationBase && state.epoch
+										? {
+												kind: "match",
+												epoch: state.epoch,
+												rev: destinationBase.rev,
+											}
+										: { kind: "absent" },
 							},
-							new TextEncoder().encode(destinationBytes),
+							destinationBytes,
 						);
 					return;
 				}

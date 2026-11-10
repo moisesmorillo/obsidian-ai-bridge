@@ -836,7 +836,7 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Replaces one queued absent-precondition create with verified destination bytes in one queue commit. */
+	/** Replaces one queued absent-precondition create with verified bytes and the destination's current exact precondition in one queue commit. */
 	async relocateQueuedCreate(
 		key: string,
 		input: EnqueueInput,
@@ -852,10 +852,20 @@ export class DeviceJournal {
 				source.state !== "queued" ||
 				source.precondition.kind !== "absent" ||
 				capturedInput.op !== "put" ||
-				capturedInput.precondition.kind !== "absent" ||
 				capturedInput.path === source.path
 			)
 				throw new Error("Only a queued absent-precondition create can move");
+			const destinationBase = this.state.base[capturedInput.path];
+			if (
+				(capturedInput.precondition.kind === "absent" && destinationBase) ||
+				(capturedInput.precondition.kind === "match" &&
+					(!this.state.epoch ||
+						capturedInput.precondition.epoch !== this.state.epoch ||
+						destinationBase?.rev !== capturedInput.precondition.rev))
+			)
+				throw new Error(
+					"Destination precondition changed during create relocation",
+				);
 			const operationKey = createUuidV7();
 			const payloadRef = `${DEVICE_PAYLOAD_DIRECTORY}${operationKey}`;
 			let hash: string;

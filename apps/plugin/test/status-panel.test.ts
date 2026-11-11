@@ -240,6 +240,32 @@ describe("SyncStatusPanel", () => {
 		expect(opened).toEqual([file]);
 	});
 
+	it("blocks mixed-case settings roots before indexed file lookup", async () => {
+		const plugin = new VaultwirePlugin({} as never, {} as never);
+		const path = ".OBSIDIAN/plugins/test.md";
+		const file = Object.assign(new TFile(), { path });
+		const getAbstractFileByPath = vi.fn(() => file);
+		const notices: string[] = [];
+		const opened: unknown[] = [];
+		Reflect.set(plugin, "app", {
+			vault: { getAbstractFileByPath },
+			workspace: {
+				getLeaf: () => ({
+					openFile: async (value: unknown) => opened.push(value),
+				}),
+			},
+		});
+		Reflect.set(plugin, "notice", (message: string) => notices.push(message));
+
+		await Reflect.apply(Reflect.get(plugin, "openAttentionPath"), plugin, [
+			path,
+		]);
+
+		expect(getAbstractFileByPath).not.toHaveBeenCalled();
+		expect(notices).toEqual([`Cannot open configuration path: ${path}`]);
+		expect(opened).toEqual([]);
+	});
+
 	it.each([
 		[".obsidian/plugins/test.md", "config"],
 		["notes/missing.md", "missing"],

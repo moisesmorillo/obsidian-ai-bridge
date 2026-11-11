@@ -43,7 +43,7 @@ import {
 	projectSyncStatus,
 	type SyncFailureDiagnostic,
 } from "@plugin/sync/sync-status";
-import type { VaultReadResult } from "@vaultwire/protocol";
+import { pathKey, type VaultReadResult } from "@vaultwire/protocol";
 import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
@@ -1051,7 +1051,11 @@ export default class VaultwirePlugin extends Plugin {
 
 	/** Opens only an indexed file outside Obsidian configuration paths. */
 	private async openAttentionPath(path: string): Promise<void> {
-		if (path === ".obsidian" || path.startsWith(".obsidian/")) {
+		const canonicalPath = pathKey(path);
+		if (
+			canonicalPath === ".obsidian" ||
+			canonicalPath.startsWith(".obsidian/")
+		) {
 			this.notice(`Cannot open configuration path: ${path}`);
 			return;
 		}

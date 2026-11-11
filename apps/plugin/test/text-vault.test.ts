@@ -1669,6 +1669,35 @@ describe("ObsidianTextVault", () => {
 		expect(fake.host.createFolder).not.toHaveBeenCalled();
 	});
 
+	it("routes recovery-root aliases through confined adapter paths", async () => {
+		const fake = makeRecoveryHostVault();
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault);
+		const bytes = new Uint8Array([2, 0, 255]);
+		const hash = await recoveryHash(bytes);
+		const path = `.VAULTWIRE/PRE-APPLY/${hash}`;
+		fake.directories.add(".VAULTWIRE");
+		fake.directories.add(".VAULTWIRE/PRE-APPLY");
+		fake.hidden.set(path, { bytes: bytes.slice(), mtime: 1 });
+		const invalidPath = `.VAULTWIRE/other/${hash}`;
+		fake.hidden.set(invalidPath, { bytes: bytes.slice(), mtime: 1 });
+
+		expect(await vault.readBinary(path)).toEqual(bytes);
+		expect(await vault.stat(path)).toEqual({
+			mtime: 1,
+			size: bytes.byteLength,
+		});
+		expect(await vault.list()).toContain(path);
+		expect(await vault.removeRecoveryCopy(path, hash)).toBe(true);
+		expect(await vault.readBinary(path)).toBeNull();
+		expect(await vault.readBinary(invalidPath)).toBeNull();
+		expect(await vault.stat(invalidPath)).toBeNull();
+		expect(await vault.createBinary(invalidPath, bytes)).toBe(false);
+		expect(await vault.modifyBinary(invalidPath, bytes)).toBe(false);
+		expect(await vault.removeRecoveryCopy(invalidPath, hash)).toBe(false);
+		expect(fake.hidden.get(invalidPath)?.bytes).toEqual(bytes);
+		expect(fake.host.createBinary).not.toHaveBeenCalled();
+	});
+
 	it("refuses corrupt hidden recovery bytes without replacing them", async () => {
 		const fake = makeRecoveryHostVault();
 		const vault = new ObsidianTextVault(fake.host as unknown as Vault);

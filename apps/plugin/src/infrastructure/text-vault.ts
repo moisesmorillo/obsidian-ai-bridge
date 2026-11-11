@@ -42,7 +42,7 @@ export class ObsidianTextVault implements TextVault {
 				? new Uint8Array(await this.vault.adapter.readBinary(path))
 				: null;
 		}
-		if (path.startsWith(".vaultwire/")) {
+		if (hasCanonicalRecoveryRoot(path)) {
 			if (
 				!isRecoveryPath(path) ||
 				(await this.vault.adapter.stat(path))?.type !== "file"
@@ -58,7 +58,7 @@ export class ObsidianTextVault implements TextVault {
 	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
 		if (hasCanonicalSettingsRoot(path) && !this.isSettingsPath(path))
 			return null;
-		if (path.startsWith(".vaultwire/") && !isRecoveryPath(path)) return null;
+		if (hasCanonicalRecoveryRoot(path) && !isRecoveryPath(path)) return null;
 		const stat = await this.vault.adapter.stat(path);
 		return stat?.type === "file"
 			? { mtime: stat.mtime, size: stat.size }
@@ -117,7 +117,7 @@ export class ObsidianTextVault implements TextVault {
 			}
 			return true;
 		}
-		if (path.startsWith(".vaultwire/"))
+		if (hasCanonicalRecoveryRoot(path))
 			return this.writeRecoveryCopy(path, bytes, false);
 		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
 		await this.ensureParent(path);
@@ -141,11 +141,7 @@ export class ObsidianTextVault implements TextVault {
 		path: string,
 		expectedHash: string,
 	): Promise<boolean> {
-		if (
-			!isRecoveryPath(path) ||
-			path !== `${RECOVERY_DIRECTORY}/${expectedHash}`
-		)
-			return false;
+		if (recoveryPayloadHash(path) !== expectedHash) return false;
 		const bytes = await this.readBinary(path);
 		if (!bytes || (await digestBytes(bytes)) !== expectedHash) return false;
 		await this.vault.adapter.remove(path);
@@ -205,7 +201,7 @@ export class ObsidianTextVault implements TextVault {
 			}
 			return true;
 		}
-		if (path.startsWith(".vaultwire/"))
+		if (hasCanonicalRecoveryRoot(path))
 			return this.writeRecoveryCopy(path, bytes, true);
 		const file = this.fileAt(path);
 		if (!file) return false;
@@ -224,16 +220,8 @@ export class ObsidianTextVault implements TextVault {
 	async list(): Promise<string[]> {
 		const visible = this.vault.getFiles().map((file) => file.path);
 		const settingsFiles = await this.listSettingsFiles();
-		if ((await this.vault.adapter.stat(RECOVERY_DIRECTORY))?.type !== "folder")
-			return [...new Set([...visible, ...settingsFiles])];
-		const hidden = await this.vault.adapter.list(RECOVERY_DIRECTORY);
-		return [
-			...new Set([
-				...visible,
-				...settingsFiles,
-				...hidden.files.filter(isRecoveryPath),
-			]),
-		];
+		const recoveryFiles = await this.listRecoveryFiles();
+		return [...new Set([...visible, ...settingsFiles, ...recoveryFiles])];
 	}
 
 	/** Finds exact iCloud placeholder metadata without reading placeholder bytes. */
@@ -404,10 +392,8 @@ export class ObsidianTextVault implements TextVault {
 		bytes: Uint8Array,
 		refresh: boolean,
 	): Promise<boolean> {
-		if (
-			!isRecoveryPath(path) ||
-			(await digestBytes(bytes)) !== path.slice(RECOVERY_DIRECTORY.length + 1)
-		)
+		const recoveryHash = recoveryPayloadHash(path);
+		if (!recoveryHash || (await digestBytes(bytes)) !== recoveryHash)
 			return false;
 		const adapter = this.vault.adapter;
 		const existingStat = await adapter.stat(path);
@@ -418,7 +404,9 @@ export class ObsidianTextVault implements TextVault {
 			if (!refresh) return true;
 		} else {
 			if (refresh) return false;
-			for (const directory of [".vaultwire", RECOVERY_DIRECTORY]) {
+			const root = path.slice(0, path.indexOf("/"));
+			const recoveryDirectory = path.slice(0, path.lastIndexOf("/"));
+			for (const directory of [root, recoveryDirectory]) {
 				const stat = await adapter.stat(directory);
 				if (stat?.type === "folder") continue;
 				if (stat) return false;
@@ -440,6 +428,34 @@ export class ObsidianTextVault implements TextVault {
 		}
 		const written = await this.readBinary(path);
 		return written !== null && equalBytes(written, bytes);
+	}
+
+	/** Lists direct hash-addressed files under each canonical recovery directory while retaining path spelling. */
+	private async listRecoveryFiles(): Promise<string[]> {
+		const rootFolders = (await this.vault.adapter.list("")).folders.filter(
+			(path) =>
+				PathSchema.safeParse(path).success && pathKey(path) === ".vaultwire",
+		);
+		const recoveryDirectories: string[] = [];
+		for (const root of rootFolders) {
+			if ((await this.vault.adapter.stat(root))?.type !== "folder") continue;
+			const folders = (await this.vault.adapter.list(root)).folders;
+			recoveryDirectories.push(
+				...folders.filter(
+					(path) =>
+						PathSchema.safeParse(path).success &&
+						pathKey(path) === pathKey(`${root}/pre-apply`),
+				),
+			);
+		}
+		const files: string[] = [];
+		for (const directory of recoveryDirectories) {
+			if ((await this.vault.adapter.stat(directory))?.type !== "folder")
+				continue;
+			const listing = await this.vault.adapter.list(directory);
+			files.push(...listing.files.filter(isRecoveryPath));
+		}
+		return files;
 	}
 
 	/** Lists exact selected settings files through the adapter because the Vault index omits them. */
@@ -547,13 +563,35 @@ export class ObsidianTextVault implements TextVault {
 	}
 }
 
-/** Accepts only a direct child whose name is a canonical SHA-256 payload hash. */
-function isRecoveryPath(path: string): boolean {
-	const prefix = `${RECOVERY_DIRECTORY}/`;
+/** Checks only validated paths for canonical hidden recovery-root identity. */
+function hasCanonicalRecoveryRoot(path: string): boolean {
+	const root = path.split("/")[0];
+	if (!root) return false;
+	const rootProbe = `${root}/path`;
 	return (
-		path.startsWith(prefix) &&
-		DevicePayloadHashSchema.safeParse(path.slice(prefix.length)).success
+		PathSchema.safeParse(rootProbe).success &&
+		pathKey(rootProbe).startsWith(".vaultwire/")
 	);
+}
+
+/** Returns the exact hash only for a direct child of the canonical recovery directory. */
+function recoveryPayloadHash(path: string): string | null {
+	if (!PathSchema.safeParse(path).success) return null;
+	const segments = path.split("/");
+	if (
+		segments.length !== 3 ||
+		pathKey(segments.slice(0, 2).join("/")) !== pathKey(RECOVERY_DIRECTORY)
+	)
+		return null;
+	const payloadHash = segments[2];
+	return DevicePayloadHashSchema.safeParse(payloadHash).success
+		? payloadHash
+		: null;
+}
+
+/** Accepts only one direct child with a canonical SHA-256 payload hash. */
+function isRecoveryPath(path: string): boolean {
+	return recoveryPayloadHash(path) !== null;
 }
 
 /** Hashes exact bytes without text conversion. */

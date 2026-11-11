@@ -158,10 +158,10 @@ function makeRecoveryHostVault() {
 		}),
 		list: vi.fn(async (path: string) => ({
 			files: [...hidden.keys(), ...visible.keys()].filter((file) =>
-				file.startsWith(`${path}/`),
+				path === "" ? !file.includes("/") : file.startsWith(`${path}/`),
 			),
 			folders: [...directories].filter((folder) =>
-				folder.startsWith(`${path}/`),
+				path === "" ? !folder.includes("/") : folder.startsWith(`${path}/`),
 			),
 		})),
 		remove: vi.fn(async (path: string) => {
@@ -672,6 +672,7 @@ describe("ObsidianTextVault", () => {
 		);
 
 		expect(await vault.readBinary(path)).toEqual(initial);
+		expect(await vault.list()).toContain(path);
 		expect(await vault.stat(path)).toEqual({ mtime: 1, size: initial.length });
 		expect(await vault.size(path)).toBe(initial.length);
 		const replacement = new Uint8Array([9, 0, 250]);
@@ -688,6 +689,32 @@ describe("ObsidianTextVault", () => {
 		);
 		expect(await vault.trashBinary(path, replacement)).toBe(true);
 		expect(fake.adapter.trashLocal).toHaveBeenCalledWith(path);
+	});
+
+	it("refuses a cross-root settings identity collision without changing existing bytes", async () => {
+		const fake = makeRecoveryHostVault();
+		const existingPath = ".ObSiDiAn/PLUGINS/test/MAIN.JS";
+		const requestedPath = ".obsidian/plugins/test/main.js";
+		const existing = new Uint8Array([7, 0, 255]);
+		fake.directories.add(".ObSiDiAn");
+		fake.directories.add(".ObSiDiAn/PLUGINS");
+		fake.directories.add(".ObSiDiAn/PLUGINS/test");
+		fake.hidden.set(existingPath, { bytes: existing.slice(), mtime: 1 });
+		fake.directories.add(".obsidian");
+		fake.directories.add(".obsidian/plugins");
+		fake.directories.add(".obsidian/plugins/test");
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault, () => ({
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: true,
+		}));
+
+		expect(
+			await vault.createBinary(requestedPath, new Uint8Array([1, 2, 3])),
+		).toBe(false);
+		expect(fake.hidden.get(existingPath)?.bytes).toEqual(existing);
+		expect(fake.adapter.writeBinary).not.toHaveBeenCalled();
 	});
 
 	it("does not route hard-excluded settings aliases to adapter effects", async () => {

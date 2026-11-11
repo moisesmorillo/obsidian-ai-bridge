@@ -1,5 +1,7 @@
 import type { DevicePrecondition, PendingOperation } from "@vaultwire/protocol";
+import type { Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
+import { ObsidianTextVault } from "../src/infrastructure/text-vault";
 import { CoexistenceEffectFence } from "../src/sync/coexistence-effect-fence";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import {
@@ -373,6 +375,119 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it("queues an offline edit under a mixed-case settings root through the host adapter", async () => {
+		const path = ".ObSiDiAn/Plugins/tasks/data.json";
+		const bytes = new Uint8Array([123, 255, 0, 125]);
+		const files = new Map([[path, bytes]]);
+		const folders = new Set([
+			".ObSiDiAn",
+			".ObSiDiAn/Plugins",
+			".ObSiDiAn/Plugins/tasks",
+		]);
+		const adapter = {
+			stat: async (target: string) => {
+				const current = files.get(target);
+				if (current)
+					return { type: "file", mtime: 1, size: current.byteLength };
+				return folders.has(target)
+					? { type: "folder", mtime: 1, size: 0 }
+					: null;
+			},
+			list: async (directory: string) => ({
+				files: [...files.keys()].filter((item) =>
+					item.startsWith(`${directory}/`),
+				),
+				folders: [...folders].filter((item) =>
+					directory === ""
+						? !item.includes("/")
+						: item.startsWith(`${directory}/`),
+				),
+			}),
+			readBinary: async (target: string) => {
+				const value = files.get(target);
+				if (!value) throw new Error("Adapter path is absent");
+				return value.slice().buffer;
+			},
+		};
+		const host = {
+			adapter,
+			getFiles: () => [],
+			getAbstractFileByPath: () => null,
+		};
+		const policy: SettingsSyncPolicy = {
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: true,
+		};
+		const vault = new ObsidianTextVault(host as unknown as Vault, () => policy);
+		let state: unknown = null;
+		const payloads = new Map<string, Uint8Array>();
+		const journal = await DeviceJournal.open({
+			readState: async () => state,
+			writeState: async (next) => {
+				state = structuredClone(next);
+			},
+			readPayload: async (key) =>
+				payloads.get(key)?.slice() ?? new Uint8Array(),
+			writePayload: async (key, value) => {
+				payloads.set(key, value.slice());
+			},
+		});
+		await journal.resetEpoch(epoch);
+		const applyEngine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => null },
+			{ deviceName: "test", settingsPolicy: policy },
+		);
+		const remote: PublicationRemote = {
+			/** Rejects remote revision reads because startup publication uses local fixtures. */
+			async readAuthority() {
+				throw new Error("Unexpected remote read");
+			},
+			/** Rejects current-state reads because this test only scans local edits. */
+			async readCurrentAuthority() {
+				throw new Error("Unexpected remote read");
+			},
+			/** Rejects text mutations because the fixture contains a binary settings file. */
+			async put() {
+				throw new Error("Unexpected remote text put");
+			},
+			/** Rejects deletes because the fixture contains a live local settings file. */
+			async delete() {
+				throw new Error("Unexpected remote delete");
+			},
+			/** Rejects renames because the fixture contains no rename event. */
+			async rename() {
+				throw new Error("Unexpected remote rename");
+			},
+		};
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine,
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async () => {},
+			settingsPolicy: policy,
+		});
+
+		await controller.scan();
+
+		const queued = journal
+			.snapshot()
+			.pending_ops.find(
+				(operation: PendingOperation) => operation.path === path,
+			);
+		expect(queued).toMatchObject({ op: "put", path, state: "queued" });
+		expect(
+			await journal.readPayload(
+				queued?.payload_ref ?? "",
+				queued?.payload_hash ?? "",
+			),
+		).toEqual(bytes);
+		controller.close();
+		journal.close();
+	});
+
 	it("moves a queued unsent create to the destination path without remote rename", async () => {
 		const { controller, journal, remote, vault } = await openController();
 		vault.files.set("source.md", "new note");

@@ -450,11 +450,20 @@ export class ObsidianTextVault implements TextVault {
 		);
 	}
 
-	/** Traverses relevant settings trees and retains valid excluded spellings for collision checks. */
+	/** Discovers canonical settings roots, retains their spelling, and traverses only policy-admitted directories. */
 	private async listSettingsPaths(): Promise<string[]> {
-		const root = await this.vault.adapter.stat(".obsidian");
-		if (root?.type !== "folder") return [];
-		const pending = [".obsidian"];
+		const policy = this.settingsPolicy();
+		const rootFolders = (await this.vault.adapter.list("")).folders.filter(
+			(path) =>
+				PathSchema.safeParse(path).success &&
+				pathKey(path) === ".obsidian" &&
+				shouldTraverseSettingsDirectory(path, policy),
+		);
+		const pending: string[] = [];
+		for (const root of rootFolders) {
+			if ((await this.vault.adapter.stat(root))?.type === "folder")
+				pending.push(root);
+		}
 		const files: string[] = [];
 		while (pending.length > 0) {
 			const directory = pending.pop();
@@ -465,7 +474,7 @@ export class ObsidianTextVault implements TextVault {
 			);
 			pending.push(
 				...listing.folders.filter((path) =>
-					shouldTraverseSettingsDirectory(path, this.settingsPolicy()),
+					shouldTraverseSettingsDirectory(path, policy),
 				),
 			);
 		}

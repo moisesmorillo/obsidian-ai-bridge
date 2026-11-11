@@ -104,6 +104,7 @@ export type ReadOutcome<T> =
 	| {
 			ok: false;
 			failure: FileFailure | { kind: "internal_error" };
+			completion?: AdmissionCompletion;
 			settle?: ReadAdmissionSettlement;
 	  };
 
@@ -561,6 +562,7 @@ function finishReadFailure<T>(
 	return {
 		ok: false,
 		failure,
+		completion,
 		settle: async () => gateway.finishAdmission(context, ticketId, completion),
 	};
 }
@@ -576,6 +578,7 @@ function finishKnownFailure<T>(
 		return {
 			ok: false,
 			failure: { kind: "internal_error" },
+			completion: "settled",
 			settle: async () => gateway.finishAdmission(context, ticketId, "settled"),
 		};
 	if (!isKnownFailure(error)) throw error;

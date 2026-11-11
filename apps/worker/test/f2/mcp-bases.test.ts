@@ -91,7 +91,7 @@ describe("production MCP Base tools", () => {
 				name: "create_base",
 				arguments: {
 					path: "Freelance/Career Ops/Opportunities/invalid.base",
-					content: "views: [",
+					content: 'filters:\n  and:\n    - file.ext == "md"\n  or: 7\n',
 					epoch,
 				},
 			}),
@@ -193,7 +193,11 @@ describe("production MCP Base tools", () => {
 		const invalidUpdate = await structured(
 			await call(token, "tools/call", {
 				name: "update_base",
-				arguments: { path, content: "views: [", etag: createdTag },
+				arguments: {
+					path,
+					content: 'filters:\n  and:\n    - file.ext == "md"\n  or: 7\n',
+					etag: createdTag,
+				},
 			}),
 		);
 		expect(invalidUpdate.structuredContent).toMatchObject({

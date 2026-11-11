@@ -66,6 +66,34 @@ describe("validateBaseContent", () => {
 		expect(result.diagnostics.length).toBeGreaterThan(0);
 	});
 
+	it.each([
+		[
+			"invalid or sibling",
+			'filters:\n  and:\n    - file.ext == "md"\n  or: 7\n',
+		],
+		[
+			"invalid not sibling",
+			'filters:\n  or:\n    - file.ext == "md"\n  not: nope\n',
+		],
+		[
+			"invalid nested sibling",
+			'filters:\n  and:\n    - or:\n        - file.ext == "md"\n      not: { bad: true }\n',
+		],
+	])(
+		"rejects malformed known filter operator siblings: %s",
+		(_label, content) => {
+			expect(validateBaseContent(content).valid).toBe(false);
+		},
+	);
+
+	it("does not expose raw malformed YAML content in diagnostics", () => {
+		const sentinel = "PRIVATE_MARKER";
+		const result = validateBaseContent(`x: |${sentinel}\n  text\n`);
+		expect(result.valid).toBe(false);
+		expect(result.diagnostics.join(" ")).not.toContain(sentinel);
+		expect(result.diagnostics.join(" ")).not.toContain("x: |");
+	});
+
 	it("accepts an empty mapping", () => {
 		expect(validateBaseContent("{}").valid).toBe(true);
 	});

@@ -13,6 +13,7 @@ import {
 } from "@vaultwire/protocol";
 import type { AdmissionByteReservation } from "@worker/application/admission-budget";
 import type { BlobContentStore } from "@worker/application/blobs";
+import { McpListResultBudget } from "@worker/application/mcp-list-budget";
 import {
 	createMcpNote,
 	deleteMcpNote,
@@ -25,13 +26,12 @@ import {
 	type McpNotesGateway,
 	type McpReadOutcome,
 	type McpReadOwner,
+	ownMcpReadPreparationFailure,
 	readMcpNote,
 	settleMcpRead,
 } from "@worker/application/mcp-notes";
 import { openManifestRead } from "@worker/application/reads";
 
-/** Bound structured Base listing results to the shared MCP list budget. */
-const MCP_BASE_LIST_RESULT_BYTES_LIMIT = 65_536;
 /** Limit durable manifest traversal while retaining only bounded Base rows. */
 const MCP_BASE_MANIFEST_SCAN_LIMIT = Number.MAX_SAFE_INTEGER;
 
@@ -60,10 +60,13 @@ export async function listMcpBases(
 		signal,
 		MCP_BASE_MANIFEST_SCAN_LIMIT,
 	);
-	if (!opened.ok) return { ok: false, failure: opened.failure };
+	if (!opened.ok)
+		return ownMcpReadPreparationFailure<Pick<McpListBasesResult, "entries">>(
+			opened,
+		);
 	return settleMcpRead(opened.body, async () => {
 		const entries: McpListBasesResult["entries"][number][] = [];
-		let estimatedBytes = 128;
+		const budget = new McpListResultBudget();
 		for (;;) {
 			const batch = await opened.body.readBatch();
 			for (const row of batch.rows) {
@@ -83,17 +86,9 @@ export async function listMcpBases(
 					updated_at: row.updated_at,
 					large: row.large,
 				};
-				const nextBytes =
-					estimatedBytes +
-					new TextEncoder().encode(JSON.stringify(entry)).byteLength +
-					(entries.length > 0 ? 1 : 0);
-				if (
-					entries.length >= 256 ||
-					nextBytes > MCP_BASE_LIST_RESULT_BYTES_LIMIT
-				)
+				if (!budget.add(entry))
 					return { ok: false, failure: { kind: "result_too_large" } };
 				entries.push(entry);
-				estimatedBytes = nextBytes;
 			}
 			if (batch.next_page !== null)
 				return { ok: false, failure: { kind: "result_too_large" } };

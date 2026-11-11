@@ -1,6 +1,8 @@
 import type { AuthorizationContext } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
+import { listMcpBases } from "@worker/application/mcp-bases";
 import { readMcpNote } from "@worker/application/mcp-notes";
+import { VaultOverloaded } from "@worker/application/vault-overload";
 import { acquireTestReadSlot as tryAcquireReadSlot } from "@worker/test-fixtures/read-slot";
 import { describe, expect, it } from "vitest";
 
@@ -19,6 +21,79 @@ const identity: AuthorizationContext = {
 	grant_id: "mcp-grant",
 	scopes: ["vault:read"],
 };
+
+describe("MCP list preparation cancellation", () => {
+	it("settles an authorized Base list when cancellation aborts before summary read", async () => {
+		const signal = new AbortController();
+		const finished: string[] = [];
+		let summaryReads = 0;
+		const gateway = {
+			authorize: async () => {
+				signal.abort();
+				return {
+					ok: true as const,
+					ticket: { id: "mcp-list-ticket", expires_at: 1_000 },
+				};
+			},
+			readVault: async () => {
+				summaryReads += 1;
+				return { ok: true as const, body: {} };
+			},
+			finishAdmission: async (
+				_identity: unknown,
+				_ticket: string,
+				result: string,
+			) => {
+				finished.push(result);
+				return { ok: true as const };
+			},
+		} as unknown as Parameters<typeof listMcpBases>[0];
+		const outcome = await listMcpBases(
+			gateway,
+			identity,
+			undefined,
+			false,
+			signal.signal,
+		);
+		if (outcome.owner === undefined) throw new Error("Expected response owner");
+		await outcome.owner.cancel();
+		await outcome.owner.finish("settled");
+		await outcome.owner.finish("settled");
+		expect(outcome).toMatchObject({
+			ok: false,
+			failure: { kind: "internal_error" },
+			owner: { completion: "settled", sourceComplete: true },
+		});
+		expect(summaryReads).toBe(0);
+		expect(finished).toEqual(["settled"]);
+	});
+
+	it("retains uncertain completion for an overload during Base list preparation", async () => {
+		const finished: string[] = [];
+		const gateway = {
+			authorize: async () => ({
+				ok: true as const,
+				ticket: { id: "mcp-list-ticket", expires_at: 1_000 },
+			}),
+			readVault: async () => {
+				throw new VaultOverloaded();
+			},
+			finishAdmission: async (
+				_identity: unknown,
+				_ticket: string,
+				result: string,
+			) => {
+				finished.push(result);
+				return { ok: true as const };
+			},
+		} as unknown as Parameters<typeof listMcpBases>[0];
+		const outcome = await listMcpBases(gateway, identity);
+		if (outcome.owner === undefined) throw new Error("Expected response owner");
+		await outcome.owner.finish("settled");
+		expect(outcome.owner.completion).toBe("uncertain");
+		expect(finished).toEqual(["uncertain"]);
+	});
+});
 
 describe("MCP note read cancellation", () => {
 	it("joins a started blob read before the shared read slot can be reused", async () => {

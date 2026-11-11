@@ -6,19 +6,18 @@ const BaseFilterSchema: z.ZodType<unknown> = z.lazy(() =>
 		z.string(),
 		z
 			.object({
-				and: z.array(BaseFilterSchema).min(1),
+				and: z.array(BaseFilterSchema).min(1).optional(),
+				or: z.array(BaseFilterSchema).min(1).optional(),
+				not: z.array(BaseFilterSchema).min(1).optional(),
 			})
-			.passthrough(),
-		z
-			.object({
-				or: z.array(BaseFilterSchema).min(1),
-			})
-			.passthrough(),
-		z
-			.object({
-				not: z.array(BaseFilterSchema).min(1),
-			})
-			.passthrough(),
+			.passthrough()
+			.refine(
+				(filter) =>
+					[filter.and, filter.or, filter.not].filter(
+						(operator) => operator !== undefined,
+					).length === 1,
+				{ message: "A filter object must contain one known operator" },
+			),
 	]),
 );
 

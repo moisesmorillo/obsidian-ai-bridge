@@ -12,6 +12,7 @@ import type {
 import { EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import { McpListResultBudget } from "@worker/application/mcp-list-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import type { LazyReadSession } from "@worker/application/reads";
 import {
@@ -19,6 +20,7 @@ import {
 	openManifestRead,
 	type ReadAdmissionSettlement,
 	ReadBatchFailure,
+	type ReadOutcome,
 	type ReadVaultGateway,
 } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
@@ -26,8 +28,6 @@ import { readSearch } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { unexpectedFailure } from "@worker/application/vault-overload";
 
-/** Estimated JSON bytes allowed for one structured MCP list result. */
-const MCP_LIST_RESULT_BYTES_LIMIT = 65_536;
 /** Bound manifest traversal to a safe integer while retaining only bounded batches. */
 const MCP_MANIFEST_SCAN_LIMIT = Number.MAX_SAFE_INTEGER;
 
@@ -117,8 +117,27 @@ export async function settleMcpRead<T extends object, Row, Metadata>(
 }
 
 /** Keep completed preparation settlement with the MCP response owner. */
-function completedMcpReadOwner(settle: ReadAdmissionSettlement): McpReadOwner {
-	return createMcpReadOwner("settled", async () => {}, settle, true);
+function completedMcpReadOwner(
+	settle: ReadAdmissionSettlement,
+	completion: AdmissionCompletion,
+): McpReadOwner {
+	return createMcpReadOwner(completion, async () => {}, settle, true);
+}
+
+/** Transfer an admitted preparation failure to the MCP response lifecycle. */
+export function ownMcpReadPreparationFailure<T extends object>(
+	opened: Extract<ReadOutcome<unknown>, { ok: false }>,
+): McpReadOutcome<T> {
+	return opened.settle
+		? {
+				ok: false,
+				failure: opened.failure,
+				owner: completedMcpReadOwner(
+					opened.settle,
+					opened.completion ?? "settled",
+				),
+			}
+		: { ok: false, failure: opened.failure };
 }
 
 /** Combine application certainty with response producer completion before durable finish. */
@@ -145,13 +164,6 @@ function createMcpReadOwner(
 	};
 }
 
-/** Estimate one serialized list row without materializing the enclosing MCP response. */
-function estimateMcpListEntryBytes(
-	entry: McpListNotesResult["entries"][number],
-): number {
-	return new TextEncoder().encode(JSON.stringify(entry)).byteLength;
-}
-
 /** Traverse bounded manifest batches and bound only matching MCP result rows and bytes. */
 export async function listMcpNotes(
 	gateway: McpNotesGateway,
@@ -167,10 +179,13 @@ export async function listMcpNotes(
 		signal,
 		MCP_MANIFEST_SCAN_LIMIT,
 	);
-	if (!opened.ok) return { ok: false, failure: opened.failure };
+	if (!opened.ok)
+		return ownMcpReadPreparationFailure<Pick<McpListNotesResult, "entries">>(
+			opened,
+		);
 	return settleMcpRead(opened.body, async () => {
 		const entries: McpListNotesResult["entries"][number][] = [];
-		let estimatedBytes = 128;
+		const budget = new McpListResultBudget();
 		for (;;) {
 			const batch = await opened.body.readBatch();
 			for (const row of batch.rows) {
@@ -190,14 +205,9 @@ export async function listMcpNotes(
 					updated_at: row.updated_at,
 					large: row.large,
 				};
-				const nextBytes =
-					estimatedBytes +
-					estimateMcpListEntryBytes(entry) +
-					(entries.length > 0 ? 1 : 0);
-				if (entries.length >= 256 || nextBytes > MCP_LIST_RESULT_BYTES_LIMIT)
+				if (!budget.add(entry))
 					return { ok: false, failure: { kind: "result_too_large" } };
 				entries.push(entry);
-				estimatedBytes = nextBytes;
 			}
 			if (batch.next_page !== null)
 				return { ok: false, failure: { kind: "result_too_large" } };
@@ -406,7 +416,10 @@ export async function searchMcpNotes(
 			? {
 					ok: false,
 					failure: result.failure,
-					owner: completedMcpReadOwner(result.settle),
+					owner: completedMcpReadOwner(
+						result.settle,
+						result.completion ?? "settled",
+					),
 				}
 			: { ok: false, failure: result.failure };
 	const epoch = result.body.epoch;
@@ -438,13 +451,9 @@ export async function historyMcpNote(
 		signal,
 	);
 	if (!opened.ok)
-		return opened.settle
-			? {
-					ok: false,
-					failure: opened.failure,
-					owner: completedMcpReadOwner(opened.settle),
-				}
-			: { ok: false, failure: opened.failure };
+		return ownMcpReadPreparationFailure<Pick<McpHistoryResult, "entries">>(
+			opened,
+		);
 	return settleMcpRead(opened.body, async () => {
 		const entries: McpHistoryResult["entries"][number][] = [];
 		for (;;) {

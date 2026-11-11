@@ -148,21 +148,16 @@ export function validateBaseContent(content: string): BaseValidationResult {
 			return invalid("Base YAML must contain one document");
 		const document = documents[0];
 		if (!document || document.errors.length > 0)
-			return invalid(document?.errors[0]?.message ?? "Base YAML is invalid");
+			return invalid("Base YAML syntax is invalid");
 		const value: unknown = document.toJS({ maxAliasCount: 0 });
 		const result = BaseContentSchema.safeParse(value);
-		if (!result.success)
-			return invalid(
-				result.error.issues[0]?.message ?? "Base structure is invalid",
-			);
+		if (!result.success) return invalid("Base structure is invalid");
 		return BaseValidationResultSchema.parse({
 			valid: true,
 			level: "structural-only",
 			diagnostics: [],
 		});
-	} catch (error) {
-		return invalid(
-			error instanceof Error ? error.message : "Base YAML is invalid",
-		);
+	} catch {
+		return invalid("Base YAML parser failed");
 	}
 }

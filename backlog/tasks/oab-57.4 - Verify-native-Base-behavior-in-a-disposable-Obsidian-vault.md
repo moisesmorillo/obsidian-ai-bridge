@@ -4,10 +4,11 @@ title: Verify native Base behavior in a disposable Obsidian vault
 status: Deferred
 assignee: []
 created_date: '2026-11-11T02:37:00Z'
+updated_date: '2026-11-11T02:56:00Z'
 labels: []
 dependencies: []
 references:
-  - .superpowers/sdd/2026-11-11-obsidian-bases/task-3-brief.md
+  - docs/superpowers/plans/2026-11-11-obsidian-bases.md
 documentation:
   - docs/spec.md
 parent_task_id: OAB-57

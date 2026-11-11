@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.3...vaultwire-v1.1.0) (2026-11-11)
+
+
+### Features
+
+* support native Obsidian Bases sync and MCP tools ([#171](https://github.com/moisesmorillo/vaultwire/issues/171)) ([fafad5b](https://github.com/moisesmorillo/vaultwire/commit/fafad5b06805fc6ec9f3d9d100ec50ea6b5af0f6))
+
+
+### Bug Fixes
+
+* **plugin:** enforce canonical reserved-root policy ([#172](https://github.com/moisesmorillo/vaultwire/issues/172)) ([1e5be3f](https://github.com/moisesmorillo/vaultwire/commit/1e5be3fb1aca503cb0208e0e87f7e6e4796e790a))
+
 ## [1.0.3](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.2...vaultwire-v1.0.3) (2026-11-11)
 
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-10T03:43:00Z'
-updated_date: '2026-11-11T03:29:00Z'
+updated_date: '2026-11-11T03:55:00Z'
 labels: []
 dependencies: []
 references:
@@ -31,7 +31,7 @@ A ChatGPT user case asks for Obsidian Bases (.base files) as MCP resources: list
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Plan: docs/superpowers/plans/2026-11-11-obsidian-bases.md. Await owner approval before product changes or subtask creation. Proposed order: native sync, bounded structural validation, six MCP tools. One branch and pull request. Each subtask needs RED evidence, bun run check, and a fresh task review. Complete branch review and human diff review precede publication.
+Owner approved plan pn-761c39. Implementation and review corrections are complete at 7efdf8b. Supervisor re-audit and open human branch review pn-557a4d precede PR publication. OAB-57.4 retains the approved disposable-Obsidian-runtime trigger.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -79,4 +79,36 @@ Owner approved plan in Plannotator pn-761c39 on 2026-11-11. Approval covers all 
 Final branch review covered 66ff86a..841f020 and requested four corrections: F1 durable settlement loss, F2 malformed known filter siblings, F3 raw parser diagnostics, F4 duplicate list policy. Owner directed all findings fixed in this branch. Worker fixed F1-F4 in cb7c617. Scoped reviewer confirmed each closure. Follow-up comment-only ebeb667 documents completion certainty and received approval. Documentation audit covered protocol schemas/types/codecs, application policy, transport registrations, spec and API guide. Structural candidates remain cohesive after explicit settlement ownership and one list-budget owner. Full bun run check at cb7c617 passed with 2611 tests and one skip. Comment-only checks at ebeb667 passed formatting, docs:check and Worker typecheck. Existing unrelated lint warnings remain. Native UI proof remains intentionally deferred to approved OAB-57.4, not a review finding. Human branch review remains pending.
 
 Formula policy audit 2026-11-11: official Bases syntax at https://help.obsidian.md/bases/syntax and https://github.com/obsidianmd/obsidian-help/blob/master/en/Bases/Bases%20syntax.md states formula properties are always stored as strings in YAML (repository source checked at commit 24a31567c8a124aaaf95192fa49683bd35305dde). Keep formulas and summaries as z.string(). Add numeric literal rejection coverage. This concerns serialized YAML scalars only and makes no claim about expression evaluation.
+
+Supervisor re-audit closure at 7efdf8b.
+N1 exception under AGENTS.md: valid historical pre-implementation RED evidence is unavailable for audit-round-1 items 1, 2, and 5.
+Keep the implementation and tests. Do not treat test-discovery errors or later assertion failures as historical RED.
+The earlier report overstated item 5 RED evidence. This note supersedes that claim.
+Marker assertion changes follow the owner-directed compatibility correction, not weaker expectations.
+blobs.test.ts now rejects large=true and accepts large=false for oversized Base blobs.
+vault-blob-files.test.ts preserves the 1,000,001-byte size and blob checks, but expects large=false.
+A later negative control temporarily bypassed the note guard. Three existing-Base tests failed with exit 1.
+The worker restored the guard. This proves regression detection after implementation, not historical RED.
+N2 uses a frozen manifest schema from main revision 66ff86a.
+A real SQLite Worker manifest contains a 1,000,001-byte Base blob and parses through that frozen schema.
+The Base row carries large=false. Oversized Markdown retains large=true.
+N3 passes delete_note and restore_note inputs through the Base refusal guard.
+Tests use existing Base bytes and real current/source ETags. They prove unchanged files, revisions, changes, receipts, content, and ETags.
+The worker also removed stacked CST documentation and corrected the stale test title.
+Focused manifest tests passed: 3. Focused existing-Base mutation tests passed: 3.
+bun run docs:check and bun run check passed. Full check reported 2520 passed and 1 skipped.
+Existing lint warnings remain. Supervisor re-audit and human approval remain pending.
+
+Audit-round-1 final closures, with round-2 proof:
+1. Base rows always carry large=false. Only oversized Markdown and Canvas carry large=true.
+This supersedes the earlier Base marker proposal. Native Base storage limits remain unchanged.
+2. All six note mutation tools refuse Base paths before mutation. Base tools retain validation and conditional operations.
+Existing-Base tests cover update, both append tools, delete, and restore without persistent changes.
+3. noSourceOwner documentation covers validation and refused mutations before storage admission.
+4. The manifest comment states result budgets, next_page refusal, and deadline ownership.
+5. A direct checkCstBounds test reaches the 16384-node limit without changing parser caps.
+6. Note listing uses the canonical classifier for Markdown and Canvas.
+7. Official Bases syntax states that formula properties use YAML strings. Numeric scalar rejection now has a test.
+Official source revision: 24a31567c8a124aaaf95192fa49683bd35305dde.
+No query engine, generic-sync validation, personal vault access, or Cloudflare change entered this correction.
 <!-- SECTION:NOTES:END -->

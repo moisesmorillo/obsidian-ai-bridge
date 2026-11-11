@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-11T01:37:00Z'
-updated_date: '2026-11-11T02:56:00Z'
+updated_date: '2026-11-11T03:17:00Z'
 labels: []
 dependencies:
   - OAB-57.1
@@ -39,6 +39,8 @@ Follow approved plan Task 3 and six-tool authority table. Write failing discover
 
 <!-- SECTION:NOTES:BEGIN -->
 Reviewed revision ed62b73d6538a96eb64f7086de08fa63dcfa4679. Fresh reviewer found spec compliance and approved quality with one MINOR: duplicate MCP list byte budget owners in mcp-bases and mcp-notes. Carry this finding into final branch review, not silent closure. Structural candidates: Base application boundary and transport/application authority matrix. Reviewer found cohesive policy ownership for revision, scope, epoch, admission, and response settlement. Documentation scope: protocol declarations, spec 8 and API catalog. Focused tests and bun run check passed. Parent recovered original RED commands from worker session lines 49-60: protocol schema tests failed on undefined schemas and production MCP tests failed discovery and pre-dispatch scope. Both wrappers recorded exit 1. Exception: separate RED runs for every later edge-case test are not proven. Keep current tests and implementation, as AGENTS.md directs. No Obsidian UI pass occurred. OAB-57.4 tracks the approved disposable-runtime trigger.
+
+Final branch corrections at cb7c617 preserve durable settlement ownership after list preparation failure, including known and uncertain completion. Base and note list budgets now share McpListResultBudget. Tests cover post-authorization abort cleanup exactly once and budget count/byte/Unicode boundaries. Full check reported 2611 passed and 1 skipped. Scoped reviewer 10aeb9b0 confirmed F1 and F4 fixed. Comment-only follow-up ebeb667 explains ReadOutcome.completion. Reviewer 42b62169 approved its truth against callers. No MCP review finding remains deferred.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

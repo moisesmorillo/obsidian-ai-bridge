@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-11T01:37:00Z'
-updated_date: '2026-11-11T02:16:00Z'
+updated_date: '2026-11-11T03:17:00Z'
 labels: []
 dependencies:
   - OAB-57.1
@@ -39,6 +39,8 @@ Follow approved plan Task 2. Write failing tests before a bounded incremental YA
 Added yaml@2.8.1 because its browser export supports Workers portability, unlike Bun-only YAML parsing.
 
 Reviewed revision 04443b701d6ad4326c1555ed96176e87434af2cb. Initial review found oversized-input allocation, ineffective node fixture, and public schema key stripping. Fixed all three in 04443b7. Scoped reviewer approved each closure. Tests now prove two actual views and the intended depth refusal. The node candidate reaches the lexical-token ceiling first, so independent node-ceiling coverage remains unclaimed. Documentation scope: new protocol schemas, types, and codec declarations. Structural candidate: bounded parser pipeline, cohesive with one safety-policy owner. Twenty-one focused tests, docs:check, typecheck, and bun run check passed. Existing unrelated lint warnings remain.
+
+Final branch corrections at cb7c617 validate every present known filter operator and refuse malformed sibling operators, including nested filters. Diagnostics now use bounded content-free messages. Regression tests prove malformed create/update refusal without a new revision and sentinel removal. Full check passed at cb7c617. Scoped reviewer 10aeb9b0 confirmed F2 and F3 fixed. No parser finding remains deferred.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-10T03:43:00Z'
-updated_date: '2026-11-11T01:37:00Z'
+updated_date: '2026-11-11T03:17:00Z'
 labels: []
 dependencies: []
 references:
@@ -75,4 +75,6 @@ No product code changes precede owner approval. No personal vault or Cloudflare 
 Design review closure before owner review: (1) fixed in plan with explicit new inline/blob policy, large marker, legacy small-blob exception, and tests. (2) fixed with six-tool scope, admission, owner, and cancellation table. validate_base holds Worker read-slot and envelope ownership without a dummy durable read admission. (3) fixed with incremental yaml@2.8.1 Lexer/Parser bounds before composition, iterative CST checks, and bounded diagnostics. Planning probe accepted a normal view in 23 tokens and refused 20,000-level flow/block inputs after 35/66 tokens without composition or stack errors. This proves the parser seam under Bun, not Worker runtime or Obsidian UI compatibility. No product code changes. Owner approval remains pending.
 
 Owner approved plan in Plannotator pn-761c39 on 2026-11-11. Approval covers all Owner decisions and the three implementation subtasks. No product changes preceded approval.
+
+Final branch review covered 66ff86a..841f020 and requested four corrections: F1 durable settlement loss, F2 malformed known filter siblings, F3 raw parser diagnostics, F4 duplicate list policy. Owner directed all findings fixed in this branch. Worker fixed F1-F4 in cb7c617. Scoped reviewer confirmed each closure. Follow-up comment-only ebeb667 documents completion certainty and received approval. Documentation audit covered protocol schemas/types/codecs, application policy, transport registrations, spec and API guide. Structural candidates remain cohesive after explicit settlement ownership and one list-budget owner. Full bun run check at cb7c617 passed with 2611 tests and one skip. Comment-only checks at ebeb667 passed formatting, docs:check and Worker typecheck. Existing unrelated lint warnings remain. Native UI proof remains intentionally deferred to approved OAB-57.4, not a review finding. Human branch review remains pending.
 <!-- SECTION:NOTES:END -->

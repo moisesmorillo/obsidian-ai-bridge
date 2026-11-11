@@ -1,9 +1,7 @@
 name: Plugin release
 
 on:
-  push:
-    tags:
-      - 'vaultwire-v*'
+  # Release Please is the only caller. A tag push never starts publication.
   workflow_call:
     inputs:
       tag:
@@ -15,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: plugin-release-${{ github.ref }}
+  group: plugin-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -26,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag }}
           persist-credentials: false
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
@@ -37,7 +35,7 @@ jobs:
         run: bun apps/plugin/tools/release-versions.ts apps/plugin/manifest.json apps/plugin/versions.json
       - name: Validate release metadata
         env:
-          PLUGIN_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          PLUGIN_RELEASE_TAG: ${{ inputs.tag }}
         run: bun apps/plugin/tools/release.ts "${PLUGIN_RELEASE_TAG:?Missing release tag}"
       - name: Check repository and build plugin
         run: bun run check
@@ -61,7 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: true
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
@@ -70,7 +68,7 @@ jobs:
       - name: Verify tag source
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -93,7 +91,7 @@ jobs:
       - name: Publish release
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -125,7 +123,7 @@ jobs:
       - name: Record published compatibility entry on main
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail

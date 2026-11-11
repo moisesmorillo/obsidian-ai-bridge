@@ -275,9 +275,26 @@ describe("Release Please configuration", () => {
 		);
 		expect(workflow).toContain("uses: ./.github/workflows/release.yml");
 		expect(workflow).toContain("uses: ./.github/workflows/deploy.yml");
-		expect(workflowText("release.yml")).toContain("'vaultwire-v*'");
+		expect(workflow).toContain(
+			"tag: ${{ needs.release-please.outputs.plugin-tag }}",
+		);
 		expect(workflow).not.toContain("sync-plugin-compatibility:");
 		expect(workflow).not.toContain("release-versions.ts");
+	});
+
+	it("starts plugin publication only from the Release Please workflow call", () => {
+		const workflow = workflowText("release.yml");
+		const triggers = workflow.slice(
+			workflow.indexOf("\non:\n"),
+			workflow.indexOf("\npermissions:\n"),
+		);
+
+		expect(triggers).toContain("workflow_call:");
+		expect(triggers).toContain("required: true");
+		expect(triggers).not.toMatch(/^\s+push:/m);
+		expect(triggers).not.toMatch(/^\s+tags:/m);
+		expect(triggers).not.toContain("workflow_dispatch:");
+		expect(workflow).not.toContain("github.ref_name");
 	});
 
 	it("writes the tag compatibility entry before validation, build, and publication", () => {

@@ -1,5 +1,5 @@
 import { withPluginVaultMutation } from "@plugin/infrastructure/vault-events";
-import { TFile } from "@plugin/obsidian-api";
+import { TFile, TFolder } from "@plugin/obsidian-api";
 import {
 	classifyEnrollmentPath,
 	DEFAULT_SETTINGS_SYNC_POLICY,
@@ -542,6 +542,36 @@ export class ObsidianTextVault implements TextVault {
 					PathSchema.safeParse(file.path).success &&
 					pathKey(file.path) === key,
 			);
+	}
+
+	/**
+	 * Removes ancestor folders of a vacated path while each one is empty on disk.
+	 *
+	 * Walks upward from the direct parent. It stops at the vault root, at a folder
+	 * outside the Obsidian index (such as `.obsidian/`), and at the first folder whose
+	 * disk listing holds any file or subfolder, hidden entries included. Each removal
+	 * is non-recursive, so a file that appears after the check makes the host refuse.
+	 * Folders have no sync identity, so this effect never changes the journal.
+	 */
+	async pruneEmptyParents(path: string): Promise<void> {
+		let slash = path.lastIndexOf("/");
+		while (slash > 0) {
+			const folderPath = path.slice(0, slash);
+			const folder = this.vault.getAbstractFileByPath(folderPath);
+			if (!(folder instanceof TFolder) || folder.children.length > 0) return;
+			const listed = await this.vault.adapter.list(folderPath);
+			if (listed.files.length > 0 || listed.folders.length > 0) return;
+			await withPluginVaultMutation(
+				this.vault,
+				{ type: "delete", path: folderPath },
+				() => this.vault.delete(folder, false),
+				undefined,
+				() => this.vault.getAbstractFileByPath(folderPath) !== folder,
+				folder,
+			);
+			if (this.vault.getAbstractFileByPath(folderPath) === folder) return;
+			slash = folderPath.lastIndexOf("/");
+		}
 	}
 
 	/** Creates missing parent folders without replacing an existing folder. */

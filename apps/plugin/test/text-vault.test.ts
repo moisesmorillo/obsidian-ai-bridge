@@ -1,5 +1,5 @@
 import type { DeviceState } from "@vaultwire/protocol";
-import { type EventRef, TFile, type Vault } from "obsidian";
+import { type EventRef, TFile, TFolder, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import { ObsidianTextVault } from "../src/infrastructure/text-vault";
 import { VaultEventAdapter } from "../src/infrastructure/vault-events";
@@ -1900,5 +1900,97 @@ describe("ObsidianTextVault", () => {
 		expect(fake.create).toHaveBeenCalledWith("notes/b.md", "new note");
 		expect(await vault.rename("notes/a.md", "notes/c.md", "old")).toBe(true);
 		expect(fake.rename).toHaveBeenCalledWith(fake.file, "notes/c.md");
+	});
+});
+
+/** Builds a host vault whose index and disk listing can disagree about hidden entries. */
+function makeFolderVault(
+	indexed: Record<string, string[]>,
+	disk: Record<string, string[]> = indexed,
+) {
+	const folders = new Map<string, TFolder>();
+	for (const [path, children] of Object.entries(indexed)) {
+		const folder = Object.assign(new TFolder(), {
+			path,
+			children: children.map((child) =>
+				Object.assign(new TFile(), { path: `${path}/${child}` }),
+			),
+		});
+		folders.set(path, folder);
+	}
+	const deleted: string[] = [];
+	const host = {
+		getAbstractFileByPath: (path: string) => folders.get(path) ?? null,
+		adapter: {
+			list: vi.fn(async (path: string) => ({
+				files: (disk[path] ?? []).map((name) => `${path}/${name}`),
+				folders: [...folders.keys()].filter(
+					(candidate) =>
+						candidate.startsWith(`${path}/`) &&
+						!candidate.slice(path.length + 1).includes("/"),
+				),
+			})),
+		},
+		delete: vi.fn(async (folder: TFolder, force?: boolean) => {
+			if (force) throw new Error("recursive delete is forbidden");
+			deleted.push(folder.path);
+			folders.delete(folder.path);
+		}),
+		on: vi.fn(),
+		offref: vi.fn(),
+	};
+	return { host, deleted, folders };
+}
+
+describe("ObsidianTextVault empty folder pruning", () => {
+	it("removes empty ancestors up to the first folder that still holds an entry", async () => {
+		const { host, deleted } = makeFolderVault({
+			keep: ["note.md"],
+			"keep/empty": [],
+			"keep/empty/leaf": [],
+		});
+		const vault = new ObsidianTextVault(host as unknown as Vault);
+
+		await vault.pruneEmptyParents("keep/empty/leaf/gone.md");
+
+		expect(deleted).toEqual(["keep/empty/leaf", "keep/empty"]);
+	});
+
+	it("keeps a folder whose index lists a child folder", async () => {
+		const { host, deleted, folders } = makeFolderVault({ parent: [] }, {});
+		const parent = folders.get("parent");
+		if (!parent) throw new Error("fixture folder missing");
+		parent.children = [
+			Object.assign(new TFolder(), { path: "parent/child", children: [] }),
+		];
+		const vault = new ObsidianTextVault(host as unknown as Vault);
+
+		await vault.pruneEmptyParents("parent/gone.md");
+
+		expect(deleted).toEqual([]);
+		expect(host.adapter.list).not.toHaveBeenCalled();
+	});
+
+	it("keeps a folder whose disk listing holds a hidden entry", async () => {
+		const { host, deleted } = makeFolderVault(
+			{ cache: [] },
+			{ cache: [".DS_Store"] },
+		);
+		const vault = new ObsidianTextVault(host as unknown as Vault);
+
+		await vault.pruneEmptyParents("cache/gone.md");
+
+		expect(deleted).toEqual([]);
+	});
+
+	it("does nothing for a root file or a folder outside the index", async () => {
+		const { host, deleted } = makeFolderVault({});
+		const vault = new ObsidianTextVault(host as unknown as Vault);
+
+		await vault.pruneEmptyParents("gone.md");
+		await vault.pruneEmptyParents(".obsidian/plugins/x/data.json");
+
+		expect(deleted).toEqual([]);
+		expect(host.adapter.list).not.toHaveBeenCalled();
 	});
 });

@@ -12,6 +12,14 @@ export class TFile {
 	constructor(public path: string) {}
 }
 
+/** Folder identity with its indexed children, as the Obsidian vault index reports it. */
+export class TFolder {
+	/** Indexed child files and folders. Hidden disk entries never appear here. */
+	children: Array<TFile | TFolder> = [];
+	/** Binds a test folder to its current vault path. */
+	constructor(public path: string) {}
+}
+
 /** Supplies a host class for tests that replace Obsidian through their own lifecycle mock. */
 export class Plugin {}
 /** Empty host notice used only when tests import the plugin composition. */

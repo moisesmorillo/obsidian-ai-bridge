@@ -1,4 +1,5 @@
 import { parseETag } from "@protocol/codecs/etag";
+import { classifyFilePath } from "@protocol/codecs/files";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { FileFailureSchema } from "@protocol/schemas/files";
 import { PathSchema } from "@protocol/schemas/path";
@@ -92,11 +93,12 @@ function refineManifestEntry(
 		(entry.deleted ||
 			entry.kind !== "blob" ||
 			entry.size <= 1_000_000 ||
-			!/\.(?:md|canvas)$/i.test(entry.path))
+			classifyFilePath(entry.path) === "other")
 	)
 		ctx.addIssue({
 			code: "custom",
-			message: "large marks only oversized live Markdown or Canvas blobs",
+			message:
+				"large marks only oversized live Markdown, Canvas, or Base blobs",
 		});
 	if (!entry.deleted && entry.hash.length !== 64)
 		ctx.addIssue({

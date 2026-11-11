@@ -273,10 +273,10 @@ Versions 4 and 5 do not change relational table DDL. Versions 1 through 4 remain
 
 ### 5.4 Storage rule for text vs blob
 
-The final file extension selects Markdown or Canvas behavior. The ASCII letters in `.md` and `.canvas` match without case distinctions. This rule does not change path identity. Near matches such as `.md.backup` and `.canvas2` are other file types.
+The final file extension selects Markdown, Canvas, or Base behavior. The ASCII letters in `.md`, `.canvas`, and `.base` match without case distinctions. This rule does not change path identity. Near matches such as `.md.backup`, `.canvas2`, and `.base.backup` are other file types.
 
-- `.md` and `.canvas` files ≤ 1,000,000 bytes are stored inline (`kind='text'`) and `.md` content is indexed (`.canvas` JSON is stored inline but not indexed).
-- Every other file, and any `.md`/`.canvas` file > 1,000,000 bytes, is `kind='blob'`: bytes in R2, metadata in SQLite, **not indexed**, readable by range through the Worker. `large` is true only for Markdown or Canvas stored as a blob above 1,000,000 bytes. The plugin panel shows such a file as "synced, not searchable".
+- `.md`, `.canvas`, and `.base` files ≤ 1,000,000 bytes are stored inline (`kind='text'`). Only `.md` content is indexed. Canvas JSON and Base configuration text are not indexed.
+- Every other file, and any `.md`, `.canvas`, or `.base` file > 1,000,000 bytes, is `kind='blob'`: bytes in R2, metadata in SQLite, **not indexed**, readable by range through the Worker. `large` is true only for Markdown, Canvas, or Base stored as a blob above 1,000,000 bytes. The plugin panel shows such a file as "synced, not searchable".
 - An `update` or `append` whose resulting text would exceed 1,000,000 bytes fails with `413 text_too_large`. The note must be split by the user or agent. This keeps every text commit atomic in SQLite.
 - Blob GET streams raw bytes with `Content-Type: application/octet-stream`. Successful responses expose the authoritative file `ETag`, exact `Content-Length`, `Accept-Ranges: bytes`, and `X-File-Large: true|false`.
 - Whole-object GET streams without a complete application buffer. Current and retained reads select an authoritative reference before storage access. Inline GET keeps its JSON response.
@@ -524,7 +524,7 @@ Identical bytes on both sides with different `rev` never produce a conflict (§7
 
 ### 7.8 Scope
 
-Included: `**/*.md`, `**/*.canvas`, and attachments with extensions `png jpg jpeg gif webp svg pdf mp3 m4a wav mp4 mov webm json csv txt` up to 25 MB. Excluded always: `.obsidian/**`, `.trash/**`, `.vaultwire/**`, `.DS_Store`, `*.icloud`, any path failing §5.1. The panel lists excluded and unsupported files on demand; the status never says "synced" while an in-scope file is pending, failed or in *attention*.
+Included: `**/*.md`, `**/*.canvas`, `**/*.base`, and attachments with extensions `png jpg jpeg gif webp svg pdf mp3 m4a wav mp4 mov webm json csv txt` up to 25 MB. Base files use existing conditional text/blob sync. Old plugin versions exclude `.base` files, so every device needs the updated plugin to sync them. Excluded always: `.obsidian/**`, `.trash/**`, `.vaultwire/**`, `.DS_Store`, `*.icloud`, any path failing §5.1. The panel lists excluded and unsupported files on demand; the status never says "synced" while an in-scope file is pending, failed or in *attention*.
 
 ### 7.9 Status model
 
@@ -588,7 +588,7 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 10. Search contract
 
-- Index: `files_fts` over `content` of live `kind='text'` Markdown rows whose final `.md` extension matches without ASCII case distinctions (`.canvas` is stored inline but not indexed). Near suffixes such as `.md.backup` are other file types. The tokenizer is `trigram case_sensitive 0 remove_diacritics 1`. Rows are deleted/inserted in the same transaction as the file mutation, so the index is never stale relative to `head_seq`.
+- Index: `files_fts` over `content` of live `kind='text'` Markdown rows whose final `.md` extension matches without ASCII case distinctions. Canvas JSON and Base configuration text remain unindexed. Near suffixes such as `.md.backup` are other file types. The tokenizer is `trigram case_sensitive 0 remove_diacritics 1`. Rows are deleted/inserted in the same transaction as the file mutation, so the index is never stale relative to `head_seq`.
 - Semantics: **literal substring match**, case-insensitive, diacritic-insensitive, no stemming, no operators. The query is sent as a single quoted FTS phrase with internal `"` doubled, so `AND`, `OR`, `*`, `-`, `:` and quotes are literal.
 - Limits: query length is 3–200 Unicode code points (`400 query_too_short` / `query_too_long`); `limit` is 1–50, default 20. Results use ascending native `bm25` score, with SQLite binary path order for ties. Each plain-text snippet uses at most 64 FTS tokens and 1,024 Unicode code points. ETags use the response epoch.
 - `GET /v1/search?q=<query>&limit=<integer>` returns `{epoch, results, indexed_files, unindexed_large_files}`. Both coverage counts use the same case-insensitive final-extension rule as storage. `indexed_files` counts live indexed Markdown rows. `unindexed_large_files` counts live Markdown blob rows above 1,000,000 bytes. Canvas and other attachments do not count.

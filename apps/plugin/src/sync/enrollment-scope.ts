@@ -20,7 +20,7 @@ export const DEFAULT_SETTINGS_SYNC_POLICY: SettingsSyncPolicy = {
 	communityPlugins: true,
 };
 
-/** Server-matched raw-byte ceiling for inline Markdown and Canvas enrollment. */
+/** Server-matched raw-byte ceiling for inline Markdown, Canvas, and Base enrollment. */
 const INLINE_TEXT_LIMIT_BYTES = 1_000_000;
 /** Maximum raw file size accepted by the blob protocol. */
 const BLOB_LIMIT_BYTES = 25_000_000;
@@ -71,7 +71,7 @@ export function classifyEnrollmentPath(
 		return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
 	}
 	const kind = classifyFilePath(path);
-	if (kind === "markdown" || kind === "canvas") {
+	if (kind === "markdown" || kind === "canvas" || kind === "base") {
 		if (size > BLOB_LIMIT_BYTES) return "unsupported";
 		return size <= INLINE_TEXT_LIMIT_BYTES ? "text" : "blob";
 	}

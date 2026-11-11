@@ -4,7 +4,7 @@ import {
 	BlobDeclarationSchema,
 	BlobMetadataSchema,
 	selectByteRange,
-} from "@protocol/schemas/blobs";
+} from "@vaultwire/protocol";
 import { describe, expect, it } from "vitest";
 
 describe("blob protocol contracts", () => {
@@ -74,6 +74,27 @@ describe("blob protocol contracts", () => {
 			BlobMetadataSchema.safeParse({ ...base, path: "a.png", large: true })
 				.success,
 		).toBe(false);
+		const baseFile = { ...base, path: "資料/ビュー.base" };
+		expect(
+			BlobMetadataSchema.safeParse({ ...baseFile, large: true }).success,
+		).toBe(true);
+		expect(
+			BlobMetadataSchema.safeParse({
+				...baseFile,
+				size: 1_000_000,
+				large: false,
+			}).success,
+		).toBe(true);
+		expect(
+			BlobMetadataSchema.safeParse({ ...baseFile, large: false }).success,
+		).toBe(false);
+		expect(
+			BlobMetadataSchema.safeParse({
+				...baseFile,
+				size: 42,
+				large: false,
+			}).success,
+		).toBe(true);
 		expect(
 			BlobMetadataSchema.safeParse({
 				...base,
@@ -111,11 +132,11 @@ describe("blob protocol contracts", () => {
 			});
 			expect(result.success).toBe(false);
 			if (result.success) throw new Error("Expected declared overflow");
-			expect(
-				result.error.issues.every(
-					(issue) => issue.code === "too_big" && issue.path[0] === "size",
-				),
-			).toBe(true);
+			expect(result.error.issues).toHaveLength(1);
+			expect(result.error.issues[0]).toMatchObject({
+				code: "too_big",
+				path: ["size"],
+			});
 		}
 	});
 	it("accepts ticket or receipt authority results without a second upload contract", () => {

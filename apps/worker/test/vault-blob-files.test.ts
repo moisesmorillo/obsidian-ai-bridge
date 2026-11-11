@@ -89,6 +89,96 @@ describe("R2 blob integrity evidence", () => {
 });
 
 describe("native blob publication", () => {
+	it("reads a legacy small Base blob without changing its stored representation", async () => {
+		const path = "views/legacy.base";
+		const payload_hash = "e".repeat(64);
+		const capability = blobStore({ hash: payload_hash, size: 4 });
+		await withTextStore(
+			async (fixture) => {
+				await seedLiveTextState(fixture.storage, { path, content: "old!" });
+				fixture.storage.sql.exec(
+					"UPDATE files SET kind = 'blob', content = NULL, blob_hash = ? WHERE path = ?",
+					payload_hash,
+					path,
+				);
+				fixture.storage.sql.exec(
+					"UPDATE revisions SET kind = 'blob', content = NULL, blob_hash = ? WHERE path = ?",
+					payload_hash,
+					path,
+				);
+				expect(
+					await fixture.store.readBlobMetadata(TEXT_FIXTURE_CONTEXT, {
+						path,
+						epoch: TEXT_FIXTURE_EPOCH,
+					}),
+				).toMatchObject({ ok: true, body: { large: false, size: 4 } });
+				expect(
+					fixture.storage.sql
+						.exec(
+							"SELECT kind, content, blob_hash FROM files WHERE path = ?",
+							path,
+						)
+						.toArray(),
+				).toEqual([{ kind: "blob", content: null, blob_hash: payload_hash }]);
+			},
+			undefined,
+			capability,
+		);
+	});
+
+	it("publishes a large Base file as an unindexed large blob", async () => {
+		const payload_hash = "d".repeat(64);
+		const capability = blobStore({ hash: payload_hash, size: 1_000_001 });
+		await withTextStore(
+			async (fixture) => {
+				const path = "資料/ビュー.base";
+				const intent = {
+					op: "put" as const,
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: [path],
+					precondition: { kind: "absent" as const },
+					payload_hash,
+					size: 1_000_001,
+				};
+				const lease = await fixture.store.beginMutation(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+				);
+				if (!lease.ok) throw new Error(`Reserve failed: ${lease.failure.kind}`);
+				const ticket = await fixture.admissions.authorize(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					lease.lease.admission_id,
+				);
+				if (!ticket.ok)
+					throw new Error(`Authorize failed: ${ticket.failure.kind}`);
+				expect(
+					await fixture.store.commitBlob(
+						TEXT_FIXTURE_CONTEXT,
+						intent,
+						ticket.ticket.id,
+					),
+				).toMatchObject({ ok: true });
+				expect(
+					fixture.storage.sql
+						.exec("SELECT kind, size FROM files WHERE path = ?", path)
+						.toArray(),
+				).toEqual([{ kind: "blob", size: 1_000_001 }]);
+				expect(
+					fixture.storage.sql.exec("SELECT path FROM files_fts").toArray(),
+				).toEqual([]);
+				expect(
+					await fixture.store.readBlobMetadata(TEXT_FIXTURE_CONTEXT, {
+						path,
+						epoch: TEXT_FIXTURE_EPOCH,
+					}),
+				).toMatchObject({ ok: true, body: { large: true, size: 1_000_001 } });
+			},
+			undefined,
+			capability,
+		);
+	});
+
 	it("renames, restores, and reads retained blob references without copying objects", async () => {
 		const hash = "8".repeat(64);
 		const head = vi.fn(async () => ({ hash, size: 4 }));

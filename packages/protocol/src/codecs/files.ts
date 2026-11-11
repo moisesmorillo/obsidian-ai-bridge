@@ -8,13 +8,14 @@ import type {
 	FileHttpFailureInput,
 } from "@protocol/types/files";
 
-/** Classify storage and indexing behavior by extension without normalizing path identity. */
+/** Classifies Markdown, Canvas, and Base storage behavior without changing path identity. */
 export function classifyFilePath(
 	path: string,
-): "markdown" | "canvas" | "other" {
+): "markdown" | "canvas" | "base" | "other" {
 	const extension = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
 	if (extension.endsWith(".md")) return "markdown";
 	if (extension.endsWith(".canvas")) return "canvas";
+	if (extension.endsWith(".base")) return "base";
 	return "other";
 }
 

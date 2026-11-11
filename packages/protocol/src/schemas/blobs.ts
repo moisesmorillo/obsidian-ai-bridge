@@ -1,3 +1,4 @@
+import { classifyFilePath } from "@protocol/codecs/files";
 import { AdmissionResultSchema } from "@protocol/schemas/admission";
 import { ETagSchema } from "@protocol/schemas/etag";
 import { TextMutationResultSchema } from "@protocol/schemas/files";
@@ -98,7 +99,7 @@ export const BlobMetadataSchema = z
 			});
 		}
 		const large =
-			/\.(?:md|canvas)$/i.test(metadata.path) && metadata.size > 1_000_000;
+			classifyFilePath(metadata.path) !== "other" && metadata.size > 1_000_000;
 		if (metadata.large !== large) {
 			ctx.addIssue({
 				code: "custom",

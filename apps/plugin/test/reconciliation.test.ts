@@ -1258,6 +1258,19 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().cursor).toBe(6);
 	});
 
+	it("publishes local Base configuration text during enrollment", async () => {
+		const path = "資料/ビュー.BASE";
+		const text = "views: []";
+		context.vault.files.set(path, text);
+
+		await context.controller.enroll();
+
+		expect(context.remote.created).toContainEqual(
+			expect.objectContaining({ path, text }),
+		);
+		expect(context.journal.snapshot().pending_ops).toEqual([]);
+	});
+
 	it("publishes exact local attachment bytes during enrollment", async () => {
 		const bytes = new Uint8Array([0, 255, 128]);
 		context.vault.binaryFiles.set("assets/local.png", bytes.slice());
@@ -1274,8 +1287,9 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().pending_ops).toEqual([]);
 	});
 
-	it("uses one durable observation time for a hydration conflict across restart", async () => {
-		const path = "notes/hydration-conflict.md";
+	it("uses one durable observation time for a Base conflict and preserves notes", async () => {
+		const path = "views/hydration-conflict.base";
+		context.vault.files.set("notes/unchanged.md", "keep this note");
 		const localText = "local edits";
 		const remoteText = "confirmed remote bytes";
 		const remoteHash = await hash(remoteText);
@@ -1345,6 +1359,9 @@ describe("ReconciliationController", () => {
 
 		expect(context.vault.files.get(path)).toBe(remoteText);
 		expect(context.vault.files.get(namedPath ?? "")).toBe(localText);
+		expect(context.vault.files.get("notes/unchanged.md")).toBe(
+			"keep this note",
+		);
 		expect(
 			(await context.vault.list()).filter((file) => file.includes("(conflict")),
 		).toEqual([namedPath]);

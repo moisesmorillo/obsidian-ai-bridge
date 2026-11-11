@@ -83,7 +83,7 @@ export async function currentMcpEpoch(
 }
 
 /** Keep lazy read admission with its MCP result until response ownership settles it. */
-async function settleMcpRead<T extends object, Row, Metadata>(
+export async function settleMcpRead<T extends object, Row, Metadata>(
 	session: LazyReadSession<Row, Metadata>,
 	read: () => Promise<McpReadOutcome<T>>,
 ): Promise<McpReadOutcome<T>> {

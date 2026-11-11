@@ -1,21 +1,49 @@
 import type {
 	McpAppendToNoteInputSchema,
+	McpCreateBaseInputSchema,
 	McpCreateNoteInputSchema,
+	McpDeleteBaseInputSchema,
 	McpDeleteNoteInputSchema,
 	McpGetHistoryInputSchema,
 	McpHistoryResultSchema,
+	McpListBasesInputSchema,
+	McpListBasesResultSchema,
 	McpListNotesInputSchema,
 	McpListNotesResultSchema,
 	McpMutationOutputSchema,
+	McpReadBaseInputSchema,
+	McpReadBaseResultSchema,
 	McpReadNoteInputSchema,
 	McpReadNoteResultSchema,
 	McpRestoreNoteInputSchema,
 	McpSearchNotesInputSchema,
 	McpSearchNotesResultSchema,
 	McpToolErrorSchema,
+	McpUpdateBaseInputSchema,
 	McpUpdateNoteInputSchema,
+	McpValidateBaseInputSchema,
+	McpValidateBaseResultSchema,
 } from "@protocol/schemas/mcp";
 import type { z } from "zod";
+
+/** Validated Base list filter using the existing note-list bounds. */
+export type McpListBasesInput = z.infer<typeof McpListBasesInputSchema>;
+/** Epoch-bearing live Base metadata returned by list_bases. */
+export type McpListBasesResult = z.infer<typeof McpListBasesResultSchema>;
+/** Epoch-bearing raw Base text or an ETag-only mismatch response. */
+export type McpReadBaseResult = z.infer<typeof McpReadBaseResultSchema>;
+/** Validated Base path and optional revision-pinned fragment selection. */
+export type McpReadBaseInput = z.infer<typeof McpReadBaseInputSchema>;
+/** Validated create-only Base request with explicit vault epoch. */
+export type McpCreateBaseInput = z.infer<typeof McpCreateBaseInputSchema>;
+/** Validated exact-revision Base replacement request. */
+export type McpUpdateBaseInput = z.infer<typeof McpUpdateBaseInputSchema>;
+/** Validated exact-revision Base tombstone request. */
+export type McpDeleteBaseInput = z.infer<typeof McpDeleteBaseInputSchema>;
+/** Validated structural-only Base content request. */
+export type McpValidateBaseInput = z.infer<typeof McpValidateBaseInputSchema>;
+/** Epoch-bearing structural validation result without parsed content. */
+export type McpValidateBaseResult = z.infer<typeof McpValidateBaseResultSchema>;
 
 /** Validated create-only request with explicit vault epoch. */
 export type McpCreateNoteInput = z.infer<typeof McpCreateNoteInputSchema>;

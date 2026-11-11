@@ -555,8 +555,16 @@ Transport: Streamable HTTP at `/mcp`. Auth: Bearer token from §9; resource meta
 | `delete_note` | delete | `path`, `etag` | tombstone `etag` |
 | `get_history` | read | `path` | retained revisions |
 | `restore_note` | write | `path`, `source_etag`, `current_etag`, `as_conflict_copy?` | new `etag`. `412` if `current_etag` is stale |
+| `list_bases` | read | `prefix?`, `include_large?` | Base paths with `etag, size, updated_at, large`; no Markdown or Canvas rows |
+| `read_base` | read | `path`, `etag?`, `offset?`, `length?` | Raw Base text or a bounded fragment pinned to the current ETag |
+| `create_base` | write | `path`, `content`, `epoch`, `idempotency_key?` | new `etag`; create-only at the supplied current epoch |
+| `update_base` | write | `path`, `content`, `etag`, `idempotency_key?` | new `etag`; exact-revision replacement |
+| `delete_base` | delete | `path`, `etag` | tombstone `etag`; requires explicit `vault:delete` |
+| `validate_base` | read | `content` | current `epoch`, structural-only validity, and bounded diagnostics |
 
-All tools call the same DO operations as `/v1`. A successful mutation enters the feed and reaches every enrolled device by the normal pull, with `origin` set to the agent's client id and shown in the panel. Restore with `as_conflict_copy: true` writes in place at the same path and retains the displaced revision.
+Base paths use the canonical vault path rules and must end in the final `.base` extension (ASCII case-insensitive). Create, update, and validate accept at most 65,536 UTF-8 bytes. Reads retain bounded fragment behavior and can read larger Base files. Create and update check write scope, revocation, and current epoch before bounded structure validation. Base writes preserve raw text, including comments, whitespace, unknown settings, formulas, and view fields. Validation checks bounded YAML syntax and known structure only. It does not evaluate filters or formulas, return parsed Base data, or change file properties. Parser limits are 65,536 bytes, 16,384 lexical tokens, 34 stack entries, 32 indicators per line, depth 32, 16,384 syntax nodes, and at most 8 diagnostics of 256 characters. Validation uses `vault:read`, the MCP read slot, and envelope reservation but no durable read admission. There is no `query_base` tool or query engine.
+
+All tools call the same DO operations as `/v1`. A successful mutation enters the feed and reaches every enrolled device by the normal pull, with `origin` set to the agent's client id and shown in the panel. Restore with `as_conflict_copy: true` writes in place at the same path and retains the displaced revision. Base list and read responses transfer durable read ownership through response EOF or cancellation cleanup. Base mutations retain response admissions until EOF or cancellation, and uncertain work keeps its original deadline. Validation has no durable storage owner, but retains the MCP read slot and envelope reservation through EOF or cancellation. Lease expiry follows the shared MCP read deadline policy.
 
 ## 9. OAuth and authorization
 

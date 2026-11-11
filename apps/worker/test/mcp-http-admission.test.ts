@@ -90,6 +90,34 @@ afterEach(() => {
 });
 
 describe("MCP HTTP admission ownership", () => {
+	it.each(["list_bases", "read_base", "validate_base"])(
+		"applies the MCP read slot to %s before SDK dispatch",
+		async (name) => {
+			const worker = await fixture();
+			const slots = Array.from({ length: 8 }, () => tryAcquireReadSlot("mcp"));
+			expect(slots.every((lease) => lease !== undefined)).toBe(true);
+			const response = await worker.fetch(
+				new Request("https://mcp-admission.invalid/mcp", {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: JSON.stringify({
+						jsonrpc: "2.0",
+						id: 1,
+						method: "tools/call",
+						params: { name, arguments: {} },
+					}),
+				}),
+				env,
+			);
+			expect(response.status, name).toBe(429);
+			for (const lease of slots) lease?.();
+			expect(admissionByteSnapshot().active_reservations).toBe(0);
+		},
+	);
+
 	it.each([
 		[-1, 60],
 		[0, 60],

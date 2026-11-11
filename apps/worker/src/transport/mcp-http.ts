@@ -468,6 +468,9 @@ export async function handleMcpHttp(
 			"read_note",
 			"search_notes",
 			"get_history",
+			"list_bases",
+			"read_base",
+			"validate_base",
 		]);
 		if (typeof callName === "string" && readTools.has(callName)) {
 			if (!identity.scopes.includes("vault:read")) {

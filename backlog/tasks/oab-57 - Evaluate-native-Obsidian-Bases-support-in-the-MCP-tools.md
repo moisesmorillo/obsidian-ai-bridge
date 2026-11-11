@@ -1,11 +1,11 @@
 ---
 id: OAB-57
 title: Evaluate native Obsidian Bases support in the MCP tools
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-10T03:43:00Z'
-updated_date: '2026-11-11T03:55:00Z'
+updated_date: '2026-11-11T03:58:00Z'
 labels: []
 dependencies: []
 references:
@@ -31,7 +31,7 @@ A ChatGPT user case asks for Obsidian Bases (.base files) as MCP resources: list
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Owner approved plan pn-761c39. Implementation and review corrections are complete at 7efdf8b. Supervisor re-audit and open human branch review pn-557a4d precede PR publication. OAB-57.4 retains the approved disposable-Obsidian-runtime trigger.
+Approved plan pn-761c39 implemented. Supervisor audit corrections and evidence exceptions are complete. Owner approved branch review pn-557a4d. Final full check passed. Publish one PR, retain owner merge authority, then remove this worktree.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -111,4 +111,12 @@ Existing-Base tests cover update, both append tools, delete, and restore without
 7. Official Bases syntax states that formula properties use YAML strings. Numeric scalar rejection now has a test.
 Official source revision: 24a31567c8a124aaaf95192fa49683bd35305dde.
 No query engine, generic-sync validation, personal vault access, or Cloudflare change entered this correction.
+
+Owner approved branch review pn-557a4d after supervisor corrections. Final full check on ecf7159 passed: 2520 tests, zero failures, one skip, exit 0. This supersedes earlier pending-review notes. All review findings have corrections and closure evidence. Only the owner-approved native Obsidian UI check remains in Deferred OAB-57.4. No personal vault access, Cloudflare change, deployment, or merge occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added native Base sync and six MCP tools with exact revision, epoch, scope, and idempotency controls. Structural-only YAML validation preserves raw content and plugin fields. Base rows use large=false for plugin 1.0.3 manifest compatibility. Note tools refuse Base mutations. All review findings have corrections. Owner approved plan and branch reviews. Final bun run check passed with 2520 tests and one skip. OAB-57.1 through OAB-57.3 are Done. OAB-57.4 awaits an approved disposable Obsidian runtime.
+<!-- SECTION:FINAL_SUMMARY:END -->

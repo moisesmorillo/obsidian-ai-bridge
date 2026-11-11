@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/moisesmorillo/vaultwire/compare/worker-v1.0.5...worker-v1.1.0) (2026-11-11)
+
+
+### Features
+
+* support native Obsidian Bases sync and MCP tools ([#171](https://github.com/moisesmorillo/vaultwire/issues/171)) ([fafad5b](https://github.com/moisesmorillo/vaultwire/commit/fafad5b06805fc6ec9f3d9d100ec50ea6b5af0f6))
+
 ## [1.0.5](https://github.com/moisesmorillo/vaultwire/compare/worker-v1.0.4...worker-v1.0.5) (2026-11-11)
 
 

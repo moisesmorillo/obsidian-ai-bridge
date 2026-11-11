@@ -291,7 +291,16 @@ export function createMcpServer(
 				? noteInput.path
 				: undefined;
 		if (notePath !== undefined && classifyFilePath(notePath) === "base") {
-			const current = await mutationGateway.getCurrentEpoch(identity, "put");
+			const operation =
+				name === "delete_note"
+					? "delete"
+					: name === "restore_note"
+						? "restore"
+						: "put";
+			const current = await mutationGateway.getCurrentEpoch(
+				identity,
+				operation,
+			);
 			if (!current.ok) {
 				reportBoundaryFailure(current.failure.kind);
 				throw new Error(current.failure.kind);
@@ -410,13 +419,17 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("delete_note", () =>
-				deleteMcpNote(
-					mutationGateway,
-					identity,
-					McpDeleteNoteInputSchema.parse(input),
-					responseProduction,
-				),
+			mutationCall(
+				"delete_note",
+				() =>
+					deleteMcpNote(
+						mutationGateway,
+						identity,
+						McpDeleteNoteInputSchema.parse(input),
+						responseProduction,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -430,14 +443,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("restore_note", () =>
-				restoreMcpNote(
-					mutationGateway,
-					identity,
-					McpRestoreNoteInputSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"restore_note",
+				() =>
+					restoreMcpNote(
+						mutationGateway,
+						identity,
+						McpRestoreNoteInputSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(

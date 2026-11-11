@@ -7,6 +7,7 @@ import {
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import { describe, expect, it } from "vitest";
+import { parseLegacyPlugin103ManifestPage } from "./fixtures/legacy-plugin-1.0.3-manifest-schema";
 
 const context: AuthorizationContext = {
 	client_id: "reads-client",
@@ -97,11 +98,21 @@ describe("native authoritative reads", () => {
 				"b".repeat(64),
 			);
 			state.storage.sql.exec(
+				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,content,deleted,updated_at,origin) VALUES (?, ?, 1, 68, ?, 1000001, 'blob', NULL, 0, 10, 'seed')",
+				"00/large.base",
+				pathKey("00/large.base"),
+				"c".repeat(64),
+			);
+			state.storage.sql.exec(
 				"INSERT INTO blob_refs(hash,size,first_ref_at) VALUES (?, 1000001, 10)",
 				"b".repeat(64),
 			);
 			state.storage.sql.exec(
-				"UPDATE meta SET value = '67' WHERE key = 'head_seq'",
+				"INSERT INTO blob_refs(hash,size,first_ref_at) VALUES (?, 1000001, 10)",
+				"c".repeat(64),
+			);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = '68' WHERE key = 'head_seq'",
 			);
 		});
 		const authorized = await stub.authorize(context, {
@@ -116,8 +127,8 @@ describe("native authoritative reads", () => {
 		const summary = await stub.readVault(context, authorized.ticket.id);
 		expect(summary.ok).toBe(true);
 		if (!summary.ok) return;
-		expect(summary.body.counts).toEqual({ live: 66, deleted: 1 });
-		expect(summary.body.capacity.referenced_blob_bytes).toBe(1_000_001);
+		expect(summary.body.counts).toEqual({ live: 67, deleted: 1 });
+		expect(summary.body.capacity.referenced_blob_bytes).toBe(2_000_002);
 		const first = await stub.readBatch(
 			context,
 			{
@@ -135,11 +146,15 @@ describe("native authoritative reads", () => {
 		if (first.body.collection !== "manifest") return;
 		expect(first.body.rows).toHaveLength(65);
 		expect(first.body.rows[0]).toMatchObject({
-			path: "media/large.md",
+			path: "00/large.base",
 			kind: "blob",
-			large: true,
+			size: 1_000_001,
+			large: false,
 		});
 		expect(first.body.rows[0]).not.toHaveProperty("content");
+		expect(
+			first.body.rows.find((row) => row.path === "media/large.md"),
+		).toMatchObject({ kind: "blob", large: true });
 		expect(
 			first.body.rows.find((row) => row.path === "notes/deleted.md"),
 		).toMatchObject({
@@ -149,6 +164,46 @@ describe("native authoritative reads", () => {
 			large: false,
 		});
 		expect(first.body.rows[0]).not.toHaveProperty("content");
+		const manifestRows = [];
+		let afterPath: string | null = null;
+		for (;;) {
+			const complete = await stub.readBatch(
+				context,
+				{
+					collection: "manifest",
+					epoch: summary.body.epoch,
+					head_seq: summary.body.head_seq,
+					after_path: afterPath,
+					limit: 64,
+				},
+				authorized.ticket.id,
+			);
+			expect(complete.ok).toBe(true);
+			if (!complete.ok || complete.body.collection !== "manifest") return;
+			const rows = complete.body.rows.slice(0, 64);
+			manifestRows.push(...rows);
+			if (complete.body.rows.length <= 64) break;
+			const lastRow = rows.at(-1);
+			if (!lastRow) throw new Error("Expected a manifest lookahead row");
+			afterPath = lastRow.path;
+		}
+		const entries = manifestRows.map(
+			({ updated_at: _updatedAt, ...entry }) => entry,
+		);
+		const frozenLegacyPage = parseLegacyPlugin103ManifestPage({
+			epoch: summary.body.epoch,
+			head_seq: summary.body.head_seq,
+			entries,
+			next_page: null,
+		});
+		expect(
+			frozenLegacyPage?.entries.find((row) => row.path === "00/large.base"),
+		).toMatchObject({
+			path: "00/large.base",
+			size: 1_000_001,
+			kind: "blob",
+			large: false,
+		});
 		await stub.finishAdmission(context, authorized.ticket.id, "settled");
 	});
 

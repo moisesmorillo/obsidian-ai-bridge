@@ -124,7 +124,7 @@ describe("canonical bounded read contracts", () => {
 		expect(result.success).toBe(false);
 	});
 
-	it("accepts large Markdown, Canvas, and Base manifest blobs", () => {
+	it("accepts large Markdown and Canvas blobs and Base blobs without a large marker", () => {
 		for (const path of ["large.md", "large.canvas"]) {
 			const entry = {
 				path,
@@ -155,12 +155,6 @@ describe("canonical bounded read contracts", () => {
 			deleted: false,
 			large: false,
 		};
-		// Plugin 1.0.3 rejected large rows unless this original suffix rule matched.
-		/** Mirror the 1.0.3 manifest rule: only Markdown and Canvas may set `large`. */
-		const legacyRuleAccepts = (entry: typeof largeBase) =>
-			!entry.large || /\.(?:md|canvas)$/i.test(entry.path);
-		expect(legacyRuleAccepts({ ...largeBase, large: true })).toBe(false);
-		expect(legacyRuleAccepts(largeBase)).toBe(true);
 		expect(
 			ManifestEntrySchema.safeParse({ ...largeBase, large: true }).success,
 		).toBe(false);

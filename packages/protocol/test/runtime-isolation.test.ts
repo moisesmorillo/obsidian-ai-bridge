@@ -141,40 +141,54 @@ function expectOnlyMissingNames(
 	expect(result.missingNames).toEqual(expected);
 }
 
+/**
+ * Per-test budget in milliseconds for tests that start real `tsc` compilations.
+ * One test runs two compilations, which exceeded the 5 s Vitest default on CI runners.
+ */
+const COMPILER_TEST_TIMEOUT_MS = 60_000;
+
 describe("protocol runtime type isolation", () => {
-	it("rejects only Node and Bun globals while allowing web-standard globals", async () => {
-		await withFixture(async (fixture) => {
-			await addProbe(fixture, "src/index.ts", runtimeProbe);
-			const result = runCompiler(fixture, "tsconfig.json");
-			expectOnlyMissingNames(result, ["process", "Buffer", "Bun"]);
-			expect(result.missingNames).not.toContain("URL");
-			expect(result.missingNames).not.toContain("TextEncoder");
-			expect(result.missingNames).not.toContain("Uint8Array");
-		});
-	});
+	it(
+		"rejects only Node and Bun globals while allowing web-standard globals",
+		async () => {
+			await withFixture(async (fixture) => {
+				await addProbe(fixture, "src/index.ts", runtimeProbe);
+				const result = runCompiler(fixture, "tsconfig.json");
+				expectOnlyMissingNames(result, ["process", "Buffer", "Bun"]);
+				expect(result.missingNames).not.toContain("URL");
+				expect(result.missingNames).not.toContain("TextEncoder");
+				expect(result.missingNames).not.toContain("Uint8Array");
+			});
+		},
+		COMPILER_TEST_TIMEOUT_MS,
+	);
 
-	it("allows Node globals in tooling and detects a leaky runtime config", async () => {
-		await withFixture(async (fixture) => {
-			const nodeProbe = [
-				"const __toolProcessProbe: string = process.version;",
-				'const __toolBufferProbe: string = Buffer.from("x").toString();',
-			].join("\n");
-			await addProbe(fixture, "test/path.test.ts", nodeProbe);
-			const toolingResult = runCompiler(fixture, "tsconfig.tools.json");
-			expect(toolingResult.status, toolingResult.output).toBe(0);
-			expect(toolingResult.diagnosticCount).toBe(0);
+	it(
+		"allows Node globals in tooling and detects a leaky runtime config",
+		async () => {
+			await withFixture(async (fixture) => {
+				const nodeProbe = [
+					"const __toolProcessProbe: string = process.version;",
+					'const __toolBufferProbe: string = Buffer.from("x").toString();',
+				].join("\n");
+				await addProbe(fixture, "test/path.test.ts", nodeProbe);
+				const toolingResult = runCompiler(fixture, "tsconfig.tools.json");
+				expect(toolingResult.status, toolingResult.output).toBe(0);
+				expect(toolingResult.diagnosticCount).toBe(0);
 
-			await addProbe(fixture, "src/index.ts", nodeProbe);
-			await writeFile(
-				join(fixture.packageRoot, "tsconfig.leaky.json"),
-				JSON.stringify({
-					extends: "./tsconfig.json",
-					include: ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
-				}),
-			);
-			const leakyRuntimeResult = runCompiler(fixture, "tsconfig.leaky.json");
-			expect(leakyRuntimeResult.status, leakyRuntimeResult.output).toBe(0);
-			expect(leakyRuntimeResult.diagnosticCount).toBe(0);
-		});
-	});
+				await addProbe(fixture, "src/index.ts", nodeProbe);
+				await writeFile(
+					join(fixture.packageRoot, "tsconfig.leaky.json"),
+					JSON.stringify({
+						extends: "./tsconfig.json",
+						include: ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+					}),
+				);
+				const leakyRuntimeResult = runCompiler(fixture, "tsconfig.leaky.json");
+				expect(leakyRuntimeResult.status, leakyRuntimeResult.output).toBe(0);
+				expect(leakyRuntimeResult.diagnosticCount).toBe(0);
+			});
+		},
+		COMPILER_TEST_TIMEOUT_MS,
+	);
 });

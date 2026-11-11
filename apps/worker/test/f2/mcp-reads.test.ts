@@ -1,4 +1,6 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { admissionByteSnapshot } from "@worker/application/admission-budget";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import productionWorker from "@worker/index";
 import {
 	activeAdmissionStates,
@@ -1283,7 +1285,8 @@ describe("production MCP transport", () => {
 			method: "tools/call",
 			params: { name: "list_notes", arguments: { prefix: widePrefix } },
 		});
-		expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
+		// The one-chunk error body reaches producer EOF once the runtime takes it, so admission may
+		// already be settled here. Producer EOF does not prove client receipt (spec 6.5).
 		const wideResult = (await wideList.json()) as {
 			result?: {
 				isError?: boolean;
@@ -1297,6 +1300,75 @@ describe("production MCP transport", () => {
 	}, 30_000);
 
 	// A 30,000 ms bound covers 256 serial writes and preserves hang detection.
+	it("returns MCP read capacity promptly after a client cancels a read_note response", async () => {
+		const { token, clientId } = await issueToken();
+		const auth = { authorization: `Bearer ${token}` };
+		const summary = await SELF.fetch("https://service.test/v1/vault", {
+			headers: auth,
+		});
+		const { epoch } = (await summary.json()) as { epoch: string };
+		const path = `Cancelled/cancelled-${crypto.randomUUID()}.md`;
+		const written = await SELF.fetch(
+			`https://service.test/v1/files/${encodeURIComponent(path)}`,
+			{
+				method: "PUT",
+				headers: { ...auth, "If-None-Match": "*", "X-Vault-Epoch": epoch },
+				body: "x".repeat(1_000_000),
+			},
+		);
+		expect(written.status).toBe(201);
+		await written.text();
+		/** Call read_note for the seeded note over the runtime boundary. */
+		const readNote = () =>
+			SELF.fetch("https://service.test/mcp", {
+				method: "POST",
+				headers: {
+					...auth,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "tools/call",
+					params: { name: "read_note", arguments: { path } },
+				}),
+			});
+		// Source-side evidence: the JSON encoder calls TextEncoder.encode for each token and each
+		// 8,192-character content window, so a full read makes many more calls than a cancelled one.
+		const encodes = vi.spyOn(TextEncoder.prototype, "encode");
+		const full = await readNote();
+		expect((await full.text()).length).toBeGreaterThan(1_000_000);
+		await vi.waitFor(
+			async () => expect(await activeAdmissionStates(clientId)).toEqual([]),
+			{ timeout: 5_000 },
+		);
+		const fullEncodes = encodes.mock.calls.length;
+		encodes.mockClear();
+		const sharedBefore = admissionByteSnapshot().shared_bytes;
+		const response = await readNote();
+		expect(response.status).toBe(200);
+		const reader = response.body?.getReader();
+		expect((await reader?.read())?.done).toBe(false);
+		expect(readSlotCapacitySnapshot().held_mcp_slots).toBe(1);
+		expect(admissionByteSnapshot().shared_bytes).toBeGreaterThan(sharedBefore);
+		await reader?.cancel();
+		const deadline = Date.now() + 2_000;
+		while (
+			(readSlotCapacitySnapshot().held_mcp_slots !== 0 ||
+				admissionByteSnapshot().shared_bytes !== sharedBefore) &&
+			Date.now() < deadline
+		)
+			await scheduler.wait(20);
+		expect(readSlotCapacitySnapshot().held_mcp_slots).toBe(0);
+		expect(admissionByteSnapshot().shared_bytes).toBe(sharedBefore);
+		expect(await activeAdmissionStates(clientId)).toEqual([]);
+		const cancelledEncodes = encodes.mock.calls.length;
+		encodes.mockRestore();
+		expect(fullEncodes).toBeGreaterThan(100);
+		expect(cancelledEncodes).toBeLessThan(fullEncodes / 2);
+	});
+
 	it("keeps real durable admission until MCP response EOF and cancellation", async () => {
 		const { token, clientId } = await issueToken();
 		const prefix = `MCP-lifecycle-${crypto.randomUUID()}/`;
@@ -1352,7 +1424,11 @@ describe("production MCP transport", () => {
 			await cancelledReader.read();
 			expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
 			await cancelledReader.cancel();
-			expect(await activeAdmissionStates(clientId)).toEqual([]);
+			// A native body observes cancellation at its next write; await cancel does not join cleanup.
+			await vi.waitFor(
+				async () => expect(await activeAdmissionStates(clientId)).toEqual([]),
+				{ timeout: 5_000 },
+			);
 		} finally {
 			await cancelledReader.cancel();
 		}
@@ -1409,7 +1485,12 @@ describe("production MCP transport", () => {
 			cleanup.release();
 			await competingRest.body?.cancel();
 			await cancelMcp;
-			expect(await activeAdmissionStates(clientId)).toHaveLength(3);
+			// A native body observes cancellation at its next write; await cancel does not join cleanup.
+			await vi.waitFor(
+				async () =>
+					expect(await activeAdmissionStates(clientId)).toHaveLength(3),
+				{ timeout: 5_000 },
+			);
 			const reusedRest = await productionWorker.fetch(
 				new Request("https://service.test/v1/vault", { headers: auth }),
 				cleanup.environment,

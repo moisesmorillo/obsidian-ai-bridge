@@ -21,6 +21,7 @@ import {
 	mcpAdmissionBytes,
 } from "@worker/application/admission-budget";
 import type { BlobContentStore } from "@worker/application/blobs";
+import { sweepExpiredBodySlots } from "@worker/application/body-budget";
 import type {
 	McpNotesGateway,
 	McpReadOwner,
@@ -395,6 +396,7 @@ export async function handleMcpHttp(
 	if (checkedWireBound === undefined)
 		return httpFailure(413, "request_too_large");
 	sweepExpiredReadSlots();
+	sweepExpiredBodySlots();
 	const admission = await acquireMcpAdmission(
 		mcpAdmissionBytes(checkedWireBound),
 		request.signal,

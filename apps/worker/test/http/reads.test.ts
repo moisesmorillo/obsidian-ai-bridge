@@ -1,9 +1,12 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { admissionByteSnapshot } from "@worker/application/admission-budget";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
+import { Vault } from "@worker/infrastructure/durable-object/vault";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
 import { TEXT_FIXTURE_EPOCH } from "@worker/test-fixtures/text-files";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** Exercise bounded public reads through Worker routing and the real Vault Durable Object. */
 describe("bounded read HTTP routes", () => {
@@ -153,6 +156,10 @@ describe("bounded read HTTP routes", () => {
 		expect(fifth.headers.get("Retry-After")).toBe("2");
 		await fifth.text();
 		for (const response of held) await response.body?.cancel();
+		// A native body observes cancellation at its next write; await cancel does not join cleanup.
+		await vi.waitFor(() =>
+			expect(readSlotCapacitySnapshot().held_rest_slots).toBe(0),
+		);
 		const next = await testWorker.fetch(
 			new Request("https://worker.invalid/v1/manifest"),
 			env,
@@ -276,5 +283,34 @@ describe("full feed page cost", () => {
 		// the local service binding re-chunks reads at 4,096 bytes. Token-sized chunks gave 54,017.
 		expect(sizes.length).toBeLessThanOrEqual(128);
 		expect(Math.max(...sizes)).toBeLessThanOrEqual(65_536);
+	});
+
+	it("returns REST read capacity promptly after a client cancels a feed page", async () => {
+		const batches = vi.spyOn(Vault.prototype, "readBatch");
+		const response = await SELF.fetch(
+			`https://worker.invalid/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0&limit=1000`,
+		);
+		expect(response.status).toBe(200);
+		const reader = response.body?.getReader();
+		expect((await reader?.read())?.done).toBe(false);
+		expect(readSlotCapacitySnapshot().held_rest_slots).toBe(1);
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(4_500_000);
+		await reader?.cancel();
+		const deadline = Date.now() + 2_000;
+		while (
+			(admissionByteSnapshot().rest_read_bytes !== 0 ||
+				readSlotCapacitySnapshot().held_rest_slots !== 0) &&
+			Date.now() < deadline
+		)
+			await scheduler.wait(20);
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(0);
+		expect(readSlotCapacitySnapshot().held_rest_slots).toBe(0);
+		// Source-side evidence: a full 1,000-entry page needs 16 batch RPCs of 64 rows.
+		const cancelledBatches = batches.mock.calls.length;
+		await scheduler.wait(100);
+		expect(batches.mock.calls.length).toBe(cancelledBatches);
+		expect(cancelledBatches).toBeGreaterThan(0);
+		expect(cancelledBatches).toBeLessThan(16);
+		batches.mockRestore();
 	});
 });

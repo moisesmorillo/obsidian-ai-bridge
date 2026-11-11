@@ -1,4 +1,3 @@
-import { waitUntil } from "cloudflare:workers";
 import type {
 	AdmissionCompletion,
 	AdmissionFinishResult,
@@ -10,41 +9,14 @@ import {
 	ReadBatchFailure,
 	settleReadAdmission,
 } from "@worker/application/reads";
+import {
+	abortResponseWriter,
+	keepResponseWorkAlive,
+	pumpResponseChunks,
+} from "@worker/transport/response-pump";
 
 /** Maximum encoded bytes produced by one response demand. */
 const RESPONSE_CHUNK_BYTES = 65_536;
-
-/** Abort a fixed writer even when its consumer already ended the stream. */
-async function abortResponseWriter(
-	writer: WritableStreamDefaultWriter<Uint8Array>,
-	reason: unknown,
-): Promise<void> {
-	try {
-		await writer.abort(reason);
-	} catch {
-		// A canceled consumer can close the writer before cleanup reaches it.
-	}
-}
-
-/**
- * Keep the current invocation alive until response work settles.
- * Workers cancel every task of a request whose client disconnects unless the task is registered with
- * waitUntil, so without this a canceled body never observes its failed write, never cancels its
- * source, and keeps its read lease and byte reservation until the lazy reclaim deadline. The caller
- * resolves `work` when response work completes, or at most READ_SETTLEMENT_DEADLINE_MS after its
- * lease deadline. A response without a deadline lease (some MCP failure bodies) has no such bound and
- * relies on the platform waitUntil limit. Outside a request context (for example a direct unit call
- * with no invocation) there is nothing to extend, so a registration failure is ignored. This fixes
- * fixed-length bodies only: generic JSON byte streams still miss consumer cancellation (spec §6.5
- * known limit, OAB-62).
- */
-function keepResponseWorkAlive(work: Promise<void>): void {
-	try {
-		waitUntil(work);
-	} catch {
-		// No current invocation exists to extend.
-	}
-}
 
 /** One response producer with explicit cancellation of started work. */
 export interface ReadResponseSource {
@@ -60,17 +32,35 @@ export interface ReadResponseOwner {
 	finish(completion: AdmissionCompletion): Promise<AdmissionFinishResult>;
 }
 
+/** Classify a source fault: known batch failures and read aborts settle, other faults stay uncertain. */
+function sourceFaultCompletion(error: unknown): AdmissionCompletion {
+	return error instanceof ReadBatchFailure || error instanceof ReadAborted
+		? "settled"
+		: "uncertain";
+}
+
 /**
  * Transfer one read slot and admission to a byte response.
- * Generic responses stay pull-driven. Positive known lengths use FixedLengthStream at the final
- * Response boundary and hold one bounded chunk until EOF validates the selected length. Zero-byte
- * known lengths use a gated byte stream so response status and Content-Length remain intact until
- * durable settlement succeeds. Settlement uses one fixed deadline. Local capacity releases after
- * started source work and source cancellation settle, independent of durable settlement and consumer
- * drain. The acquisition lease deadline releases local capacity and errors unfinished responses even
- * when source or cancellation work remains unresolved. Unknown work keeps durable admission uncertain.
- * Physical byte reservations remain held through writer shutdown and bounded durable settlement.
+ * The body is the readable side of a native stream that one pump drives (see
+ * {@link pumpResponseChunks}). Generic framing uses IdentityTransformStream, and a positive known
+ * length uses FixedLengthStream. A zero-byte known length uses a gated byte stream, so status and
+ * Content-Length stay intact until durable settlement succeeds.
+ * A rejected write is consumer cancellation: the pump cancels the source, settles the owner as
+ * settled, and completes the lease once. A cancel during pending source work shows at the next write.
+ *
+ * Demand bound: a generic body runs at most one chunk ahead of its consumer. A known length holds one
+ * buffered chunk plus one unread write, because it keeps the last chunk until EOF validates the
+ * length. A generic body settles the owner at producer EOF, completes the lease, and then closes.
+ * A known length settles the owner at EOF, writes its buffered chunk, closes, and then completes.
+ *
+ * Settlement uses one fixed deadline. Local capacity releases after started source work and source
+ * cancellation settle, independent of durable settlement and consumer drain. The lease deadline
+ * releases local capacity and aborts the writer, so the consumer gets an error and never a clean
+ * close. Unknown work keeps durable admission uncertain.
+ * Byte reservations release when the lease completes. After consumer cancellation that is after
+ * source cancellation and bounded durable settlement. After expiry it also waits for the writer abort.
  * @param knownByteLength - Exact response bytes, or undefined for generic response framing.
+ * @throws RangeError when knownByteLength is not a non-negative safe integer. The caller keeps its slot.
  */
 export function ownedReadResponse(
 	source: ReadResponseSource,
@@ -100,9 +90,9 @@ export function ownedReadResponse(
 		signalDeadline = resolve;
 	});
 	let controllerRef: ReadableStreamController<Uint8Array> | undefined;
-	let fixedWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
-	let fixedWriterShutdown: Promise<void> | undefined;
-	let fixedPump: Promise<void> | undefined;
+	let responseWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
+	let writerShutdown: Promise<void> | undefined;
+	let responsePump: Promise<void> | undefined;
 	let signalWorkSettled!: () => void;
 	const workSettled = new Promise<void>((resolve) => {
 		signalWorkSettled = resolve;
@@ -149,10 +139,10 @@ export function ownedReadResponse(
 		try {
 			controller?.error(reason);
 		} catch {
-			// The response may already be closed when the deadline fires.
+			// The zero-byte response may already be closed when the deadline fires.
 		}
 		releaseKeepAliveAfter(finish(true, "uncertain", reason));
-		void abortFixedWriter(reason);
+		void abortWriter(reason);
 	}
 	const lease =
 		deadlineLease ?? ("onExpire" in releaseSlot ? releaseSlot : undefined);
@@ -167,7 +157,10 @@ export function ownedReadResponse(
 		}
 		return cancellation;
 	}
-	/** Join source reads and cancellation before capacity release, then bound durable settlement. */
+	/**
+	 * Join source reads and cancellation before capacity release, then bound durable settlement.
+	 * After expiry every outcome is uncertain.
+	 */
 	function settleOwner(
 		cancel: boolean,
 		completion: AdmissionCompletion,
@@ -180,287 +173,222 @@ export function ownedReadResponse(
 			const results = await Promise.allSettled([pending, cleanup]);
 			pending = undefined;
 			release();
-			const outcome = results.some(
-				(result) =>
-					result.status === "rejected" &&
-					!(
-						result.reason instanceof ReadBatchFailure ||
-						result.reason instanceof ReadAborted
-					),
-			)
-				? "uncertain"
-				: completion;
+			const outcome =
+				expired ||
+				results.some(
+					(result) =>
+						result.status === "rejected" &&
+						sourceFaultCompletion(result.reason) === "uncertain",
+				)
+					? "uncertain"
+					: completion;
 			await settleReadAdmission(() => owner.finish(outcome));
 		})();
 		return settlement;
 	}
-	/** Join source cleanup and bounded settlement, with local capacity released after source cleanup. */
+	/**
+	 * Join source cleanup and bounded settlement for the zero-byte stream, then complete the lease.
+	 * A writer-backed body leaves lease completion to its pump, after writer shutdown.
+	 */
 	function finish(
 		cancel: boolean,
 		completion: AdmissionCompletion,
 		reason?: unknown,
 	): Promise<void> {
-		return settleOwner(
-			cancel,
-			expired ? "uncertain" : completion,
-			reason,
-		).finally(() => {
+		return settleOwner(cancel, completion, reason).finally(() => {
 			release();
-			// The fixed pump owns lease completion after writer shutdown.
-			if (!fixedWriter) completeDeadline();
+			if (!responseWriter) completeDeadline();
 		});
 	}
-	/** Start one fixed-writer shutdown and retain its promise for release coordination. */
-	function abortFixedWriter(reason: unknown): Promise<void> {
-		const writer = fixedWriter;
+	/** Start one writer shutdown and retain its promise for release coordination. */
+	function abortWriter(reason: unknown): Promise<void> {
+		const writer = responseWriter;
 		if (!writer) return Promise.resolve();
-		fixedWriterShutdown ??= abortResponseWriter(writer, reason);
-		return fixedWriterShutdown;
+		writerShutdown ??= abortResponseWriter(writer, reason);
+		return writerShutdown;
 	}
 	/** Abort response production and join durable cleanup, the pump, and writer shutdown. */
 	function abort() {
 		const reason = signal?.reason;
-		const controller = controllerRef;
-		if (fixedWriter) {
-			const abortReason = reason ?? new Error("Read aborted");
-			const writerShutdown = abortFixedWriter(abortReason);
-			const durableCleanup = settleOwner(true, "settled", reason);
-			void Promise.allSettled([writerShutdown, durableCleanup, fixedPump]);
+		if (!responseWriter) {
+			const controller = controllerRef;
+			void finish(true, "settled", reason).then(
+				() => controller?.error(reason ?? new Error("Read aborted")),
+				(error) => controller?.error(error),
+			);
 			return;
 		}
-		void finish(true, "settled", reason).then(
-			() => controller?.error(reason ?? new Error("Read aborted")),
-			(error) => controller?.error(error),
-		);
+		const shutdown = abortWriter(reason ?? new Error("Read aborted"));
+		const durableCleanup = settleOwner(true, "settled", reason);
+		void Promise.allSettled([shutdown, durableCleanup, responsePump]);
 	}
-	if (knownByteLength !== undefined) {
-		if (knownByteLength === 0) {
-			const headers = new Headers(init?.headers);
-			headers.set("Content-Length", "0");
-			const responseInit: ResponseInit = {
-				status: init?.status,
-				statusText: init?.statusText,
-				headers,
-			};
-			const zeroLengthStream = new ReadableStream<Uint8Array>({
-				type: "bytes",
-				/** Retain the controller for request abort errors before source completion. */
-				start(controller) {
-					controllerRef = controller;
-					if (expired) {
-						controller.error(deadlineError);
-						return;
-					}
-					signal?.addEventListener("abort", abort, { once: true });
-					if (signal?.aborted) abort();
-				},
-				/** Wait for EOF and durable success before closing the zero-byte response. */
-				async pull(controller) {
-					if (lease?.expired || stopping) return;
-					try {
-						pending = source.next();
-						const item = await Promise.race([
-							pending,
-							deadlinePromise.then(() => {
-								throw deadlineError;
-							}),
-						]);
-						pending = undefined;
-						if (lease?.expired || stopping || expired) return;
-						if (item.done) {
-							await finish(false, "settled");
-							controller.close();
-							if ("byobRequest" in controller)
-								controller.byobRequest?.respond(0);
-							return;
-						}
-						if (item.value.byteLength > 0)
-							throw new Error("Read response source exceeded its limits");
-					} catch (error) {
-						pending = undefined;
-						try {
-							await finish(
-								true,
-								error instanceof ReadBatchFailure ||
-									error instanceof ReadAborted
-									? "settled"
-									: "uncertain",
-								error,
-							);
-						} catch {
-							/* The response stream reports the source or settlement fault. */
-						}
-						controller.error(error);
-					}
-				},
-				/** Join source cancellation before the response can finish. */
-				cancel(reason) {
-					return finish(true, "settled", reason);
-				},
-			});
-			return new Response(zeroLengthStream, responseInit);
+	if (knownByteLength === 0) return zeroByteResponse();
+	const generic = knownByteLength === undefined;
+	const framing = generic
+		? new IdentityTransformStream()
+		: new FixedLengthStream(knownByteLength);
+	const writer = framing.writable.getWriter();
+	responseWriter = writer;
+	/**
+	 * Run the shared pump with the read deadline and framing limits, then settle the owner for its
+	 * end. A known length holds the last chunk until EOF validates the length and settles the owner.
+	 */
+	const pump = async (): Promise<void> => {
+		let buffered: Uint8Array | undefined;
+		let received = 0;
+		const end = await pumpResponseChunks({
+			next: async () => {
+				pending = source.next();
+				try {
+					return await Promise.race([
+						pending,
+						deadlinePromise.then(() => {
+							throw deadlineError;
+						}),
+					]);
+				} finally {
+					pending = undefined;
+				}
+			},
+			accept: (chunk) => {
+				if (
+					chunk.byteLength > RESPONSE_CHUNK_BYTES ||
+					(!generic && received + chunk.byteLength > knownByteLength)
+				)
+					throw new Error("Read response source exceeded its limits");
+				received += chunk.byteLength;
+			},
+			write: async (chunk) => {
+				const ready = generic ? chunk : buffered;
+				if (!generic) buffered = chunk;
+				if (ready) await writer.write(ready);
+			},
+			stopped: () => Boolean(lease?.expired) || stopping || expired,
+		});
+		switch (end.kind) {
+			case "stopped":
+				return;
+			case "source_failed":
+				await abortWriter(end.error);
+				await settleOwner(true, sourceFaultCompletion(end.error), end.error);
+				return;
+			case "write_failed":
+				// A rejected write means the consumer canceled or the writer was aborted.
+				await settleOwner(true, "settled", end.error);
+				return;
+			case "eof":
+				break;
 		}
-		const fixed = new FixedLengthStream(knownByteLength);
-		const writer = fixed.writable.getWriter();
-		fixedWriter = writer;
-		if (expired) void abortFixedWriter(deadlineError);
-		/** Hold one bounded chunk until EOF settles the owner before response completion. */
-		const pump = async (): Promise<void> => {
-			let buffered: Uint8Array | undefined;
-			let received = 0;
-			while (!lease?.expired && !stopping) {
-				let item: IteratorResult<Uint8Array>;
+		if (!generic && received !== knownByteLength) {
+			const error = new Error(
+				"Response source length did not match its declaration",
+			);
+			await abortWriter(error);
+			await settleOwner(true, "uncertain", error);
+			return;
+		}
+		try {
+			await settleOwner(false, "settled");
+			if (lease?.expired || expired) return;
+			// Every generic write resolved after its consumer read, so no response bytes remain held.
+			// Complete the lease before the clean close, as the consumer sees EOF.
+			if (generic) completeDeadline();
+			if (buffered) await writer.write(buffered);
+			await writer.close();
+		} catch (error) {
+			await abortWriter(error);
+			await settleOwner(true, "settled", error);
+		}
+	};
+	if (expired) void abortWriter(deadlineError);
+	responsePump = Promise.resolve()
+		.then(pump)
+		.catch(async (error: unknown) => {
+			await abortWriter(error);
+			try {
+				await settleOwner(true, "uncertain", error);
+			} catch {
+				// The response stream carries the producer fault to its consumer.
+			}
+		})
+		.then(async () => {
+			let ownerSettlement: Promise<void> | undefined;
+			let shutdown: Promise<void> | undefined;
+			do {
+				ownerSettlement = settlement;
+				shutdown = writerShutdown;
+				await Promise.allSettled([ownerSettlement, shutdown]);
+			} while (ownerSettlement !== settlement || shutdown !== writerShutdown);
+			release();
+			completeDeadline();
+		});
+	signal?.addEventListener("abort", abort, { once: true });
+	if (signal?.aborted) abort();
+	return new Response(framing.readable, init);
+
+	/**
+	 * Build the zero-byte response as a gated byte stream. FixedLengthStream(0) ends its body without
+	 * waiting for a write, so it could not hold EOF until durable settlement or error at the deadline.
+	 * This stream has no data to write, so a consumer cancel across the runtime boundary leaves it to
+	 * the lease deadline and reclaim.
+	 */
+	function zeroByteResponse(): Response {
+		const headers = new Headers(init?.headers);
+		headers.set("Content-Length", "0");
+		const zeroLengthStream = new ReadableStream<Uint8Array>({
+			type: "bytes",
+			/** Retain the controller for request abort errors before source completion. */
+			start(controller) {
+				controllerRef = controller;
+				if (expired) {
+					controller.error(deadlineError);
+					return;
+				}
+				signal?.addEventListener("abort", abort, { once: true });
+				if (signal?.aborted) abort();
+			},
+			/** Wait for EOF and durable success before closing the zero-byte response. */
+			async pull(controller) {
+				if (lease?.expired || stopping) return;
 				try {
 					pending = source.next();
-					item = await Promise.race([
+					const item = await Promise.race([
 						pending,
 						deadlinePromise.then(() => {
 							throw deadlineError;
 						}),
 					]);
 					pending = undefined;
+					if (lease?.expired || stopping || expired) return;
+					if (item.done) {
+						await finish(false, "settled");
+						controller.close();
+						if ("byobRequest" in controller) controller.byobRequest?.respond(0);
+						return;
+					}
+					if (item.value.byteLength > 0)
+						throw new Error("Read response source exceeded its limits");
 				} catch (error) {
 					pending = undefined;
-					await abortFixedWriter(error);
-					await settleOwner(
-						true,
-						error instanceof ReadBatchFailure || error instanceof ReadAborted
-							? "settled"
-							: "uncertain",
-						error,
-					);
-					return;
-				}
-				if (lease?.expired || stopping || expired) return;
-				if (item.done) {
-					if (received !== knownByteLength) {
-						const error = new Error(
-							"Response source length did not match its declaration",
-						);
-						await abortFixedWriter(error);
-						await settleOwner(true, "uncertain", error);
-						return;
-					}
 					try {
-						await settleOwner(false, "settled");
-						if (lease?.expired || expired) return;
-						if (buffered) await writer.write(buffered);
-						await writer.close();
-					} catch (error) {
-						await abortFixedWriter(error);
-						await settleOwner(true, "settled", error);
+						await finish(true, sourceFaultCompletion(error), error);
+					} catch {
+						/* The response stream reports the source or settlement fault. */
 					}
-					return;
-				}
-				if (
-					item.value.byteLength > RESPONSE_CHUNK_BYTES ||
-					received + item.value.byteLength > knownByteLength
-				) {
-					const error = new Error("Read response source exceeded its limits");
-					await abortFixedWriter(error);
-					await settleOwner(true, "uncertain", error);
-					return;
-				}
-				received += item.value.byteLength;
-				if (buffered) {
-					try {
-						await writer.write(buffered);
-					} catch (error) {
-						await settleOwner(true, "settled", error);
-						return;
-					}
-				}
-				buffered = item.value;
-			}
-		};
-		fixedPump = Promise.resolve()
-			.then(pump)
-			.catch(async (error: unknown) => {
-				await abortFixedWriter(error);
-				try {
-					await settleOwner(true, "uncertain", error);
-				} catch {
-					// The response stream carries the producer fault to its consumer.
-				}
-			})
-			.then(async () => {
-				let ownerSettlement: Promise<void> | undefined;
-				let writerShutdown: Promise<void> | undefined;
-				do {
-					ownerSettlement = settlement;
-					writerShutdown = fixedWriterShutdown;
-					await Promise.allSettled([ownerSettlement, writerShutdown]);
-				} while (
-					ownerSettlement !== settlement ||
-					writerShutdown !== fixedWriterShutdown
-				);
-				release();
-				completeDeadline();
-			});
-		signal?.addEventListener("abort", abort, { once: true });
-		if (signal?.aborted) abort();
-		return new Response(fixed.readable, init);
-	}
-	const stream = new ReadableStream<Uint8Array>({
-		type: "bytes",
-		/** Keep the controller only while response production owns its resources. */
-		start(controller) {
-			controllerRef = controller;
-			if (expired) {
-				controller.error(deadlineError);
-				return;
-			}
-			signal?.addEventListener("abort", abort, { once: true });
-			if (signal?.aborted) abort();
-		},
-		/** Request one chunk only under downstream demand, without a prefetch queue. */
-		async pull(controller) {
-			if (lease?.expired || stopping) return;
-			try {
-				pending = source.next();
-				const item = await Promise.race([
-					pending,
-					deadlinePromise.then(() => {
-						throw deadlineError;
-					}),
-				]);
-				pending = undefined;
-				if (lease?.expired || stopping || expired) return;
-				if (item.done) {
-					await finish(false, "settled");
-					controller.close();
-					if ("byobRequest" in controller) controller.byobRequest?.respond(0);
-				} else {
-					if (item.value.byteLength > RESPONSE_CHUNK_BYTES)
-						throw new Error("Read response chunk exceeded its limit");
-					controller.enqueue(item.value);
-				}
-			} catch (error) {
-				pending = undefined;
-				if (stopping) {
 					controller.error(error);
-					return;
 				}
-				try {
-					await finish(
-						true,
-						error instanceof ReadBatchFailure || error instanceof ReadAborted
-							? "settled"
-							: "uncertain",
-						error,
-					);
-				} catch {
-					/* The stream reports failure even when durable cleanup also fails. */
-				}
-				controller.error(error);
-			}
-		},
-		/** Cancellation joins pending work, producer cancellation, and durable cleanup. */
-		cancel(reason) {
-			return finish(true, "settled", reason);
-		},
-	});
-	return new Response(stream, init);
+			},
+			/** Join source cancellation before the response can finish. */
+			cancel(reason) {
+				return finish(true, "settled", reason);
+			},
+		});
+		return new Response(zeroLengthStream, {
+			status: init?.status,
+			statusText: init?.statusText,
+			headers,
+		});
+	}
 }
 
 /**

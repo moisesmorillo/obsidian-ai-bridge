@@ -24,6 +24,7 @@ import {
 import type { SearchVaultGateway } from "@worker/application/search";
 import { readSearch } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
+import { unexpectedFailure } from "@worker/application/vault-overload";
 
 /** Estimated JSON bytes allowed for one structured MCP list result. */
 const MCP_LIST_RESULT_BYTES_LIMIT = 65_536;
@@ -102,7 +103,7 @@ async function settleMcpRead<T extends object, Row, Metadata>(
 					? { kind: "invalid_request" }
 					: error instanceof ReadBatchFailure
 						? error.failure
-						: { kind: "internal_error" },
+						: unexpectedFailure(error),
 		};
 	}
 	return {
@@ -312,12 +313,12 @@ export async function readMcpNote(
 				},
 			};
 		})();
-	} catch {
+	} catch (error) {
 		outcome = {
 			ok: false,
 			failure: signal?.aborted
 				? { kind: "invalid_request" }
-				: { kind: "internal_error" },
+				: unexpectedFailure(error),
 		};
 	}
 	const owner = createMcpReadOwner(

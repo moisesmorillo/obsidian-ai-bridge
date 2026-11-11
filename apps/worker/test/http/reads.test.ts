@@ -1,9 +1,12 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { admissionByteSnapshot } from "@worker/application/admission-budget";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
+import { Vault } from "@worker/infrastructure/durable-object/vault";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
 import { TEXT_FIXTURE_EPOCH } from "@worker/test-fixtures/text-files";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** Exercise bounded public reads through Worker routing and the real Vault Durable Object. */
 describe("bounded read HTTP routes", () => {
@@ -153,6 +156,10 @@ describe("bounded read HTTP routes", () => {
 		expect(fifth.headers.get("Retry-After")).toBe("2");
 		await fifth.text();
 		for (const response of held) await response.body?.cancel();
+		// A native body observes cancellation at its next write; await cancel does not join cleanup.
+		await vi.waitFor(() =>
+			expect(readSlotCapacitySnapshot().held_rest_slots).toBe(0),
+		);
 		const next = await testWorker.fetch(
 			new Request("https://worker.invalid/v1/manifest"),
 			env,
@@ -194,5 +201,116 @@ describe("bounded read HTTP routes", () => {
 			expect(response.status, route).toBe(400);
 			expect(await response.json()).toMatchObject({ error: "invalid_request" });
 		}
+	});
+});
+
+/** Seed a full feed page of live text rows through native SQL. */
+async function seedFeed(count: number): Promise<void> {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+	await runInDurableObject(stub, async (_instance, state) => {
+		state.storage.transactionSync(() => {
+			for (let seq = 1; seq <= count; seq += 1) {
+				const path = `Agents/feed/${String(seq).padStart(5, "0")}-entry.md`;
+				state.storage.sql.exec(
+					"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,content,deleted,updated_at,origin) VALUES (?, ?, 1, ?, ?, 4, 'text', 'seed', 0, 10000, 'fixture')",
+					path,
+					path,
+					seq,
+					"a".repeat(64),
+				);
+				state.storage.sql.exec(
+					"INSERT INTO revisions(path,rev,hash,size,kind,content,deleted,origin,at) VALUES (?, 1, ?, 4, 'text', 'seed', 0, 'fixture', 10000)",
+					path,
+					"a".repeat(64),
+				);
+				state.storage.sql.exec(
+					"INSERT INTO changes(seq,op,path,rev,hash,origin,at) VALUES (?, 'put', ?, 1, ?, 'fixture', ?)",
+					seq,
+					path,
+					"a".repeat(64),
+					Date.now(),
+				);
+			}
+			state.storage.sql.exec(
+				"UPDATE meta SET value = ? WHERE key = 'head_seq'",
+				String(count),
+			);
+		});
+	});
+}
+
+describe("full feed page cost", () => {
+	beforeEach(async () => {
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			initializeVaultStorage(
+				state.storage,
+				() => TEXT_FIXTURE_EPOCH,
+				() => 10_000,
+			);
+		});
+		await seedFeed(1000);
+	});
+
+	it("streams a full 1,000-entry feed page in coalesced bounded chunks", async () => {
+		const response = await SELF.fetch(
+			`https://worker.invalid/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0&limit=1000`,
+		);
+		expect(response.status).toBe(200);
+		const reader = response.body?.getReader();
+		const sizes: number[] = [];
+		const parts: Uint8Array[] = [];
+		while (reader) {
+			const item = await reader.read();
+			if (item.done) break;
+			sizes.push(item.value.byteLength);
+			parts.push(item.value);
+		}
+		const body = JSON.parse(
+			new TextDecoder().decode(
+				parts.reduce((joined, part) => {
+					const next = new Uint8Array(joined.byteLength + part.byteLength);
+					next.set(joined);
+					next.set(part, joined.byteLength);
+					return next;
+				}, new Uint8Array()),
+			),
+		);
+		expect(body.entries).toHaveLength(1000);
+		expect(body.entries[999].seq).toBe(1000);
+		// About 219 KB. The Worker coalesces into 16 KB chunks with one flush per 64-row storage batch;
+		// the local service binding re-chunks reads at 4,096 bytes. Token-sized chunks gave 54,017.
+		expect(sizes.length).toBeLessThanOrEqual(128);
+		expect(Math.max(...sizes)).toBeLessThanOrEqual(65_536);
+	});
+
+	it("returns REST read capacity promptly after a client cancels a feed page", async () => {
+		const batches = vi.spyOn(Vault.prototype, "readBatch");
+		const response = await SELF.fetch(
+			`https://worker.invalid/v1/changes?epoch=${TEXT_FIXTURE_EPOCH}&since=0&limit=1000`,
+		);
+		expect(response.status).toBe(200);
+		const reader = response.body?.getReader();
+		expect((await reader?.read())?.done).toBe(false);
+		expect(readSlotCapacitySnapshot().held_rest_slots).toBe(1);
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(4_500_000);
+		await reader?.cancel();
+		const deadline = Date.now() + 2_000;
+		while (
+			(admissionByteSnapshot().rest_read_bytes !== 0 ||
+				readSlotCapacitySnapshot().held_rest_slots !== 0) &&
+			Date.now() < deadline
+		)
+			await scheduler.wait(20);
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(0);
+		expect(readSlotCapacitySnapshot().held_rest_slots).toBe(0);
+		// Source-side evidence: a full 1,000-entry page needs 16 batch RPCs of 64 rows.
+		const cancelledBatches = batches.mock.calls.length;
+		await scheduler.wait(100);
+		expect(batches.mock.calls.length).toBe(cancelledBatches);
+		expect(cancelledBatches).toBeGreaterThan(0);
+		expect(cancelledBatches).toBeLessThan(16);
+		batches.mockRestore();
 	});
 });

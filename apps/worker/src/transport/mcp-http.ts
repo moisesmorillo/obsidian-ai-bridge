@@ -21,6 +21,7 @@ import {
 	mcpAdmissionBytes,
 } from "@worker/application/admission-budget";
 import type { BlobContentStore } from "@worker/application/blobs";
+import { sweepExpiredBodySlots } from "@worker/application/body-budget";
 import type {
 	McpNotesGateway,
 	McpReadOwner,
@@ -34,6 +35,7 @@ import {
 	waitForReadSlotWork,
 } from "@worker/application/read-budget";
 import { settleReadAdmission } from "@worker/application/reads";
+import { VaultOverloaded } from "@worker/application/vault-overload";
 import type { Env } from "@worker/env";
 import {
 	createMcpServer,
@@ -394,6 +396,7 @@ export async function handleMcpHttp(
 	if (checkedWireBound === undefined)
 		return httpFailure(413, "request_too_large");
 	sweepExpiredReadSlots();
+	sweepExpiredBodySlots();
 	const admission = await acquireMcpAdmission(
 		mcpAdmissionBytes(checkedWireBound),
 		request.signal,
@@ -595,6 +598,23 @@ export async function handleMcpHttp(
 				readOwner,
 				deadlineLease,
 			);
+		if (error instanceof VaultOverloaded) {
+			const refused = ownedHttpFailure(
+				429,
+				error.failure.kind,
+				release,
+				request.signal,
+				false,
+				undefined,
+				readOwner,
+				deadlineLease,
+			);
+			refused.headers.set(
+				"retry-after",
+				String(error.failure.retry_after_seconds),
+			);
+			return refused;
+		}
 		return ownedHttpFailure(
 			500,
 			"internal_error",

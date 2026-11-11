@@ -7,7 +7,7 @@ import type { ReadVaultGateway } from "@worker/application/reads";
 import type { Env } from "@worker/env";
 import { acquireTestReadSlot as tryAcquireReadSlot } from "@worker/test-fixtures/read-slot";
 import { createReadRouter } from "@worker/transport/reads";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const epoch = "0123456789abcdef0123456789abcdef";
 const identity: AuthorizationContext = {
@@ -442,12 +442,15 @@ describe("metadata HTTP response demand", () => {
 		} finally {
 			for (const response of responses) await response.body?.cancel();
 		}
-		expect(fixture.state.finished).toEqual([
-			"settled",
-			"settled",
-			"settled",
-			"settled",
-		]);
+		// A native body observes cancellation at its next write; await cancel does not join cleanup.
+		await vi.waitFor(() =>
+			expect(fixture.state.finished).toEqual([
+				"settled",
+				"settled",
+				"settled",
+				"settled",
+			]),
+		);
 	});
 
 	it.each([
@@ -478,15 +481,18 @@ describe("metadata HTTP response demand", () => {
 				/* Demand until the second RPC blocks. */
 			}
 		})();
+		// With no write pending, the native stream ends the pending read as done when its consumer cancels.
+		const drained = expect(drain).resolves.toBeUndefined();
 		await fixture.started.promise;
 		expect(fixture.state.calls).toBe(2);
 		const cancelled = reader.cancel();
 		expect(tryAcquireReadSlot()).toBeUndefined();
 		expect(fixture.state.finished).toEqual([]);
 		fixture.release.resolve();
-		await Promise.all([drain, cancelled]);
+		await Promise.all([drained, cancelled]);
+		// A native body observes cancellation at its next write; await cancel does not join cleanup.
+		await vi.waitFor(() => expect(fixture.state.finished).toEqual(["settled"]));
 		expect(fixture.state.calls).toBe(2);
-		expect(fixture.state.finished).toEqual(["settled"]);
 		const free = tryAcquireReadSlot();
 		expect(free).toBeTypeOf("function");
 		free?.();

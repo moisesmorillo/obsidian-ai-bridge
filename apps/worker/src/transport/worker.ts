@@ -5,6 +5,7 @@ import type { MeasurementGateway } from "@worker/application/measurements";
 import type { ReadVaultGateway } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
+import { refuseVaultOverload } from "@worker/application/vault-overload";
 import type { Env } from "@worker/env";
 import { createFileRouter } from "@worker/transport/files";
 import { handleMcpHttp } from "@worker/transport/mcp-http";
@@ -29,6 +30,9 @@ export function createWorker(
 	) => Pick<MeasurementGateway, "recordRequest" | "recordFeedPreparation">,
 ): Hono<{ Bindings: Env }> {
 	const app = new Hono<{ Bindings: Env }>();
+	/** Resolve the Vault gateway with Durable Object overload mapped to a retryable refusal. */
+	const vaultFor = (env: Env, request: Request) =>
+		refuseVaultOverload(resolveVault(env, request));
 	const identities = new WeakMap<Request, AuthorizationContext | null>();
 	/** Cache provider identity once per request for hooks and route handlers. */
 	const identityFor = async (request: Request) => {
@@ -91,18 +95,15 @@ export function createWorker(
 			}
 		}
 	});
-	app.route(
-		"/v1/files",
-		createFileRouter(identityFor, resolveVault, resolveBlobs),
-	);
-	app.route("/v1", createReadRouter(identityFor, resolveVault));
-	app.route("/v1", createSearchRouter(identityFor, resolveVault));
+	app.route("/v1/files", createFileRouter(identityFor, vaultFor, resolveBlobs));
+	app.route("/v1", createReadRouter(identityFor, vaultFor));
+	app.route("/v1", createSearchRouter(identityFor, vaultFor));
 	app.all("/mcp", (context) =>
 		handleMcpHttp(
 			context.req.raw,
 			context.env,
 			identityFor,
-			resolveVault,
+			vaultFor,
 			resolveBlobs,
 		),
 	);

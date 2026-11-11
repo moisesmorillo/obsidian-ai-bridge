@@ -1252,7 +1252,11 @@ describe("production MCP mutation safety", () => {
 						expect(item.value.byteLength).toBeLessThanOrEqual(65_536);
 					}
 				}
-				expect(await activeAdmissionStates(clientId)).toEqual([]);
+				// A native body observes cancellation at its next write; await cancel does not join cleanup.
+				await vi.waitFor(
+					async () => expect(await activeAdmissionStates(clientId)).toEqual([]),
+					{ timeout: 5_000 },
+				);
 			} finally {
 				await reader.cancel();
 			}

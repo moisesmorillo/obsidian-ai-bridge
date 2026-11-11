@@ -8,7 +8,9 @@ import {
 } from "@worker/application/read-budget";
 import { ReadBatchFailure } from "@worker/application/reads";
 import {
+	coalesceChunks,
 	encodeJsonChunks,
+	JSON_CHUNK_TARGET_BYTES,
 	ownedReadResponse,
 } from "@worker/transport/read-response";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -103,9 +105,15 @@ describe("owned read response", () => {
 		lease();
 		lease();
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		// The pump writes the first chunk at once. An empty source would reach producer EOF and
+		// settle before the deadline, so the unread chunk keeps the response unfinished.
+		let demands = 0;
 		const response = ownedReadResponse(
 			{
-				next: async () => ({ done: true, value: undefined }),
+				next: async () =>
+					demands++ === 0
+						? { done: false, value: new Uint8Array([1]) }
+						: { done: true, value: undefined },
 				cancel: async () => {},
 			},
 			{ finish: async () => ({ ok: true }) },
@@ -115,6 +123,7 @@ describe("owned read response", () => {
 		const reader = response.body.getReader();
 		void reader.closed.catch(() => undefined);
 		await vi.advanceTimersByTimeAsync(60_000);
+		expect(demands).toBe(1);
 		await expect(reader.read()).rejects.toThrow();
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
 		expect(readSlotCapacitySnapshot().expired_count).toBeGreaterThan(
@@ -341,8 +350,8 @@ describe("owned read response", () => {
 			previousCalls = sourceCalls;
 		}
 		expect(stableTurns).toBeGreaterThanOrEqual(3);
-		expect(sourceCalls).toBeGreaterThan(1);
-		expect(sourceCalls).toBeLessThan(chunkCount + 1);
+		// One buffered chunk plus one unread write.
+		expect(sourceCalls).toBe(2);
 		await vi.advanceTimersByTimeAsync(60_000);
 		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
@@ -362,15 +371,21 @@ describe("owned read response", () => {
 		const release = tryAcquireReadSlot();
 		if (!release) throw new Error("Expected an available read slot");
 		let demands = 0;
+		const finished: AdmissionCompletion[] = [];
 		const response = ownedReadResponse(
 			{
-				next: async () => {
-					demands++;
-					return { done: true, value: undefined };
-				},
+				next: async () =>
+					demands++ === 0
+						? { done: false, value: new Uint8Array([1]) }
+						: { done: true, value: undefined },
 				cancel: async () => {},
 			},
-			{ finish: async () => ({ ok: true }) },
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					return { ok: true };
+				},
+			},
 			release,
 		);
 		if (!response.body) throw new Error("Read response has no body");
@@ -378,7 +393,9 @@ describe("owned read response", () => {
 		void reader.closed.catch(() => undefined);
 		await vi.advanceTimersByTimeAsync(60_000);
 		await expect(reader.read()).rejects.toThrow();
-		expect(demands).toBe(0);
+		// The pump demands one chunk ahead of the consumer and waits on its unread write.
+		expect(demands).toBe(1);
+		expect(finished).toEqual(["uncertain"]);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
 		release.complete();
 	});
@@ -465,13 +482,19 @@ describe("owned read response", () => {
 		vi.useFakeTimers();
 		const release = tryAcquireReadSlot();
 		if (!release) throw new Error("Expected an available read slot");
+		const eofDemanded = barrier<void>();
+		const eof = barrier<IteratorResult<Uint8Array>>();
 		const response = ownedReadResponse(
 			{
-				next: async () => {
+				next: () => {
 					demands++;
-					return demands === 1
-						? { done: false, value: new Uint8Array([1]) }
-						: { done: true, value: undefined };
+					if (demands === 1)
+						return Promise.resolve({
+							done: false,
+							value: new Uint8Array([1]),
+						});
+					eofDemanded.resolve();
+					return eof.promise;
 				},
 				cancel: async () => {},
 			},
@@ -487,13 +510,56 @@ describe("owned read response", () => {
 		if (!response.body) throw new Error("Read response has no body");
 		const reader = response.body.getReader();
 		expect((await reader.read()).done).toBe(false);
-		expect(demands).toBe(1);
+		// The EOF demand starts only after the consumer read the final data chunk.
+		await eofDemanded.promise;
+		expect(demands).toBe(2);
 		expect(finished).toEqual([]);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(1);
-		expect((await reader.read()).done).toBe(true);
+		const ending = reader.read();
+		await Promise.resolve();
+		expect(finished).toEqual([]);
+		eof.resolve({ done: true, value: undefined });
+		expect((await ending).done).toBe(true);
 		expect(finished).toEqual(["settled"]);
 		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
 		expect(vi.getTimerCount()).toBe(0);
+	});
+	it("keeps a generic body one 16 KB chunk ahead of an idle consumer", async () => {
+		const release = tryAcquireReadSlot();
+		if (!release) throw new Error("Expected an available read slot");
+		const chunk = new Uint8Array(JSON_CHUNK_TARGET_BYTES).fill(7);
+		let demands = 0;
+		const response = ownedReadResponse(
+			{
+				next: async () =>
+					demands++ < 4
+						? { done: false, value: chunk }
+						: { done: true, value: undefined },
+				cancel: async () => {},
+			},
+			{ finish: async () => ({ ok: true }) },
+			release,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader({ mode: "byob" });
+		try {
+			await scheduler.wait(20);
+			expect(demands).toBe(1);
+			const half = await reader.read(
+				new Uint8Array(JSON_CHUNK_TARGET_BYTES / 2),
+			);
+			expect(half.value?.byteLength).toBe(JSON_CHUNK_TARGET_BYTES / 2);
+			await scheduler.wait(20);
+			expect(demands).toBe(1);
+			const rest = await reader.read(
+				new Uint8Array(JSON_CHUNK_TARGET_BYTES / 2),
+			);
+			expect(rest.value?.byteLength).toBe(JSON_CHUNK_TARGET_BYTES / 2);
+			await scheduler.wait(20);
+			expect(demands).toBe(2);
+		} finally {
+			await reader.cancel().catch(() => undefined);
+		}
 	});
 	it("rejects source completion that arrives after the deadline", async () => {
 		vi.useFakeTimers();
@@ -564,18 +630,21 @@ describe("owned read response", () => {
 		);
 		if (!response.body) throw new Error("Read response has no body");
 		const reader = response.body.getReader();
-		const read = reader.read();
+		// A native stream rejects a pending read when its consumer cancels.
+		const read = reader.read().catch(() => undefined);
 		await started.promise;
 		const cancelled = reader.cancel();
+		// A native body observes consumer cancellation at its next write, after pending work.
+		await cancelled;
+		expect(released).toBe(false);
+		work.resolve({ done: false, value: new Uint8Array([1]) });
 		await cancelling.promise;
 		expect(released).toBe(false);
 		cancellation.resolve();
-		expect(released).toBe(false);
-		work.resolve({ done: true, value: undefined });
 		await finishing.promise;
 		expect(released).toBe(true);
 		cleanup.resolve();
-		await Promise.all([read, cancelled]);
+		await read;
 		expect(released).toBe(true);
 	});
 	it.each([
@@ -618,15 +687,17 @@ describe("owned read response", () => {
 			);
 			if (!response.body) throw new Error("Read response has no body");
 			const reader = response.body.getReader();
-			const read = reader.read();
+			const read = reader.read().catch(() => undefined);
 			await started.promise;
 			const cancelled = reader.cancel();
-			await cancelling.promise;
+			// The pump sees cancellation only after the pending producer read settles.
+			await cancelled;
 			work.reject(
 				fault === "unknown producer"
 					? new Error("Lost pending RPC")
 					: new ReadBatchFailure({ kind: "cursor_expired" }),
 			);
+			await cancelling.promise;
 			expect(released).toBe(false);
 			expect(finished).toEqual([]);
 			if (fault === "unknown cancellation")
@@ -1114,6 +1185,36 @@ describe("owned read response", () => {
 		expect(JSON.parse(text)).toEqual({ content });
 	});
 
+	it("coalesces small JSON tokens into few chunks below the target size", () => {
+		const rows = Array.from({ length: 1000 }, (_, index) => ({
+			seq: index + 1,
+			op: "put",
+			path: `Agents/feed/${index}.md`,
+			etag: `"e-${index}"`,
+		}));
+		const chunks = [...encodeJsonChunks({ entries: rows })];
+		const bytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+		expect(chunks.length).toBe(Math.ceil(bytes / JSON_CHUNK_TARGET_BYTES));
+		expect(
+			chunks.every((chunk) => chunk.byteLength <= JSON_CHUNK_TARGET_BYTES),
+		).toBe(true);
+		const text = chunks
+			.map((chunk) => new TextDecoder().decode(chunk))
+			.join("");
+		expect(JSON.parse(text)).toEqual({ entries: rows });
+	});
+
+	it("passes a part at or above the target through alone after flushing the buffer", () => {
+		const small = new Uint8Array([1, 2]);
+		const large = new Uint8Array(JSON_CHUNK_TARGET_BYTES);
+		const chunks = [...coalesceChunks([small, large, small, small])];
+		expect(chunks.map((chunk) => chunk.byteLength)).toEqual([
+			2,
+			JSON_CHUNK_TARGET_BYTES,
+			4,
+		]);
+	});
+
 	it("recovers admission capacity when timers do not run after the hold deadline", () => {
 		vi.useFakeTimers();
 		const expiredBefore = readSlotCapacitySnapshot().expired_count;
@@ -1199,9 +1300,10 @@ describe("owned read response", () => {
 			const lease = tryAcquireReadSlot();
 			if (!lease) throw new Error("Expected a read lease");
 			const finished: AdmissionCompletion[] = [];
+			// The first chunk stays unread, so the deadline finds the response unfinished.
 			const response = ownedReadResponse(
 				{
-					next: async () => ({ done: true, value: undefined }),
+					next: async () => ({ done: false, value: new Uint8Array([1]) }),
 					cancel: () => cleanup.promise,
 				},
 				{
@@ -1224,7 +1326,8 @@ describe("owned read response", () => {
 			const recovered = tryAcquireReadSlot();
 			expect(recovered).toBeDefined();
 			expect(vi.getTimerCount()).toBe(4);
-			await expect(response.text()).rejects.toThrow("deadline");
+			// The native stream reports a writer abort without a pending read as a lost connection.
+			await expect(response.text()).rejects.toThrow();
 		},
 	);
 

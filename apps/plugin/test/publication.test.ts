@@ -784,6 +784,31 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("retries a Worker overload refusal after its Retry-After without attention", async () => {
+		const now = 1_800_000_000_000;
+		const { controller, journal, vault, remote } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => now,
+		);
+		remote.put = async () => {
+			throw new SyncTransportError(429, "admission_limited", null, "5");
+		};
+		vault.files.set("overloaded.md", "bytes");
+		await controller.scan();
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		expect(sent).toMatchObject({
+			path: "overloaded.md",
+			state: "sent",
+			attempts: 1,
+			retry_at: now + 5_000,
+		});
+		expect(journal.snapshot().attention).toEqual([]);
+		controller.close();
+	});
+
 	it("retains and retries an immutable blob after an interrupted upload", async () => {
 		let now = 1_800_000_000_000;
 		const { controller, journal, remote, vault } = await openController(

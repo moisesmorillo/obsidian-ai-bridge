@@ -14,6 +14,7 @@ import {
 import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";
 import { settleReadAdmission } from "@worker/application/reads";
 import type { TextVaultGateway } from "@worker/application/text-files";
+import { knownFailureCompletion } from "@worker/application/vault-overload";
 import { readBlobResponse } from "@worker/transport/blobs";
 import { fileFailureResponse } from "@worker/transport/mutation-response";
 import {
@@ -168,7 +169,11 @@ export async function readContentResponse(
 			try {
 				await settleReadAdmission(() =>
 					finish(
-						known || error instanceof ReadAborted ? "settled" : "uncertain",
+						error instanceof ReadAborted
+							? "settled"
+							: known
+								? knownFailureCompletion(error)
+								: "uncertain",
 					),
 				);
 			} catch {

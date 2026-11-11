@@ -448,6 +448,55 @@ describe("Vault SQLite persistence", () => {
 		},
 	);
 
+	it("accepts the exact Miniflare instance-name table on restart and on a fresh store", async () => {
+		const miniflareTable =
+			"CREATE TABLE IF NOT EXISTS __miniflare_do_name (id INTEGER PRIMARY KEY, name TEXT)";
+		const restarted = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(restarted, (_instance, state) => {
+			const before = metadata(state.storage);
+			state.storage.sql.exec(miniflareTable);
+			state.storage.sql.exec(
+				"INSERT OR REPLACE INTO __miniflare_do_name (id, name) VALUES (1, 'vault')",
+			);
+			expect(() =>
+				initializeVaultStorage(state.storage, createEpoch, () => 2),
+			).not.toThrow();
+			expect(metadata(state.storage)).toEqual(before);
+		});
+		const fresh = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(fresh, (_instance, state) => {
+			clearTestVault(state.storage);
+			state.storage.sql.exec(miniflareTable);
+			expect(applicationTableNames(state.storage)).toEqual([
+				"__miniflare_do_name",
+			]);
+			initializeVaultStorage(state.storage, createEpoch, () => 2);
+			expect(metadata(state.storage).created_at).toBe("2");
+		});
+	});
+
+	it.each([
+		[
+			"__miniflare_do_name",
+			"CREATE TABLE __miniflare_do_name (id INTEGER PRIMARY KEY, name TEXT, extra TEXT)",
+		],
+		[
+			"__miniflare_other",
+			"CREATE TABLE __miniflare_other (id INTEGER PRIMARY KEY, name TEXT)",
+		],
+	])(
+		"rejects Miniflare-like table %s unless its name and definition match exactly",
+		async (name, createSql) => {
+			const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+			await runInDurableObject(stub, (_instance, state) => {
+				state.storage.sql.exec(createSql);
+				expect(() =>
+					initializeVaultStorage(state.storage, createEpoch, () => 2),
+				).toThrow(`Unexpected vault table: ${name}`);
+			});
+		},
+	);
+
 	it("fails closed on a view-only database without creating schema", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {

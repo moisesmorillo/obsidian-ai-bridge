@@ -1,5 +1,7 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { admissionByteSnapshot } from "@worker/application/admission-budget";
 import { FileOperationDenied } from "@worker/application/files";
+import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
@@ -70,6 +72,38 @@ describe("declared blob HTTP", () => {
 			if (size < 100) expect(downloaded).toEqual(bytes);
 		},
 	);
+	it("returns REST read capacity promptly after a client cancels a large blob read", async () => {
+		const size = 25_000_000;
+		const bytes = new Uint8Array(size).fill(7);
+		const url = "https://blob.invalid/v1/files/cancelled-read.bin";
+		const put = await SELF.fetch(url, {
+			method: "PUT",
+			headers: {
+				"If-None-Match": "*",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				"X-Content-SHA256": await digest(bytes),
+				"X-Content-Size": String(size),
+			},
+			body: bytes,
+		});
+		await put.text();
+		expect(put.status).toBe(201);
+		const get = await SELF.fetch(url);
+		expect(get.status).toBe(200);
+		expect(get.headers.get("Content-Length")).toBe(String(size));
+		const reader = get.body?.getReader();
+		expect((await reader?.read())?.done).toBe(false);
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(4_500_000);
+		await reader?.cancel();
+		const deadline = Date.now() + 2_000;
+		while (
+			admissionByteSnapshot().rest_read_bytes !== 0 &&
+			Date.now() < deadline
+		)
+			await scheduler.wait(20);
+		expect(admissionByteSnapshot().rest_read_bytes).toBe(0);
+		expect(readSlotCapacitySnapshot().held_rest_slots).toBe(0);
+	});
 	it("verifies declarations on inline bytes", async () => {
 		const response = await SELF.fetch(
 			"https://blob.invalid/v1/files/forged.md",

@@ -9,6 +9,7 @@ import {
 	MutationSuccessSchema,
 	TextReadResponseSchema,
 } from "@vaultwire/protocol";
+import { admissionByteSnapshot } from "@worker/application/admission-budget";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
@@ -141,6 +142,50 @@ describe("conditional text HTTP lifecycle", () => {
 			);
 		});
 	});
+	it("returns body slots and shared bytes after clients cancel mutation failure bodies", async () => {
+		const path = "https://worker.invalid/v1/files/large-conflict.md";
+		const content = "c".repeat(1_000_000);
+		const created = await SELF.fetch(path, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: content,
+		});
+		expect(created.status).toBe(201);
+		await created.text();
+		const sharedBefore = admissionByteSnapshot().shared_bytes;
+		for (let attempt = 0; attempt < 8; attempt++) {
+			const conflict = await SELF.fetch(path, {
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				},
+				body: "replacement",
+			});
+			expect(conflict.status).toBe(412);
+			const reader = conflict.body?.getReader();
+			expect((await reader?.read())?.done).toBe(false);
+			await reader?.cancel();
+			const deadline = Date.now() + 2_000;
+			while (
+				admissionByteSnapshot().shared_bytes !== sharedBefore &&
+				Date.now() < deadline
+			)
+				await scheduler.wait(20);
+			expect(admissionByteSnapshot().shared_bytes).toBe(sharedBefore);
+		}
+		const ninth = await SELF.fetch(
+			"https://worker.invalid/v1/files/after-cancels.md",
+			{
+				method: "PUT",
+				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+				body: "accepted",
+			},
+		);
+		expect(ninth.status).toBe(201);
+		await ninth.text();
+	});
+
 	it("waits for reader demand before signaling request-body readiness", async () => {
 		const pending = createPendingBody("reader demanded these bytes");
 		await Promise.resolve();

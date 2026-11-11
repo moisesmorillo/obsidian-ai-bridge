@@ -158,10 +158,10 @@ function makeRecoveryHostVault() {
 		}),
 		list: vi.fn(async (path: string) => ({
 			files: [...hidden.keys(), ...visible.keys()].filter((file) =>
-				file.startsWith(`${path}/`),
+				path === "" ? !file.includes("/") : file.startsWith(`${path}/`),
 			),
 			folders: [...directories].filter((folder) =>
-				folder.startsWith(`${path}/`),
+				path === "" ? !folder.includes("/") : folder.startsWith(`${path}/`),
 			),
 		})),
 		remove: vi.fn(async (path: string) => {
@@ -169,6 +169,7 @@ function makeRecoveryHostVault() {
 		}),
 		trashLocal: vi.fn(async (path: string) => {
 			visible.delete(path);
+			hidden.delete(path);
 		}),
 	};
 	const host = {
@@ -649,6 +650,95 @@ describe("ObsidianTextVault", () => {
 		);
 		engine.close();
 		journal.close();
+	});
+
+	it("routes canonical case aliases through adapter effects without changing path spelling", async () => {
+		const fake = makeRecoveryHostVault();
+		const path = ".ObSiDiAn/PlUgInS/test/main.js";
+		fake.directories.add(".ObSiDiAn");
+		fake.directories.add(".ObSiDiAn/PlUgInS");
+		fake.directories.add(".ObSiDiAn/PlUgInS/test");
+		const initial = new Uint8Array([0, 255, 7]);
+		fake.hidden.set(path, { bytes: initial.slice(), mtime: 1 });
+		const policy = {
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: true,
+		};
+		const vault = new ObsidianTextVault(
+			fake.host as unknown as Vault,
+			() => policy,
+		);
+
+		expect(await vault.readBinary(path)).toEqual(initial);
+		expect(await vault.list()).toContain(path);
+		expect(await vault.stat(path)).toEqual({ mtime: 1, size: initial.length });
+		expect(await vault.size(path)).toBe(initial.length);
+		const replacement = new Uint8Array([9, 0, 250]);
+		expect(await vault.modifyBinary(path, replacement, initial)).toBe(true);
+		expect(fake.adapter.writeBinary).toHaveBeenCalledWith(
+			path,
+			replacement.slice().buffer,
+		);
+		const createdPath = ".ObSiDiAn/PlUgInS/test/data.json";
+		expect(await vault.createBinary(createdPath, initial)).toBe(true);
+		expect(fake.adapter.writeBinary).toHaveBeenLastCalledWith(
+			createdPath,
+			initial.slice().buffer,
+		);
+		expect(await vault.trashBinary(path, replacement)).toBe(true);
+		expect(fake.adapter.trashLocal).toHaveBeenCalledWith(path);
+	});
+
+	it("refuses a cross-root settings identity collision without changing existing bytes", async () => {
+		const fake = makeRecoveryHostVault();
+		const existingPath = ".ObSiDiAn/PLUGINS/test/MAIN.JS";
+		const requestedPath = ".obsidian/plugins/test/main.js";
+		const existing = new Uint8Array([7, 0, 255]);
+		fake.directories.add(".ObSiDiAn");
+		fake.directories.add(".ObSiDiAn/PLUGINS");
+		fake.directories.add(".ObSiDiAn/PLUGINS/test");
+		fake.hidden.set(existingPath, { bytes: existing.slice(), mtime: 1 });
+		fake.directories.add(".obsidian");
+		fake.directories.add(".obsidian/plugins");
+		fake.directories.add(".obsidian/plugins/test");
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault, () => ({
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: true,
+		}));
+
+		expect(
+			await vault.createBinary(requestedPath, new Uint8Array([1, 2, 3])),
+		).toBe(false);
+		expect(fake.hidden.get(existingPath)?.bytes).toEqual(existing);
+		expect(fake.adapter.writeBinary).not.toHaveBeenCalled();
+	});
+
+	it("does not route hard-excluded settings aliases to adapter effects", async () => {
+		const fake = makeRecoveryHostVault();
+		const path = ".OBSIDIAN/WORKSPACE.json";
+		fake.directories.add(".OBSIDIAN");
+		fake.hidden.set(path, { bytes: new Uint8Array([1]), mtime: 1 });
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault, () => ({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		}));
+		const statCalls = fake.adapter.stat.mock.calls.length;
+
+		expect(await vault.readBinary(path)).toBeNull();
+		expect(await vault.stat(path)).toBeNull();
+		expect(await vault.size(path)).toBeNull();
+		expect(await vault.createBinary(path, new Uint8Array([2]))).toBe(false);
+		expect(await vault.modifyBinary(path, new Uint8Array([2]))).toBe(false);
+		expect(await vault.trashBinary(path, new Uint8Array([1]))).toBe(false);
+		expect(fake.adapter.stat).toHaveBeenCalledTimes(statCalls);
+		expect(fake.adapter.writeBinary).not.toHaveBeenCalled();
+		expect(fake.adapter.trashLocal).not.toHaveBeenCalled();
 	});
 
 	it("reads and writes exact selected unindexed settings bytes through the adapter", async () => {
@@ -1577,6 +1667,35 @@ describe("ObsidianTextVault", () => {
 		expect(fake.host.modifyBinary).not.toHaveBeenCalled();
 		expect(fake.host.readBinary).not.toHaveBeenCalled();
 		expect(fake.host.createFolder).not.toHaveBeenCalled();
+	});
+
+	it("routes recovery-root aliases through confined adapter paths", async () => {
+		const fake = makeRecoveryHostVault();
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault);
+		const bytes = new Uint8Array([2, 0, 255]);
+		const hash = await recoveryHash(bytes);
+		const path = `.VAULTWIRE/PRE-APPLY/${hash}`;
+		fake.directories.add(".VAULTWIRE");
+		fake.directories.add(".VAULTWIRE/PRE-APPLY");
+		fake.hidden.set(path, { bytes: bytes.slice(), mtime: 1 });
+		const invalidPath = `.VAULTWIRE/other/${hash}`;
+		fake.hidden.set(invalidPath, { bytes: bytes.slice(), mtime: 1 });
+
+		expect(await vault.readBinary(path)).toEqual(bytes);
+		expect(await vault.stat(path)).toEqual({
+			mtime: 1,
+			size: bytes.byteLength,
+		});
+		expect(await vault.list()).toContain(path);
+		expect(await vault.removeRecoveryCopy(path, hash)).toBe(true);
+		expect(await vault.readBinary(path)).toBeNull();
+		expect(await vault.readBinary(invalidPath)).toBeNull();
+		expect(await vault.stat(invalidPath)).toBeNull();
+		expect(await vault.createBinary(invalidPath, bytes)).toBe(false);
+		expect(await vault.modifyBinary(invalidPath, bytes)).toBe(false);
+		expect(await vault.removeRecoveryCopy(invalidPath, hash)).toBe(false);
+		expect(fake.hidden.get(invalidPath)?.bytes).toEqual(bytes);
+		expect(fake.host.createBinary).not.toHaveBeenCalled();
 	});
 
 	it("refuses corrupt hidden recovery bytes without replacing them", async () => {

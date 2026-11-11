@@ -4399,38 +4399,41 @@ describe("TextApplyEngine", () => {
 		});
 	});
 
-	it("does not apply a remote settings entry while its category is disabled", async () => {
-		const path = ".obsidian/app.json";
-		const localBytes = new Uint8Array([3, 0, 255]);
-		vault.binaryFiles.set(path, localBytes.slice());
-		await journal.resetEpoch(epoch);
-		engine = makeEngine(
-			journal,
-			vault,
-			{
-				read: async () => {
-					throw new Error("Disabled settings must not read remote bytes");
+	it.each([".obsidian/app.json", ".OBSIDIAN/app.json"] as const)(
+		"does not apply remote settings path %s while its category is disabled",
+		async (path) => {
+			const localBytes = new Uint8Array([3, 0, 255]);
+			vault.binaryFiles.set(path, localBytes.slice());
+			await journal.resetEpoch(epoch);
+			engine = makeEngine(
+				journal,
+				vault,
+				{
+					read: async () => {
+						throw new Error("Disabled settings must not read remote bytes");
+					},
 				},
-			},
-			{
-				deviceName: "Test Device",
-				settingsPolicy: {
-					enabled: true,
-					appearance: false,
-					core: false,
-					communityPlugins: false,
+				{
+					deviceName: "Test Device",
+					settingsPolicy: {
+						enabled: true,
+						appearance: false,
+						core: false,
+						communityPlugins: false,
+					},
 				},
-			},
-		);
+			);
 
-		await engine.apply(
-			{ ...change, path, hash: await hash("remote bytes") },
-			"blob",
-		);
+			await engine.apply(
+				{ ...change, path, hash: await hash("remote bytes") },
+				"blob",
+			);
 
-		expect(vault.binaryFiles.get(path)).toEqual(localBytes);
-		expect(journal.snapshot().pending_apply).toEqual([]);
-	});
+			expect(vault.binaryFiles.get(path)).toEqual(localBytes);
+			expect(vault.statCalls).toBe(0);
+			expect(journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
 
 	it.each([
 		[".obsidian/plugins/tasks/main.js", /\.js\.txt$/],

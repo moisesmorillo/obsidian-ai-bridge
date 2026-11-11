@@ -61,6 +61,7 @@ class MemoryVault implements TextVault {
 	fileSizes = new Map<string, number>();
 	reads: string[] = [];
 	writes = 0;
+	binaryMutations = 0;
 	processGate: { started: () => void; wait: Promise<void> } | null = null;
 	createGate: { started: () => void; wait: Promise<void> } | null = null;
 	listError: Error | null = null;
@@ -83,6 +84,7 @@ class MemoryVault implements TextVault {
 	}
 	/** Creates exact bytes at an absent path. */
 	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		this.binaryMutations += 1;
 		if (
 			[...this.files.keys(), ...this.binaryFiles.keys()].some(
 				(current) => current === path || pathKey(current) === pathKey(path),
@@ -94,6 +96,7 @@ class MemoryVault implements TextVault {
 	}
 	/** Moves text or binary file bytes to the test trash only when they still match. */
 	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		this.binaryMutations += 1;
 		const current = await this.readBinary(path);
 		if (
 			!current ||
@@ -107,6 +110,7 @@ class MemoryVault implements TextVault {
 	}
 	/** Replaces exact bytes at an existing path. */
 	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		this.binaryMutations += 1;
 		if (!this.binaryFiles.has(path) && !this.files.has(path)) return false;
 		this.files.delete(path);
 		this.binaryFiles.set(path, bytes.slice());
@@ -388,6 +392,47 @@ describe("ReconciliationController", () => {
 	let context: Awaited<ReturnType<typeof setup>>;
 	beforeEach(async () => {
 		context = await setup();
+	});
+
+	it("rejects a disabled case-alias settings manifest before local mutation", async () => {
+		const path = ".OBSIDIAN/app.json";
+		const bytes = new Uint8Array([123, 255, 0, 125]);
+		context.remote.entries = [
+			{
+				path,
+				etag: formatETag(epoch, 2),
+				seq: 2,
+				hash: await hashBytes(bytes),
+				kind: "blob",
+				deleted: false,
+			},
+		];
+		context.remote.blobPaths.add(path);
+		context.remote.blobs.set(2, bytes);
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		const policy = {
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: false,
+		};
+		context.controller = new ReconciliationController(
+			context.journal,
+			new TextApplyEngine(context.journal, context.vault, context.remote, {
+				deviceName: "test",
+				settingsPolicy: policy,
+			}),
+			context.vault,
+			context.remote,
+			() => false,
+			policy,
+		);
+
+		await context.controller.reconcile();
+
+		expect(context.vault.binaryMutations).toBe(0);
+		expect(context.vault.binaryFiles.has(path)).toBe(false);
 	});
 
 	it("hydrates newly enabled settings from the manifest after the cursor passed its feed row", async () => {

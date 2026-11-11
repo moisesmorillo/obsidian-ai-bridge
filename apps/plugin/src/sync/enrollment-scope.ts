@@ -12,6 +12,13 @@ export interface SettingsSyncPolicy {
 	communityPlugins: boolean;
 }
 
+/** Validates a protocol path and checks its NFC, case-folded settings-root identity without rewriting it. */
+export function hasCanonicalSettingsRoot(path: string): boolean {
+	return (
+		PathSchema.safeParse(path).success && pathKey(path).startsWith(".obsidian/")
+	);
+}
+
 /** Safe persisted defaults. Devices must opt in before any settings path is admitted. */
 export const DEFAULT_SETTINGS_SYNC_POLICY: SettingsSyncPolicy = {
 	enabled: false,
@@ -44,7 +51,7 @@ const ATTACHMENT_EXTENSIONS = new Set([
 	"txt",
 ]);
 
-/** Classifies one local vault path for enrollment; size is the raw byte count. */
+/** Classifies one validated vault path by canonical identity; size is bytes and path spelling stays intact. */
 export function classifyEnrollmentPath(
 	path: string,
 	size: number,
@@ -56,16 +63,16 @@ export function classifyEnrollmentPath(
 		size < 0
 	)
 		return "excluded";
-	const segments = path.split("/");
+	const canonicalSegments = pathKey(path).split("/");
 	if (
-		[".trash", ".vaultwire"].includes(segments[0] ?? "") ||
-		segments.at(-1) === ".DS_Store" ||
-		segments.at(-1)?.toLowerCase().endsWith(".icloud")
+		[".trash", ".vaultwire"].includes(canonicalSegments[0] ?? "") ||
+		canonicalSegments.at(-1) === ".ds_store" ||
+		canonicalSegments.at(-1)?.endsWith(".icloud")
 	)
 		return "excluded";
-	if (segments[0] === ".obsidian") {
-		if (isHardExcludedSettingsPath(pathKey(path).split("/"))) return "excluded";
-		const category = settingsCategory(segments);
+	if (canonicalSegments[0] === ".obsidian") {
+		if (isHardExcludedSettingsPath(canonicalSegments)) return "excluded";
+		const category = settingsCategory(canonicalSegments);
 		if (!settingsPolicy.enabled || !category || !settingsPolicy[category])
 			return "excluded";
 		return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
@@ -80,7 +87,7 @@ export function classifyEnrollmentPath(
 	return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
 }
 
-/** Returns the enabled category for one exact supported settings path shape. */
+/** Returns the enabled category for one canonical supported settings path shape. */
 function settingsCategory(
 	segments: string[],
 ): keyof Omit<SettingsSyncPolicy, "enabled"> | null {
@@ -114,7 +121,7 @@ function settingsCategory(
 	return null;
 }
 
-/** Keeps workspace, Vaultwire plugin, cache, graph, and dependency trees outside all categories. */
+/** Keeps canonical workspace, Vaultwire plugin, cache, graph, and dependency trees outside all categories. */
 function isHardExcludedSettingsPath(segments: string[]): boolean {
 	const relative = segments.slice(1);
 	const first = relative[0] ?? "";

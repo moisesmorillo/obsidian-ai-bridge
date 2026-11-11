@@ -1,11 +1,11 @@
 ---
 id: OAB-63
 title: Fix reserved-root case aliases in settings admission
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-11T02:04:00Z'
-updated_date: '2026-11-11T04:16:00Z'
+updated_date: '2026-11-11T04:26:00Z'
 labels: []
 dependencies: []
 references:
@@ -25,12 +25,12 @@ OAB-56 confirms one low-severity defect at revision 66ff86a. A remote .OBSIDIAN/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Case aliases of .obsidian follow the same settings consent, category, and hard-exclusion policy as canonical paths.
-- [ ] #2 Case aliases of .trash and .vaultwire remain excluded, and ordinary eligible files retain their original path spelling.
-- [ ] #3 Reconciliation, apply, and the vault adapter reject disabled or hard-excluded settings aliases before any local file-effect call.
-- [ ] #4 Regression tests fail before product changes, then pass with enabled-category controls and reserved-root alias cases.
-- [ ] #5 bun run docs:check and bun run check pass. Independent task and whole-branch reviews close actionable findings.
-- [ ] #6 The branch includes project audit skills in a separate commit. The task and pull request name their source repositories. No audit reports or evidence enter Git.
+- [x] #1 Case aliases of .obsidian follow the same settings consent, category, and hard-exclusion policy as canonical paths.
+- [x] #2 Case aliases of .trash and .vaultwire remain excluded, and ordinary eligible files retain their original path spelling.
+- [x] #3 Reconciliation, apply, and the vault adapter reject disabled or hard-excluded settings aliases before any local file-effect call.
+- [x] #4 Regression tests fail before product changes, then pass with enabled-category controls and reserved-root alias cases.
+- [x] #5 bun run docs:check and bun run check pass. Independent task and whole-branch reviews close actionable findings.
+- [x] #6 The branch includes project audit skills in a separate commit. The task and pull request name their source repositories. No audit reports or evidence enter Git.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,4 +61,12 @@ Whole-branch finding closure: Fixed [MAJOR] “Enumerate settings-root aliases b
 The owner accepts the fix and asks for three supervisor corrections before approval of pn-45125a. Move the Biome vendor exclusion into the separate skills commit through local history rewrite. Keep apply-level tests for lowercase and uppercase settings paths. Canonicalize the remaining recovery-root and openAttentionPath checks, with an alias regression. This current instruction approves that scope. Run bun run check after all corrections. The branch has no push or PR yet. Preserve skill sources in the PR body.
 
 Owner correction RED: `bun --filter @vaultwire/plugin test -- text-vault.test.ts status-panel.test.ts` observed exit 1 with 2 expected alias failures and 62 passes. The recovery-root alias was rejected by readBinary, and the mixed-case settings root reached indexed lookup. The restored apply-level lowercase and uppercase cases already passed without product changes: `bun --filter @vaultwire/plugin test -- text-apply.test.ts` passed 119 tests. This is the missing-test exception for restored lowercase coverage. GREEN focused command `bun --filter @vaultwire/plugin test -- text-vault.test.ts status-panel.test.ts text-apply.test.ts` passed 3 files and 183 tests after the correction. Recovery routing now validates the direct hash child, preserves root spelling, lists case aliases, and denies invalid aliases.
+
+Owner branch review pn-45125a approved the final code with no changes requested. Reviewed source revision: f102493d5a1e53f0b806b8dcec67666e06d83e2d. Independent task review approved spec and quality. Session-model whole-branch review found the enumeration gap. Its scoped correction review closed listing, real-adapter publication, and cross-root collision evidence. The supervisor correction review closed all three later items. Semantic scope includes enrollment identity, apply/publication admission, adapter enumeration and recovery routing, attention-path guards, changed TSDoc, tests, and vendor configuration. Policy ownership remains in enrollment scope. The adapter keeps original path spelling and guarded effects. RED evidence: 12 initial failures, 3 enumeration failures, 2 supervisor alias failures. Final focused correction: 183 passed. Final docs:check and bun run check exited 0. Plugin 901 passed and 1 skipped. Standalone skills commit lint passed. LSP checks report no diagnostics. The existing non-atomic settings-write limit and no-real-host-test limit remain. PR: https://github.com/moisesmorillo/vaultwire/pull/172. Skill sources appear in this task and the PR. Only final Backlog metadata changes follow the checked code revision.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed canonical reserved-root, settings, recovery, and attention-path decisions. Added failing regression tests before behavior changes, restored both apply spellings, and corrected settings-root enumeration and collision checks. Final bun run check passed. Independent reviews and owner review approved. Separate skills commit includes its Biome exclusion and passes lint alone. PR 172 contains the source inventory. Real host behavior and the documented non-atomic settings-write limit remain outside the proof.
+<!-- SECTION:FINAL_SUMMARY:END -->

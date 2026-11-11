@@ -1,11 +1,11 @@
 ---
 id: OAB-56
 title: Run a security audit of the whole repository
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-10T03:43:00Z'
-updated_date: '2026-11-11T02:09:00Z'
+updated_date: '2026-11-11T04:26:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -20,10 +20,10 @@ The owner asked for a full security audit after the Vaultwire 1.0 release. Use t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Cloudflare security audit skill runs on the whole repository and its report lists each finding with file, line and severity
+- [x] #1 The Cloudflare security audit skill runs on the whole repository and its report lists each finding with file, line and severity
 - [ ] #2 The Trail of Bits skills run on the whole repository and their findings use the same format
-- [ ] #3 Each confirmed finding has its own Backlog task with severity, or a written reason why it is a false positive
-- [ ] #4 The audit changes no code, no Cloudflare resource and no secret
+- [x] #3 Each confirmed finding has its own Backlog task with severity, or a written reason why it is a false positive
+- [x] #4 The audit changes no code, no Cloudflare resource and no secret
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,4 +42,12 @@ Owner decision: bounded local fixture tests may run without the complete audit-s
 Installed globally and in project scope for Pi and Claude Code: security-audit from cloudflare/security-audit-skill. workers-best-practices and durable-objects from cloudflare/skills. entry-point-analyzer, sharp-edges, supply-chain-risk-auditor, variant-analysis, semgrep, and sarif-parsing from trailofbits/skills. insecure-defaults is unavailable because it is a command plugin with no SKILL.md. entry-point-analyzer excludes non-smart-contract code. The owner approved the exact nine-source Semgrep run-all scan with OSS. Semgrep 1.185.0 completed eight scans and returned 64 merged alerts. p/yaml failed with exit 7. Elttam and Apiiro reported partial rule compilation. Alert triage and independent validation remain open.
 
 Independent validation confirms one low-severity finding: apps/plugin/enrollment-case-folding. OAB-63 is the single task for all confirmed fixes. Public OAuth registration capacity and tag-triggered publication remain needs_validation because decisive deployment facts are absent. The backup-retention claim is rejected because the source defines an external lifecycle rule, not an unauthorized path. All 64 Semgrep alerts are rejected after source triage. Final coverage critic found no more source gaps. Both schema validators pass. Independent retained-record review passes after a parent-side fixture rerun and bounded artifact retention. External reports remain in ~/workspace/moisesmorillo/vaultwire-security-audit/. Coverage limits include one blocked vendor unit, the failed YAML ruleset, partial third-party rule compilation, omitted TS test targets, OSS-only analysis, no advisory scan, and no real host effects. No product fix or plan approval exists yet.
+
+Delivery complete under the owner-approved source-audit scope and explicit tool limits. External reports: ~/workspace/moisesmorillo/vaultwire-security-audit/. findings.json has one confirmed low finding, two needs_validation leads, and one rejected claim. Coverage-ledger.json has 17 units with one external host-policy blocker. Both validators pass, and independent final-record review passes. OAB-63 fixes the confirmed finding and all later branch/supervisor findings in PR https://github.com/moisesmorillo/vaultwire/pull/172. AC1 has source workflow, location and severity evidence. AC3 maps the only confirmed finding to OAB-63 with Low priority. AC4 applies to the read-only audit phase. Later product changes belong to the separate approved fix task. AC2 remains unchecked: entry-point-analyzer excludes this project, insecure-defaults has no installable skill, and no complete advisory or maintainer-data scan exists for bun.lock. The reports preserve these exceptions, the failed YAML ruleset, partial rules, omitted test targets, OSS-only analysis and absent host proof. The owner approved the plan and complete branch with these limits. No production, secret, Cloudflare, real vault or OAB-57 action occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed the standard source audit and bounded dummy fixtures. Confirmed one low-severity settings-policy defect and fixed it through OAB-63 and PR 172. Kept two external validation leads separate and rejected the backup-retention claim. Reports and evidence remain outside Git. All product and supervisor findings are closed. AC2 remains unchecked for the documented unavailable or inapplicable tools and missing dependency-analysis coverage. The owner approved the bounded scope and branch.
+<!-- SECTION:FINAL_SUMMARY:END -->

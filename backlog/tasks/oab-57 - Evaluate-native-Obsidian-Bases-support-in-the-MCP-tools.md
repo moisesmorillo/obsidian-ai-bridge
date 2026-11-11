@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-10T03:43:00Z'
-updated_date: '2026-11-11T03:17:00Z'
+updated_date: '2026-11-11T03:29:00Z'
 labels: []
 dependencies: []
 references:
@@ -77,4 +77,6 @@ Design review closure before owner review: (1) fixed in plan with explicit new i
 Owner approved plan in Plannotator pn-761c39 on 2026-11-11. Approval covers all Owner decisions and the three implementation subtasks. No product changes preceded approval.
 
 Final branch review covered 66ff86a..841f020 and requested four corrections: F1 durable settlement loss, F2 malformed known filter siblings, F3 raw parser diagnostics, F4 duplicate list policy. Owner directed all findings fixed in this branch. Worker fixed F1-F4 in cb7c617. Scoped reviewer confirmed each closure. Follow-up comment-only ebeb667 documents completion certainty and received approval. Documentation audit covered protocol schemas/types/codecs, application policy, transport registrations, spec and API guide. Structural candidates remain cohesive after explicit settlement ownership and one list-budget owner. Full bun run check at cb7c617 passed with 2611 tests and one skip. Comment-only checks at ebeb667 passed formatting, docs:check and Worker typecheck. Existing unrelated lint warnings remain. Native UI proof remains intentionally deferred to approved OAB-57.4, not a review finding. Human branch review remains pending.
+
+Formula policy audit 2026-11-11: official Bases syntax at https://help.obsidian.md/bases/syntax and https://github.com/obsidianmd/obsidian-help/blob/master/en/Bases/Bases%20syntax.md states formula properties are always stored as strings in YAML (repository source checked at commit 24a31567c8a124aaaf95192fa49683bd35305dde). Keep formulas and summaries as z.string(). Add numeric literal rejection coverage. This concerns serialized YAML scalars only and makes no claim about expression evaluation.
 <!-- SECTION:NOTES:END -->

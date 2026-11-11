@@ -9,7 +9,7 @@ import type {
 	McpReadNoteResult,
 	McpSearchNotesResult,
 } from "@vaultwire/protocol";
-import { EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
+import { classifyFilePath, EMPTY_PAYLOAD_HASH } from "@vaultwire/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import { McpListResultBudget } from "@worker/application/mcp-list-budget";
@@ -191,7 +191,8 @@ export async function listMcpNotes(
 			for (const row of batch.rows) {
 				if (
 					row.deleted ||
-					!/\.(?:md|canvas)$/i.test(row.path) ||
+					(classifyFilePath(row.path) !== "markdown" &&
+						classifyFilePath(row.path) !== "canvas") ||
 					(!includeLarge && row.large) ||
 					(prefix !== undefined && !row.path.startsWith(prefix))
 				)

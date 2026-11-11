@@ -32,7 +32,7 @@ import {
 } from "@worker/application/mcp-notes";
 import { openManifestRead } from "@worker/application/reads";
 
-/** Limit durable manifest traversal while retaining only bounded Base rows. */
+/** Request all manifest rows; result budgets cap rows and bytes, next_page is refused, and read admission owns deadlines. */
 const MCP_BASE_MANIFEST_SCAN_LIMIT = Number.MAX_SAFE_INTEGER;
 
 /** Failure-free current mutation authority and epoch before Base content parsing. */
@@ -264,7 +264,7 @@ export async function validateMcpBase(
 	};
 }
 
-/** Hold only the HTTP response lease for validation, which creates no storage owner. */
+/** Hold the HTTP response lease for validation or refused mutations before storage admission. */
 function noSourceOwner(): McpReadOwner {
 	let finished: Promise<{ ok: true }> | undefined;
 	return {

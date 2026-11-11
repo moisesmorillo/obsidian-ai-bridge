@@ -88,17 +88,17 @@ function refineManifestEntry(
 			code: "custom",
 			message: "live manifest metadata needs a hash",
 		});
+	const fileKind = classifyFilePath(entry.path);
 	if (
 		entry.large &&
 		(entry.deleted ||
 			entry.kind !== "blob" ||
 			entry.size <= 1_000_000 ||
-			classifyFilePath(entry.path) === "other")
+			(fileKind !== "markdown" && fileKind !== "canvas"))
 	)
 		ctx.addIssue({
 			code: "custom",
-			message:
-				"large marks only oversized live Markdown, Canvas, or Base blobs",
+			message: "large marks only oversized live Markdown or Canvas blobs",
 		});
 	if (!entry.deleted && entry.hash.length !== 64)
 		ctx.addIssue({

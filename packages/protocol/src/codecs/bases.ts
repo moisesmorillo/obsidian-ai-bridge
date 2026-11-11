@@ -43,7 +43,8 @@ function invalid(diagnostic: string): BaseValidationResult {
 }
 
 /** Checks parser output iteratively before composition can build recursive nodes. */
-function checkCstBounds(tokens: Token[]): string | undefined {
+/** Check a supplied YAML CST token forest against depth, node, and forbidden-token limits. */
+export function checkCstBounds(tokens: Token[]): string | undefined {
 	const pending: Array<{ token: Token; depth: number }> = [];
 	for (const token of tokens) pending.push({ token, depth: 1 });
 	let nodes = 0;

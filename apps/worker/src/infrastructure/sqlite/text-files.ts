@@ -400,7 +400,8 @@ export class SqliteTextStore {
 					updated_at: "at" in row ? row.at : row.updatedAt,
 					large:
 						!deleted &&
-						classifyFilePath(row.path ?? "") !== "other" &&
+						(classifyFilePath(row.path ?? "") === "markdown" ||
+							classifyFilePath(row.path ?? "") === "canvas") &&
 						row.size > 1_000_000,
 				});
 				return { ok: true, body };

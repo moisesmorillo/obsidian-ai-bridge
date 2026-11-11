@@ -125,7 +125,7 @@ describe("canonical bounded read contracts", () => {
 	});
 
 	it("accepts large Markdown, Canvas, and Base manifest blobs", () => {
-		for (const path of ["large.md", "large.canvas", "資料/ビュー.BASE"]) {
+		for (const path of ["large.md", "large.canvas"]) {
 			const entry = {
 				path,
 				etag: formatETag(epoch, 4),
@@ -145,6 +145,26 @@ describe("canonical bounded read contracts", () => {
 				}).success,
 			).toBe(true);
 		}
+		const largeBase = {
+			path: "views/large.base",
+			etag: formatETag(epoch, 6),
+			seq: 6,
+			hash,
+			size: 1_000_001,
+			kind: "blob",
+			deleted: false,
+			large: false,
+		};
+		// Plugin 1.0.3 rejected large rows unless this original suffix rule matched.
+		/** Mirror the 1.0.3 manifest rule: only Markdown and Canvas may set `large`. */
+		const legacyRuleAccepts = (entry: typeof largeBase) =>
+			!entry.large || /\.(?:md|canvas)$/i.test(entry.path);
+		expect(legacyRuleAccepts({ ...largeBase, large: true })).toBe(false);
+		expect(legacyRuleAccepts(largeBase)).toBe(true);
+		expect(
+			ManifestEntrySchema.safeParse({ ...largeBase, large: true }).success,
+		).toBe(false);
+		expect(ManifestEntrySchema.safeParse(largeBase).success).toBe(true);
 		const legacySmallBaseBlob = {
 			path: "views/legacy.base",
 			etag: formatETag(epoch, 5),

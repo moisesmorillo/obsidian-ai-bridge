@@ -126,7 +126,7 @@ describe("native blob publication", () => {
 		);
 	});
 
-	it("publishes a large Base file as an unindexed large blob", async () => {
+	it("publishes a large Base file as an unindexed blob without the large marker", async () => {
 		const payload_hash = "d".repeat(64);
 		const capability = blobStore({ hash: payload_hash, size: 1_000_001 });
 		await withTextStore(
@@ -172,7 +172,7 @@ describe("native blob publication", () => {
 						path,
 						epoch: TEXT_FIXTURE_EPOCH,
 					}),
-				).toMatchObject({ ok: true, body: { large: true, size: 1_000_001 } });
+				).toMatchObject({ ok: true, body: { large: false, size: 1_000_001 } });
 			},
 			undefined,
 			capability,

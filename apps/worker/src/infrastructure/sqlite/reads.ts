@@ -191,7 +191,8 @@ export class SqliteReadStore {
 							row.kind === "blob" &&
 							row.size > 1_000_000 &&
 							typeof row.path === "string" &&
-							classifyFilePath(row.path) !== "other",
+							(classifyFilePath(row.path) === "markdown" ||
+								classifyFilePath(row.path) === "canvas"),
 					})),
 				});
 			}

@@ -97,7 +97,7 @@ Do not count YAML bytes as a new allowance outside existing HTTP envelope and ad
 Old plugins exclude `.base` files. Every device needs the updated plugin to sync them.
 No migration rewrites existing rows. Test legacy blob rows and revision history without changing their stored representation.
 New Base writes use inline text through 1,000,000 bytes and blobs above that limit.
-Base blobs above 1,000,000 bytes carry `large: true`. Inline Base rows carry `large: false`.
+Base rows always carry `large: false`, including blobs above 1,000,000 bytes. This owner audit correction supersedes the earlier `large: true` proposal.
 Existing Base blobs at or below 1,000,000 bytes carry `large: false` and remain blobs until a normal write replaces them.
 Existing Base blobs at small sizes must remain readable. Do not claim automatic conversion of existing rows.
 Update spec section 5.4 explicitly with these rules, including the existing-blob exception.

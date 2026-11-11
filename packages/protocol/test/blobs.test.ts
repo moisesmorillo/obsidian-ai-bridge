@@ -77,7 +77,7 @@ describe("blob protocol contracts", () => {
 		const baseFile = { ...base, path: "資料/ビュー.base" };
 		expect(
 			BlobMetadataSchema.safeParse({ ...baseFile, large: true }).success,
-		).toBe(true);
+		).toBe(false);
 		expect(
 			BlobMetadataSchema.safeParse({
 				...baseFile,
@@ -87,7 +87,7 @@ describe("blob protocol contracts", () => {
 		).toBe(true);
 		expect(
 			BlobMetadataSchema.safeParse({ ...baseFile, large: false }).success,
-		).toBe(false);
+		).toBe(true);
 		expect(
 			BlobMetadataSchema.safeParse({
 				...baseFile,

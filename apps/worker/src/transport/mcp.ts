@@ -17,6 +17,7 @@ import type {
 import {
 	AppendUnderHeadingRequestSchema,
 	AppendUnderHeadingToolSchema,
+	classifyFilePath,
 	encodeFileFailure,
 	McpAppendToNoteInputSchema,
 	McpAppendToNoteToolSchema,
@@ -275,11 +276,28 @@ export function createMcpServer(
 		name: string,
 		run: () => Promise<McpMutationOutcome>,
 		createOnly = false,
+		noteInput?: unknown,
 	) => {
 		const scope = mcpMutationScope(name);
 		if (scope === undefined || !identity.scopes.includes(scope)) {
 			reportBoundaryFailure("forbidden_scope");
 			throw new Error("forbidden_scope");
+		}
+		const notePath =
+			typeof noteInput === "object" &&
+			noteInput !== null &&
+			"path" in noteInput &&
+			typeof noteInput.path === "string"
+				? noteInput.path
+				: undefined;
+		if (notePath !== undefined && classifyFilePath(notePath) === "base") {
+			const current = await mutationGateway.getCurrentEpoch(identity, "put");
+			if (!current.ok) {
+				reportBoundaryFailure(current.failure.kind);
+				throw new Error(current.failure.kind);
+			}
+			resolveResponseProduction();
+			return toolFailure({ kind: "invalid_request" }, current.current_epoch);
 		}
 		return mutationResult(await run(), createOnly);
 	};
@@ -304,6 +322,7 @@ export function createMcpServer(
 						admissionReservation,
 					),
 				true,
+				input,
 			),
 	);
 	server.registerTool(
@@ -316,14 +335,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("update_note", () =>
-				updateMcpNote(
-					mutationGateway,
-					identity,
-					McpUpdateNoteInputSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"update_note",
+				() =>
+					updateMcpNote(
+						mutationGateway,
+						identity,
+						McpUpdateNoteInputSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -336,14 +359,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("append_to_note", () =>
-				appendMcpNote(
-					mutationGateway,
-					identity,
-					McpAppendToNoteInputSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"append_to_note",
+				() =>
+					appendMcpNote(
+						mutationGateway,
+						identity,
+						McpAppendToNoteInputSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -359,14 +386,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("append_under_heading", () =>
-				appendUnderHeadingMcpNote(
-					mutationGateway,
-					identity,
-					AppendUnderHeadingRequestSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"append_under_heading",
+				() =>
+					appendUnderHeadingMcpNote(
+						mutationGateway,
+						identity,
+						AppendUnderHeadingRequestSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(

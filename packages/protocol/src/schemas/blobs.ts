@@ -98,8 +98,10 @@ export const BlobMetadataSchema = z
 				message: "live blob metadata needs a hash",
 			});
 		}
+		const fileKind = classifyFilePath(metadata.path);
 		const large =
-			classifyFilePath(metadata.path) !== "other" && metadata.size > 1_000_000;
+			(fileKind === "markdown" || fileKind === "canvas") &&
+			metadata.size > 1_000_000;
 		if (metadata.large !== large) {
 			ctx.addIssue({
 				code: "custom",

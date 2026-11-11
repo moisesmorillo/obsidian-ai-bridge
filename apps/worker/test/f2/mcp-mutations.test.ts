@@ -159,6 +159,58 @@ afterEach(() => {
 });
 
 describe("production MCP mutation safety", () => {
+	it.each([
+		[
+			"create_note",
+			(epoch: string) => ({
+				path: "Views/example.BASE",
+				epoch,
+				content: "views: []",
+			}),
+		],
+		[
+			"update_note",
+			(epoch: string) => ({
+				path: "Views/example.BaSe",
+				etag: `"${epoch}.1"`,
+				content: "views: []",
+			}),
+		],
+		[
+			"append_to_note",
+			(epoch: string) => ({
+				path: "Views/example.base",
+				epoch,
+				text: "views: []",
+				idempotency_key: "base-append",
+			}),
+		],
+		[
+			"append_under_heading",
+			(epoch: string) => ({
+				path: "Views/example.BASE",
+				etag: `"${epoch}.1"`,
+				heading: "Tasks",
+				text: "views: []",
+				idempotency_key: "base-heading",
+			}),
+		],
+	])(
+		"refuses Base paths in %s without publishing a revision",
+		async (operation, makeArgs) => {
+			const { token } = await issueToken("vault:read vault:write vault:delete");
+			const epoch = await epochFor(token);
+			const path = "Views/example.BASE";
+			const before = await published(path);
+			await failure(
+				await call(token, operation, makeArgs(epoch)),
+				epoch,
+				"invalid_request",
+			);
+			expect(await published(path)).toEqual(before);
+			expect((await published(path)).files).toEqual([]);
+		},
+	);
 	it("preserves live-path collisions and tombstones without hidden publications", async () => {
 		const { token, clientId } = await issueToken(
 			"vault:read vault:write vault:delete",

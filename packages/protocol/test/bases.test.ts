@@ -1,13 +1,21 @@
-import { validateBaseContent } from "@protocol/codecs/bases";
+import { checkCstBounds, validateBaseContent } from "@protocol/codecs/bases";
 import { BaseContentSchema } from "@protocol/schemas/bases";
 import { describe, expect, it, vi } from "vitest";
-import { parse } from "yaml";
+import { Parser, parse } from "yaml";
 
 /** Official-style Base config with opaque formulas and views. */
 const officialBase = `filters:\n  and:\n    - file.ext == "md"\nformulas:\n  score: 'if(status == "open", 1, 0)'\nproperties:\n  file.name:\n    displayName: Name\nviews:\n  - type: table\n    name: Opportunities\n    filters:\n      or:\n        - status == "Open"\n        - priority == "High"\n    summaries:\n      score: Average\n    groupBy:\n      property: status\n      direction: ASC\n    order:\n      - file.name\n      - score\n    columns:\n      - file.name\n      - score\nsummaries:\n  customAverage: 'values.mean().round(3)'\n`;
 
 /** Checks valid structure without exposing parsed Base values. */
 describe("validateBaseContent", () => {
+	it("checks the syntax-node ceiling directly with repeated hand-built CST tokens", () => {
+		const [token] = [...new Parser().parse("value")];
+		expect(token).toBeDefined();
+		if (!token) throw new Error("Expected a parser token fixture");
+		expect(checkCstBounds(Array.from({ length: 16_385 }, () => token))).toBe(
+			"YAML syntax node limit exceeded",
+		);
+	});
 	it("accepts official fields, opaque expressions, and unknown plugin fields", () => {
 		const result = validateBaseContent(
 			`${officialBase}pluginField:\n  custom: true\n`,
@@ -96,6 +104,10 @@ describe("validateBaseContent", () => {
 
 	it("accepts an empty mapping", () => {
 		expect(validateBaseContent("{}").valid).toBe(true);
+	});
+
+	it("rejects numeric formula scalars because official Bases syntax stores formulas as YAML strings", () => {
+		expect(validateBaseContent("formulas:\n  score: 5\n").valid).toBe(false);
 	});
 
 	it.each([

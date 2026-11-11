@@ -1,3 +1,4 @@
+export { validateBaseContent } from "@protocol/codecs/bases";
 export { formatETag, parseETag } from "@protocol/codecs/etag";
 export {
 	classifyFilePath,
@@ -69,6 +70,12 @@ export {
 	RevokeClientResultSchema,
 	ServiceOriginSchema,
 } from "@protocol/schemas/auth";
+export {
+	BASE_VALIDATION_LIMITS,
+	BaseContentSchema,
+	BaseDiagnosticSchema,
+	BaseValidationResultSchema,
+} from "@protocol/schemas/bases";
 export type {
 	BlobGcFailure,
 	BlobGcOperationFailure,
@@ -274,6 +281,10 @@ export type {
 	TextMutationIntent,
 	VaultScope,
 } from "@protocol/types/admission";
+export type {
+	BaseContent,
+	BaseValidationResult,
+} from "@protocol/types/bases";
 export type {
 	BlobAuthorizationResult,
 	BlobDeclaration,

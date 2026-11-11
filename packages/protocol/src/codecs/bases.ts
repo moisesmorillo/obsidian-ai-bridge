@@ -6,6 +6,25 @@ import {
 import type { BaseValidationResult } from "@protocol/types/bases";
 import { Composer, CST, Lexer, Parser } from "yaml";
 
+/** Stops byte counting as soon as the input exceeds its UTF-8 budget. */
+function exceedsUtf8ByteLimit(content: string, limit: number): boolean {
+	let bytes = 0;
+	for (let index = 0; index < content.length; index += 1) {
+		const code = content.charCodeAt(index);
+		if (code <= 0x7f) bytes += 1;
+		else if (code <= 0x7ff) bytes += 2;
+		else if (code >= 0xd800 && code <= 0xdbff) {
+			const next = content.charCodeAt(index + 1);
+			if (next >= 0xdc00 && next <= 0xdfff) {
+				bytes += 4;
+				index += 1;
+			} else bytes += 3;
+		} else bytes += 3;
+		if (bytes > limit) return true;
+	}
+	return false;
+}
+
 /** Public CST token type inferred from the parser's supported iterator API. */
 type Token =
 	ReturnType<Parser["parse"]> extends Generator<infer Item, void, unknown>
@@ -84,9 +103,7 @@ function checkCstBounds(tokens: Token[]): string | undefined {
 
 /** Validate bounded native Base YAML structure without evaluating expressions or returning note data. */
 export function validateBaseContent(content: string): BaseValidationResult {
-	if (
-		new TextEncoder().encode(content).byteLength > BASE_VALIDATION_LIMITS.bytes
-	)
+	if (exceedsUtf8ByteLimit(content, BASE_VALIDATION_LIMITS.bytes))
 		return invalid("Base YAML exceeds 65536 UTF-8 bytes");
 	try {
 		const lexer = new Lexer();

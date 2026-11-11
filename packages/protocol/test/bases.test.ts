@@ -1,5 +1,7 @@
 import { validateBaseContent } from "@protocol/codecs/bases";
-import { describe, expect, it } from "vitest";
+import { BaseContentSchema } from "@protocol/schemas/bases";
+import { describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 
 /** Official-style Base config with opaque formulas and views. */
 const officialBase = `filters:\n  and:\n    - file.ext == "md"\nformulas:\n  score: 'if(status == "open", 1, 0)'\nproperties:\n  file.name:\n    displayName: Name\nviews:\n  - type: table\n    name: Opportunities\n    filters:\n      or:\n        - status == "Open"\n        - priority == "High"\n    summaries:\n      score: Average\n    groupBy:\n      property: status\n      direction: ASC\n    order:\n      - file.name\n      - score\n    columns:\n      - file.name\n      - score\nsummaries:\n  customAverage: 'values.mean().round(3)'\n`;
@@ -18,10 +20,34 @@ describe("validateBaseContent", () => {
 
 	it("accepts a two-view Opportunities configuration", () => {
 		const content = officialBase.replace(
-			"summaries:\\n  customAverage",
-			'  - type: cards\\n    name: Pipeline\\n    filters: status == "Open"\\n    properties:\\n      - file.name\\nsummaries:\\n  customAverage',
+			"summaries:\n  customAverage",
+			'  - type: cards\n    name: Pipeline\n    filters: status == "Open"\n    properties:\n      - file.name\nsummaries:\n  customAverage',
 		);
+		const parsed = BaseContentSchema.parse(parse(content));
+		expect(parsed.views).toHaveLength(2);
 		expect(validateBaseContent(content).valid).toBe(true);
+	});
+
+	it("preserves unknown plugin fields in public configuration parsing", () => {
+		const parsed = BaseContentSchema.parse({
+			pluginConfig: { enabled: true },
+			views: [{ type: "custom-map", pluginState: { zoom: 4 } }],
+		});
+		expect(parsed).toMatchObject({
+			pluginConfig: { enabled: true },
+			views: [{ pluginState: { zoom: 4 } }],
+		});
+	});
+
+	it("refuses oversized input before encoding the full string", () => {
+		const encode = vi.spyOn(TextEncoder.prototype, "encode");
+		try {
+			const result = validateBaseContent(`${"x".repeat(65_536)}é`);
+			expect(result.diagnostics[0]).toContain("UTF-8 bytes");
+			expect(encode).not.toHaveBeenCalled();
+		} finally {
+			encode.mockRestore();
+		}
 	});
 
 	it.each([
@@ -45,21 +71,43 @@ describe("validateBaseContent", () => {
 	});
 
 	it.each([
-		["UTF-8 byte", "x".repeat(65_537)],
-		["lexical token", `a: ${"x: ".repeat(16_384)}`],
-		["depth", `${"a:\n".repeat(33)}x`],
-		["alias", "a: &anchor value\nb: *anchor"],
-		["anchor", "a: &anchor value"],
-		["tag", "a: !custom value"],
-		["block indicators", `${"- ".repeat(33)}value`],
-		["parser stack", `[${"[".repeat(40)}0${"]".repeat(40)}]`],
 		[
-			"syntax nodes",
-			`${Array.from({ length: 5_500 }, (_, index) => `k${index}: v`).join("\\n")}\\n`,
+			"UTF-8 byte",
+			`${"x".repeat(65_536)}é`,
+			"Base YAML exceeds 65536 UTF-8 bytes",
 		],
-	])("bounds %s violations", (_label, content) => {
+		[
+			"lexical token",
+			`[${Array.from({ length: 8_500 }, (_, index) => `k${index}`).join(",")}]`,
+			"YAML lexical token limit exceeded",
+		],
+		[
+			"depth",
+			`${Array.from({ length: 32 }, (_, index) => `${"  ".repeat(index)}k${index}:`).join("\n")}\n${"  ".repeat(32)}value`,
+			"YAML structure depth limit exceeded",
+		],
+		["alias", "a: *anchor", "YAML aliases are not supported"],
+		["anchor", "a: &anchor value", "YAML anchors are not supported"],
+		["tag", "a: !custom value", "YAML tags are not supported"],
+		[
+			"block indicators",
+			`${"- ".repeat(33)}value`,
+			"YAML line indicator limit exceeded",
+		],
+		[
+			"parser stack",
+			`[${"[".repeat(40)}0${"]".repeat(40)}]`,
+			"YAML parser stack limit exceeded",
+		],
+		[
+			"syntax node candidate reaches lexical token limit first",
+			`${Array.from({ length: 5_500 }, (_, index) => `k${index}: v`).join("\n")}\n`,
+			"YAML lexical token limit exceeded",
+		],
+	])("bounds %s violations", (_label, content, diagnostic) => {
 		const result = validateBaseContent(content);
 		expect(result.valid).toBe(false);
+		expect(result.diagnostics[0]).toContain(diagnostic);
 	});
 
 	it("bounds pathological parser work and diagnostic text", () => {

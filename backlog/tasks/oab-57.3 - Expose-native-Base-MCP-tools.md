@@ -1,10 +1,11 @@
 ---
 id: OAB-57.3
 title: Expose native Base MCP tools
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-11-11T01:37:00Z'
-updated_date: '2026-11-11T01:37:00Z'
+updated_date: '2026-11-11T02:16:00Z'
 labels: []
 dependencies:
   - OAB-57.1
@@ -27,3 +28,9 @@ ChatGPT needs native Base discovery and safe authoring through existing vault au
 - [ ] #4 Public contracts document six tools, examples, structural limits, and no query_base. Existing note tools retain their behavior.
 - [ ] #5 bun run check passes and fresh task review findings receive evidence-based closure.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Follow approved plan Task 3 and six-tool authority table. Write failing discovery, CRUD, scope, revision, cancellation, and preservation tests. Reuse existing operations and parser. Run focused checks, docs:check, bun run check, review, and commit.
+<!-- SECTION:PLAN:END -->

@@ -104,6 +104,11 @@ export type ReadOutcome<T> =
 	| {
 			ok: false;
 			failure: FileFailure | { kind: "internal_error" };
+			/**
+			 * Certainty for durable preparation settlement transferred to the response owner.
+			 * When omitted, the owner treats the failure as known and settles it. `uncertain`
+			 * keeps the admission until its deadline, while `settled` lets response completion finish it.
+			 */
 			completion?: AdmissionCompletion;
 			settle?: ReadAdmissionSettlement;
 	  };

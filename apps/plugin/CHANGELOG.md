@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.2...vaultwire-v1.0.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* **worker:** release cancelled blob reads, refuse DO overload, speed up feed pages ([#166](https://github.com/moisesmorillo/vaultwire/issues/166)) ([21d04c9](https://github.com/moisesmorillo/vaultwire/commit/21d04c977c0fe3fb3a95cf4599086d341ed85fb4))
+
 ## [1.0.2](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.1...vaultwire-v1.0.2) (2026-11-10)
 
 

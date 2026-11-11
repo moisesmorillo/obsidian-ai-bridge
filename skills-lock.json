@@ -1,0 +1,59 @@
+{
+	"version": 2,
+	"skills": {
+		"durable-objects": {
+			"source": "cloudflare/skills",
+			"sourceType": "github",
+			"skillPath": "skills/durable-objects/SKILL.md",
+			"computedHash": "659669f02a6e1b37020b799be0f71e3fecc7b5111f3f406d9f844a0a21994113"
+		},
+		"entry-point-analyzer": {
+			"source": "trailofbits/skills",
+			"sourceType": "github",
+			"skillPath": "plugins/entry-point-analyzer/skills/entry-point-analyzer/SKILL.md",
+			"computedHash": "34619df7ec80de2e38a00ebbf3f6ac28bbe93ecfea1b4697aa29efdc0df39a13"
+		},
+		"sarif-parsing": {
+			"source": "trailofbits/skills",
+			"sourceType": "github",
+			"skillPath": "plugins/static-analysis/skills/sarif-parsing/SKILL.md",
+			"computedHash": "86b55fe4f5a443ac39bc8d62dc113a854e8df49b4d9efe2941d15766604baee1"
+		},
+		"security-audit": {
+			"source": "cloudflare/security-audit-skill",
+			"sourceType": "github",
+			"skillPath": "skills/security-audit/SKILL.md",
+			"computedHash": "8513eb3b2c39b8d05ef4f47b32ef4d18280b93a5efb91d8df6272f7435034af5"
+		},
+		"semgrep": {
+			"source": "trailofbits/skills",
+			"sourceType": "github",
+			"skillPath": "plugins/static-analysis/skills/semgrep/SKILL.md",
+			"computedHash": "6ce4dd995d671502bec8f33fa13d66ddf3d0e23e2d91a7d9c0531ae9ac547985"
+		},
+		"sharp-edges": {
+			"source": "trailofbits/skills",
+			"sourceType": "github",
+			"skillPath": "plugins/sharp-edges/skills/sharp-edges/SKILL.md",
+			"computedHash": "fa36c2d4f9fa315eebcf03b4687dc760ff6b5805de69a3d2614a6b0fce695c6d"
+		},
+		"supply-chain-risk-auditor": {
+			"source": "trailofbits/skills",
+			"sourceType": "github",
+			"skillPath": "plugins/supply-chain-risk-auditor/skills/supply-chain-risk-auditor/SKILL.md",
+			"computedHash": "8a15fe1e5cb75e02781bcf4d823a3ea32095c2e16c964c49182312f666aff866"
+		},
+		"variant-analysis": {
+			"source": "trailofbits/skills",
+			"sourceType": "github",
+			"skillPath": "plugins/variant-analysis/skills/variant-analysis/SKILL.md",
+			"computedHash": "3ec9c49ed7d71c732de360696f76a26252143077b293c063532de579c6a47e95"
+		},
+		"workers-best-practices": {
+			"source": "cloudflare/skills",
+			"sourceType": "github",
+			"skillPath": "skills/workers-best-practices/SKILL.md",
+			"computedHash": "7f941bbc549454872a4c7c261bf75a1ef7aaa69666bc85cec91e97cf40c11cc6"
+		}
+	}
+}

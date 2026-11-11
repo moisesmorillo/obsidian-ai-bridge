@@ -1,4 +1,5 @@
 import { parseETag } from "@protocol/codecs/etag";
+import { classifyFilePath } from "@protocol/codecs/files";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { FileFailureSchema } from "@protocol/schemas/files";
 import { PathSchema } from "@protocol/schemas/path";
@@ -87,12 +88,13 @@ function refineManifestEntry(
 			code: "custom",
 			message: "live manifest metadata needs a hash",
 		});
+	const fileKind = classifyFilePath(entry.path);
 	if (
 		entry.large &&
 		(entry.deleted ||
 			entry.kind !== "blob" ||
 			entry.size <= 1_000_000 ||
-			!/\.(?:md|canvas)$/i.test(entry.path))
+			(fileKind !== "markdown" && fileKind !== "canvas"))
 	)
 		ctx.addIssue({
 			code: "custom",

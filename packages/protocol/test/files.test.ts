@@ -121,10 +121,14 @@ describe("file extension classification", () => {
 			expect(classifyFilePath(`notes/file.${extension}`)).toBe("markdown");
 		for (const extension of extensionCaseVariants("canvas"))
 			expect(classifyFilePath(`notes/file.${extension}`)).toBe("canvas");
+		for (const extension of extensionCaseVariants("base"))
+			expect(classifyFilePath(`資料/ビュー.${extension}`)).toBe("base");
 		for (const path of [
 			"notes/file.md.backup",
 			"notes/file.md2",
 			"notes/file.canvas.backup",
+			"notes/file.base.backup",
+			"notes/file.base2",
 			"notes/no-extension",
 		])
 			expect(classifyFilePath(path)).toBe("other");

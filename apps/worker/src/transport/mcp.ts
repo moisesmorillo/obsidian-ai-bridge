@@ -7,27 +7,41 @@ import type {
 	AuthorizationContext,
 	FileFailure,
 	McpGetHistoryInput,
+	McpListBasesInput,
 	McpListNotesInput,
+	McpReadBaseInput,
 	McpReadNoteInput,
 	McpSearchNotesInput,
+	McpValidateBaseInput,
 } from "@vaultwire/protocol";
 import {
 	AppendUnderHeadingRequestSchema,
 	AppendUnderHeadingToolSchema,
+	classifyFilePath,
 	encodeFileFailure,
 	McpAppendToNoteInputSchema,
 	McpAppendToNoteToolSchema,
+	McpCreateBaseInputSchema,
+	McpCreateBaseToolSchema,
 	McpCreateNoteInputSchema,
 	McpCreateNoteToolSchema,
+	McpDeleteBaseInputSchema,
+	McpDeleteBaseToolSchema,
 	McpDeleteNoteInputSchema,
 	McpDeleteNoteToolSchema,
 	McpGetHistoryInputSchema,
 	McpGetHistoryToolSchema,
 	McpHistoryOutputSchema,
+	McpListBasesInputSchema,
+	McpListBasesOutputSchema,
+	McpListBasesToolSchema,
 	McpListNotesInputSchema,
 	McpListNotesOutputSchema,
 	McpListNotesToolSchema,
 	McpMutationOutputToolSchema,
+	McpReadBaseInputSchema,
+	McpReadBaseOutputSchema,
+	McpReadBaseToolSchema,
 	McpReadNoteInputSchema,
 	McpReadNoteOutputSchema,
 	McpReadNoteToolSchema,
@@ -37,11 +51,24 @@ import {
 	McpSearchNotesOutputSchema,
 	McpSearchNotesToolSchema,
 	McpToolErrorSchema,
+	McpUpdateBaseInputSchema,
+	McpUpdateBaseToolSchema,
 	McpUpdateNoteInputSchema,
 	McpUpdateNoteToolSchema,
+	McpValidateBaseInputSchema,
+	McpValidateBaseOutputSchema,
+	McpValidateBaseToolSchema,
 } from "@vaultwire/protocol";
 import type { AdmissionByteReservation } from "@worker/application/admission-budget";
 import type { BlobContentStore } from "@worker/application/blobs";
+import {
+	createMcpBase,
+	deleteMcpBase,
+	listMcpBases,
+	readMcpBase,
+	updateMcpBase,
+	validateMcpBase,
+} from "@worker/application/mcp-bases";
 import type {
 	McpMutationGateway,
 	McpMutationOutcome,
@@ -84,6 +111,9 @@ const MCP_MUTATION_SCOPES = new Map<string, "vault:write" | "vault:delete">([
 	["append_under_heading", "vault:write"],
 	["delete_note", "vault:delete"],
 	["restore_note", "vault:write"],
+	["create_base", "vault:write"],
+	["update_base", "vault:write"],
+	["delete_base", "vault:delete"],
 ]);
 
 /** Select the mutation scope before SDK argument validation can return a tool error. */
@@ -132,15 +162,19 @@ export function mutationInputFailure(
 	input: unknown,
 ): FileFailure | undefined {
 	const schema =
-		name === "create_note"
-			? McpCreateNoteInputSchema
-			: name === "update_note"
-				? McpUpdateNoteInputSchema
-				: name === "append_to_note"
-					? McpAppendToNoteInputSchema
-					: name === "append_under_heading"
-						? AppendUnderHeadingRequestSchema
-						: undefined;
+		name === "create_base"
+			? McpCreateBaseInputSchema
+			: name === "update_base"
+				? McpUpdateBaseInputSchema
+				: name === "create_note"
+					? McpCreateNoteInputSchema
+					: name === "update_note"
+						? McpUpdateNoteInputSchema
+						: name === "append_to_note"
+							? McpAppendToNoteInputSchema
+							: name === "append_under_heading"
+								? AppendUnderHeadingRequestSchema
+								: undefined;
 	if (!schema) return undefined;
 	const parsed = schema.safeParse(input);
 	if (parsed.success) return undefined;
@@ -242,11 +276,37 @@ export function createMcpServer(
 		name: string,
 		run: () => Promise<McpMutationOutcome>,
 		createOnly = false,
+		noteInput?: unknown,
 	) => {
 		const scope = mcpMutationScope(name);
 		if (scope === undefined || !identity.scopes.includes(scope)) {
 			reportBoundaryFailure("forbidden_scope");
 			throw new Error("forbidden_scope");
+		}
+		const notePath =
+			typeof noteInput === "object" &&
+			noteInput !== null &&
+			"path" in noteInput &&
+			typeof noteInput.path === "string"
+				? noteInput.path
+				: undefined;
+		if (notePath !== undefined && classifyFilePath(notePath) === "base") {
+			const operation =
+				name === "delete_note"
+					? "delete"
+					: name === "restore_note"
+						? "restore"
+						: "put";
+			const current = await mutationGateway.getCurrentEpoch(
+				identity,
+				operation,
+			);
+			if (!current.ok) {
+				reportBoundaryFailure(current.failure.kind);
+				throw new Error(current.failure.kind);
+			}
+			resolveResponseProduction();
+			return toolFailure({ kind: "invalid_request" }, current.current_epoch);
 		}
 		return mutationResult(await run(), createOnly);
 	};
@@ -271,6 +331,7 @@ export function createMcpServer(
 						admissionReservation,
 					),
 				true,
+				input,
 			),
 	);
 	server.registerTool(
@@ -283,14 +344,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("update_note", () =>
-				updateMcpNote(
-					mutationGateway,
-					identity,
-					McpUpdateNoteInputSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"update_note",
+				() =>
+					updateMcpNote(
+						mutationGateway,
+						identity,
+						McpUpdateNoteInputSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -303,14 +368,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("append_to_note", () =>
-				appendMcpNote(
-					mutationGateway,
-					identity,
-					McpAppendToNoteInputSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"append_to_note",
+				() =>
+					appendMcpNote(
+						mutationGateway,
+						identity,
+						McpAppendToNoteInputSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -326,14 +395,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("append_under_heading", () =>
-				appendUnderHeadingMcpNote(
-					mutationGateway,
-					identity,
-					AppendUnderHeadingRequestSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"append_under_heading",
+				() =>
+					appendUnderHeadingMcpNote(
+						mutationGateway,
+						identity,
+						AppendUnderHeadingRequestSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -346,13 +419,17 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("delete_note", () =>
-				deleteMcpNote(
-					mutationGateway,
-					identity,
-					McpDeleteNoteInputSchema.parse(input),
-					responseProduction,
-				),
+			mutationCall(
+				"delete_note",
+				() =>
+					deleteMcpNote(
+						mutationGateway,
+						identity,
+						McpDeleteNoteInputSchema.parse(input),
+						responseProduction,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -366,14 +443,18 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("restore_note", () =>
-				restoreMcpNote(
-					mutationGateway,
-					identity,
-					McpRestoreNoteInputSchema.parse(input),
-					responseProduction,
-					admissionReservation,
-				),
+			mutationCall(
+				"restore_note",
+				() =>
+					restoreMcpNote(
+						mutationGateway,
+						identity,
+						McpRestoreNoteInputSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				false,
+				input,
 			),
 	);
 	server.registerTool(
@@ -458,6 +539,135 @@ export function createMcpServer(
 				gateway,
 				identity,
 				await historyMcpNote(gateway, identity, parsed.path, signal),
+				reportBoundaryFailure,
+				adoptReadOwner,
+			);
+		},
+	);
+	server.registerTool(
+		"list_bases",
+		{
+			description: "List live native Base metadata only.",
+			inputSchema: fromJsonSchema(McpListBasesToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(McpListBasesOutputSchema as JsonSchemaType),
+		},
+		async (input: unknown) => {
+			const parsed: McpListBasesInput = McpListBasesInputSchema.parse(input);
+			return toolOutcome(
+				gateway,
+				identity,
+				await listMcpBases(
+					gateway,
+					identity,
+					parsed.prefix,
+					parsed.include_large,
+					signal,
+				),
+				reportBoundaryFailure,
+				adoptReadOwner,
+			);
+		},
+	);
+	server.registerTool(
+		"read_base",
+		{
+			description:
+				"Read raw Base text or a bounded fragment at its current revision.",
+			inputSchema: fromJsonSchema(McpReadBaseToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(McpReadBaseOutputSchema as JsonSchemaType),
+		},
+		async (input: unknown) => {
+			const parsed: McpReadBaseInput = McpReadBaseInputSchema.parse(input);
+			return toolOutcome(
+				gateway,
+				identity,
+				await readMcpBase(gateway, identity, parsed, store, signal),
+				reportBoundaryFailure,
+				adoptReadOwner,
+			);
+		},
+	);
+	server.registerTool(
+		"create_base",
+		{
+			description:
+				"Create raw Base YAML only at an absent path and current epoch.",
+			inputSchema: fromJsonSchema(McpCreateBaseToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall(
+				"create_base",
+				() =>
+					createMcpBase(
+						mutationGateway,
+						identity,
+						McpCreateBaseInputSchema.parse(input),
+						responseProduction,
+						admissionReservation,
+					),
+				true,
+			),
+	);
+	server.registerTool(
+		"update_base",
+		{
+			description: "Replace raw Base YAML only at its exact current ETag.",
+			inputSchema: fromJsonSchema(McpUpdateBaseToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("update_base", () =>
+				updateMcpBase(
+					mutationGateway,
+					identity,
+					McpUpdateBaseInputSchema.parse(input),
+					responseProduction,
+					admissionReservation,
+				),
+			),
+	);
+	server.registerTool(
+		"delete_base",
+		{
+			description:
+				"Delete a Base only at its exact current ETag. Requires vault:delete.",
+			inputSchema: fromJsonSchema(McpDeleteBaseToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("delete_base", () =>
+				deleteMcpBase(
+					mutationGateway,
+					identity,
+					McpDeleteBaseInputSchema.parse(input),
+					responseProduction,
+				),
+			),
+	);
+	server.registerTool(
+		"validate_base",
+		{
+			description:
+				"Check bounded Base YAML structure only. This tool does not evaluate formulas or return parsed data.",
+			inputSchema: fromJsonSchema(McpValidateBaseToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpValidateBaseOutputSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) => {
+			const parsed: McpValidateBaseInput =
+				McpValidateBaseInputSchema.parse(input);
+			return toolOutcome(
+				gateway,
+				identity,
+				await validateMcpBase(gateway, identity, parsed, signal),
 				reportBoundaryFailure,
 				adoptReadOwner,
 			);

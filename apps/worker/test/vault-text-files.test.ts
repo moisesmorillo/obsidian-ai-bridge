@@ -95,6 +95,64 @@ async function commitMutation(
 }
 
 describe("native conditional text storage", () => {
+	it("publishes Base text with exact revision conditions and no search indexing", async () => {
+		await withTextStore(async (fixture) => {
+			const path = "資料/ビュー.base";
+			const first = await commitMutation(
+				fixture,
+				await putIntent(path, "views: []", { kind: "absent" }),
+				"views: []",
+				"base-create-key-001",
+			);
+			expect(first).toMatchObject({ ok: true, response: { status: 201 } });
+			if (!first.ok) throw new Error("Base create failed");
+			const firstEtag = first.response.body.etag;
+			const secondContent = "views: [{ name: all }]";
+			const second = await commitMutation(
+				fixture,
+				await putIntent(path, secondContent, {
+					kind: "match",
+					etag: firstEtag,
+				}),
+				secondContent,
+				"base-update-key-001",
+			);
+			expect(second).toMatchObject({ ok: true, response: { status: 200 } });
+			const stale = await commitMutation(
+				fixture,
+				await putIntent(path, "stale content", {
+					kind: "match",
+					etag: firstEtag,
+				}),
+				"stale content",
+				"base-stale-key-001",
+			);
+			expect(stale).toMatchObject({
+				ok: false,
+				failure: { kind: "precondition_failed" },
+			});
+			expect(
+				fixture.storage.sql
+					.exec(
+						"SELECT rev, content FROM revisions WHERE path = ? ORDER BY rev",
+						path,
+					)
+					.toArray(),
+			).toEqual([
+				{ rev: 1, content: "views: []" },
+				{ rev: 2, content: secondContent },
+			]);
+			expect(
+				fixture.storage.sql
+					.exec("SELECT path FROM changes ORDER BY seq")
+					.toArray(),
+			).toEqual([{ path }, { path }]);
+			expect(
+				fixture.storage.sql.exec("SELECT path FROM files_fts").toArray(),
+			).toEqual([]);
+		});
+	});
+
 	it("counts deterministic UTF-8 payloads for Unicode and nullable row fields", async () => {
 		await withTextStore(async (fixture) => {
 			const path = "notes/été.md";

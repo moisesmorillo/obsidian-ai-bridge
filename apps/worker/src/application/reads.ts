@@ -104,6 +104,12 @@ export type ReadOutcome<T> =
 	| {
 			ok: false;
 			failure: FileFailure | { kind: "internal_error" };
+			/**
+			 * Certainty for durable preparation settlement transferred to the response owner.
+			 * When omitted, the owner treats the failure as known and settles it. `uncertain`
+			 * keeps the admission until its deadline, while `settled` lets response completion finish it.
+			 */
+			completion?: AdmissionCompletion;
 			settle?: ReadAdmissionSettlement;
 	  };
 
@@ -561,6 +567,7 @@ function finishReadFailure<T>(
 	return {
 		ok: false,
 		failure,
+		completion,
 		settle: async () => gateway.finishAdmission(context, ticketId, completion),
 	};
 }
@@ -576,6 +583,7 @@ function finishKnownFailure<T>(
 		return {
 			ok: false,
 			failure: { kind: "internal_error" },
+			completion: "settled",
 			settle: async () => gateway.finishAdmission(context, ticketId, "settled"),
 		};
 	if (!isKnownFailure(error)) throw error;

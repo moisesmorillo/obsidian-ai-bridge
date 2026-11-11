@@ -1,3 +1,5 @@
+import { classifyFilePath } from "@protocol/codecs/files";
+import { BaseValidationResultSchema } from "@protocol/schemas/bases";
 import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { FileHttpFailureSchema } from "@protocol/schemas/files";
@@ -10,6 +12,67 @@ import {
 	SearchQuerySchema,
 } from "@protocol/schemas/search";
 import { z } from "zod";
+
+/** Require a canonical path whose final component is a native Base file. */
+const McpBasePathSchema = PathSchema.refine(
+	(path) => classifyFilePath(path) === "base",
+	{ message: "Path must end with .base" },
+);
+
+/** Keep authored or validated Base input within its UTF-8 parser budget. */
+const McpBaseContentSchema = z
+	.string()
+	.refine((content) => new TextEncoder().encode(content).byteLength <= 65_536, {
+		message: "Base content exceeds 65536 UTF-8 bytes",
+	});
+
+/** Strict Base-only listing request with the same bounded prefix semantics as note listing. */
+export const McpListBasesInputSchema = z
+	.object({
+		prefix: z.string().max(1024).optional(),
+		include_large: z.boolean().optional(),
+	})
+	.strict();
+
+/** Strict Base-only read with revision pinning and bounded UTF-16 fragments. */
+export const McpReadBaseInputSchema = z
+	.object({
+		path: McpBasePathSchema,
+		etag: ETagSchema.optional(),
+		offset: z.number().int().nonnegative().max(1_000_000).optional(),
+		length: z.number().int().positive().max(1_000_000).optional(),
+	})
+	.strict();
+
+/** Create-only Base write request bound to an explicit current epoch. */
+export const McpCreateBaseInputSchema = z
+	.object({
+		path: McpBasePathSchema,
+		content: McpBaseContentSchema,
+		epoch: EpochSchema,
+		idempotency_key: IdempotencyKeySchema.optional(),
+	})
+	.strict();
+
+/** Exact-revision Base replacement request. */
+export const McpUpdateBaseInputSchema = z
+	.object({
+		path: McpBasePathSchema,
+		content: McpBaseContentSchema,
+		etag: ETagSchema,
+		idempotency_key: IdempotencyKeySchema.optional(),
+	})
+	.strict();
+
+/** Exact-revision Base tombstone request. */
+export const McpDeleteBaseInputSchema = z
+	.object({ path: McpBasePathSchema, etag: ETagSchema })
+	.strict();
+
+/** Structural validation request with no storage or persistence effects. */
+export const McpValidateBaseInputSchema = z
+	.object({ content: McpBaseContentSchema })
+	.strict();
 
 /** Validate an optional path prefix without accepting tool-supplied identity. */
 export const McpListNotesInputSchema = z
@@ -98,6 +161,21 @@ export const McpMutationOutputToolSchema = z.toJSONSchema(
 	McpMutationOutputSchema,
 );
 
+/** JSON Schema projection of the canonical Base listing request. */
+export const McpListBasesToolSchema = z.toJSONSchema(McpListBasesInputSchema);
+/** JSON Schema projection of the canonical revision-pinned Base read request. */
+export const McpReadBaseToolSchema = z.toJSONSchema(McpReadBaseInputSchema);
+/** JSON Schema projection of the canonical create-only Base request. */
+export const McpCreateBaseToolSchema = z.toJSONSchema(McpCreateBaseInputSchema);
+/** JSON Schema projection of the canonical exact-update Base request. */
+export const McpUpdateBaseToolSchema = z.toJSONSchema(McpUpdateBaseInputSchema);
+/** JSON Schema projection of the canonical exact-delete Base request. */
+export const McpDeleteBaseToolSchema = z.toJSONSchema(McpDeleteBaseInputSchema);
+/** JSON Schema projection of the canonical structural validation request. */
+export const McpValidateBaseToolSchema = z.toJSONSchema(
+	McpValidateBaseInputSchema,
+);
+
 /** JSON Schema form consumed by the MCP SDK without duplicating input policy. */
 /** JSON Schema projection of the canonical create request. */
 export const McpCreateNoteToolSchema = z.toJSONSchema(McpCreateNoteInputSchema);
@@ -124,6 +202,21 @@ export const McpSearchNotesToolSchema = z.toJSONSchema(
 );
 /** JSON Schema form consumed by the MCP SDK without duplicating input policy. */
 export const McpGetHistoryToolSchema = z.toJSONSchema(McpGetHistoryInputSchema);
+
+/** Strict canonical machine-readable input for list_bases. */
+export type McpListBasesInput = z.infer<typeof McpListBasesInputSchema>;
+/** Strict canonical machine-readable input for read_base. */
+export type McpReadBaseInput = z.infer<typeof McpReadBaseInputSchema>;
+/** Strict canonical machine-readable input for create_base. */
+export type McpCreateBaseInput = z.infer<typeof McpCreateBaseInputSchema>;
+/** Strict canonical machine-readable input for update_base. */
+export type McpUpdateBaseInput = z.infer<typeof McpUpdateBaseInputSchema>;
+/** Strict canonical machine-readable input for delete_base. */
+export type McpDeleteBaseInput = z.infer<typeof McpDeleteBaseInputSchema>;
+/** Strict canonical machine-readable input for validate_base. */
+export type McpValidateBaseInput = z.infer<typeof McpValidateBaseInputSchema>;
+/** Epoch-bearing structural result that omits parsed Base data. */
+export type McpValidateBaseResult = z.infer<typeof McpValidateBaseResultSchema>;
 
 /** Strict canonical machine-readable input for create_note. */
 export type McpCreateNoteInput = z.infer<typeof McpCreateNoteInputSchema>;
@@ -186,6 +279,28 @@ export const McpHistoryResultSchema = z
 		entries: z.array(HistoryPageEntrySchema).max(256),
 	})
 	.strict();
+
+/** Epoch-bearing structural validation result without parsed Base content. */
+export const McpValidateBaseResultSchema = BaseValidationResultSchema.extend({
+	epoch: EpochSchema,
+}).strict();
+
+/** Canonical Base result metadata, bounded to one MCP list response. */
+export const McpListBasesResultSchema = McpListNotesResultSchema;
+
+/** Base read result uses the existing revision-pinned raw-text response shape. */
+export const McpReadBaseResultSchema = McpReadNoteResultSchema;
+
+/** JSON Schema form of the bounded Base list output. */
+export const McpListBasesOutputSchema = z.toJSONSchema(
+	McpListBasesResultSchema,
+);
+/** JSON Schema form of the Base read output. */
+export const McpReadBaseOutputSchema = z.toJSONSchema(McpReadBaseResultSchema);
+/** JSON Schema form of the structural validation output. */
+export const McpValidateBaseOutputSchema = z.toJSONSchema(
+	McpValidateBaseResultSchema,
+);
 
 /** JSON Schema form of the bounded list result for MCP output validation. */
 export const McpListNotesOutputSchema = z.toJSONSchema(

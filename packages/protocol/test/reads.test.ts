@@ -124,7 +124,7 @@ describe("canonical bounded read contracts", () => {
 		expect(result.success).toBe(false);
 	});
 
-	it("accepts large Markdown and Canvas manifest blobs", () => {
+	it("accepts large Markdown and Canvas blobs and Base blobs without a large marker", () => {
 		for (const path of ["large.md", "large.canvas"]) {
 			const entry = {
 				path,
@@ -145,6 +145,33 @@ describe("canonical bounded read contracts", () => {
 				}).success,
 			).toBe(true);
 		}
+		const largeBase = {
+			path: "views/large.base",
+			etag: formatETag(epoch, 6),
+			seq: 6,
+			hash,
+			size: 1_000_001,
+			kind: "blob",
+			deleted: false,
+			large: false,
+		};
+		expect(
+			ManifestEntrySchema.safeParse({ ...largeBase, large: true }).success,
+		).toBe(false);
+		expect(ManifestEntrySchema.safeParse(largeBase).success).toBe(true);
+		const legacySmallBaseBlob = {
+			path: "views/legacy.base",
+			etag: formatETag(epoch, 5),
+			seq: 5,
+			hash,
+			size: 42,
+			kind: "blob",
+			deleted: false,
+			large: false,
+		};
+		expect(ManifestEntrySchema.safeParse(legacySmallBaseBlob).success).toBe(
+			true,
+		);
 	});
 
 	it("orders manifest paths by SQLite binary UTF-8 order", () => {

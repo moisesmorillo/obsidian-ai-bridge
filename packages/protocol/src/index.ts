@@ -1,3 +1,4 @@
+export { validateBaseContent } from "@protocol/codecs/bases";
 export { formatETag, parseETag } from "@protocol/codecs/etag";
 export {
 	classifyFilePath,
@@ -69,6 +70,12 @@ export {
 	RevokeClientResultSchema,
 	ServiceOriginSchema,
 } from "@protocol/schemas/auth";
+export {
+	BASE_VALIDATION_LIMITS,
+	BaseContentSchema,
+	BaseDiagnosticSchema,
+	BaseValidationResultSchema,
+} from "@protocol/schemas/bases";
 export type {
 	BlobGcFailure,
 	BlobGcOperationFailure,
@@ -177,20 +184,32 @@ export { MAX_APPEND_UNDER_HEADING_ENCODED_BYTES } from "@protocol/schemas/limits
 export {
 	McpAppendToNoteInputSchema,
 	McpAppendToNoteToolSchema,
+	McpCreateBaseInputSchema,
+	McpCreateBaseToolSchema,
 	McpCreateNoteInputSchema,
 	McpCreateNoteToolSchema,
+	McpDeleteBaseInputSchema,
+	McpDeleteBaseToolSchema,
 	McpDeleteNoteInputSchema,
 	McpDeleteNoteToolSchema,
 	McpGetHistoryInputSchema,
 	McpGetHistoryToolSchema,
 	McpHistoryOutputSchema,
 	McpHistoryResultSchema,
+	McpListBasesInputSchema,
+	McpListBasesOutputSchema,
+	McpListBasesResultSchema,
+	McpListBasesToolSchema,
 	McpListNotesInputSchema,
 	McpListNotesOutputSchema,
 	McpListNotesResultSchema,
 	McpListNotesToolSchema,
 	McpMutationOutputSchema,
 	McpMutationOutputToolSchema,
+	McpReadBaseInputSchema,
+	McpReadBaseOutputSchema,
+	McpReadBaseResultSchema,
+	McpReadBaseToolSchema,
 	McpReadNoteInputSchema,
 	McpReadNoteOutputSchema,
 	McpReadNoteResultSchema,
@@ -202,8 +221,14 @@ export {
 	McpSearchNotesResultSchema,
 	McpSearchNotesToolSchema,
 	McpToolErrorSchema,
+	McpUpdateBaseInputSchema,
+	McpUpdateBaseToolSchema,
 	McpUpdateNoteInputSchema,
 	McpUpdateNoteToolSchema,
+	McpValidateBaseInputSchema,
+	McpValidateBaseOutputSchema,
+	McpValidateBaseResultSchema,
+	McpValidateBaseToolSchema,
 } from "@protocol/schemas/mcp";
 export type {
 	FeedPreparationObservation,
@@ -275,6 +300,10 @@ export type {
 	VaultScope,
 } from "@protocol/types/admission";
 export type {
+	BaseContent,
+	BaseValidationResult,
+} from "@protocol/types/bases";
+export type {
 	BlobAuthorizationResult,
 	BlobDeclaration,
 	BlobMetadata,
@@ -309,20 +338,29 @@ export type {
 export type { IdempotencyKey } from "@protocol/types/idempotency";
 export type {
 	McpAppendToNoteInput,
+	McpCreateBaseInput,
 	McpCreateNoteInput,
+	McpDeleteBaseInput,
 	McpDeleteNoteInput,
 	McpGetHistoryInput,
 	McpHistoryResult,
+	McpListBasesInput,
+	McpListBasesResult,
 	McpListNotesInput,
 	McpListNotesResult,
 	McpMutationOutput,
+	McpReadBaseInput,
+	McpReadBaseResult,
 	McpReadNoteInput,
 	McpReadNoteResult,
 	McpRestoreNoteInput,
 	McpSearchNotesInput,
 	McpSearchNotesResult,
 	McpToolError,
+	McpUpdateBaseInput,
 	McpUpdateNoteInput,
+	McpValidateBaseInput,
+	McpValidateBaseResult,
 } from "@protocol/types/mcp";
 export type { Path } from "@protocol/types/path";
 export type {

@@ -7,6 +7,7 @@ import {
 	ChangesPageSchema,
 	McpListNotesResultSchema,
 	McpMutationOutputSchema,
+	McpReadBaseResultSchema,
 	McpReadNoteResultSchema,
 	McpToolErrorSchema,
 	parseETag,
@@ -85,6 +86,12 @@ async function failure(response: Response, epoch: string, code: string) {
 	return McpToolErrorSchema.parse(result.structuredContent);
 }
 
+/** Read exact current Base bytes and revision through the production MCP path. */
+async function base(token: string, path: string) {
+	const result = await toolResult(await call(token, "read_base", { path }));
+	return McpReadBaseResultSchema.parse(result.structuredContent);
+}
+
 /** Read exact current content through the production MCP path. */
 async function note(token: string, path: string) {
 	const result = await toolResult(await call(token, "read_note", { path }));
@@ -159,6 +166,200 @@ afterEach(() => {
 });
 
 describe("production MCP mutation safety", () => {
+	it.each([
+		[
+			"create_note",
+			(epoch: string) => ({
+				path: "Views/example.BASE",
+				epoch,
+				content: "views: []",
+			}),
+		],
+		[
+			"update_note",
+			(epoch: string) => ({
+				path: "Views/example.BaSe",
+				etag: `"${epoch}.1"`,
+				content: "views: []",
+			}),
+		],
+		[
+			"append_to_note",
+			(epoch: string) => ({
+				path: "Views/example.base",
+				epoch,
+				text: "views: []",
+				idempotency_key: "base-append",
+			}),
+		],
+		[
+			"append_under_heading",
+			(epoch: string) => ({
+				path: "Views/example.BASE",
+				etag: `"${epoch}.1"`,
+				heading: "Tasks",
+				text: "views: []",
+				idempotency_key: "base-heading",
+			}),
+		],
+	])(
+		"refuses Base paths in %s without publishing a revision",
+		async (operation, makeArgs) => {
+			const { token } = await issueToken("vault:read vault:write vault:delete");
+			const epoch = await epochFor(token);
+			const path = "Views/example.BASE";
+			const before = await published(path);
+			await failure(
+				await call(token, operation, makeArgs(epoch)),
+				epoch,
+				"invalid_request",
+			);
+			expect(await published(path)).toEqual(before);
+			expect((await published(path)).files).toEqual([]);
+		},
+	);
+	it("refuses note updates and appends on an existing Base without changing either file", async () => {
+		const { token } = await issueToken("vault:read vault:write vault:delete");
+		const basePath = "Views/Existing.BaSe";
+		const notePath = "Notes/unrelated.md";
+		const initialBase = "# Tasks\nviews: []\n";
+		let epoch = await epochFor(token);
+		const noteContent = "Unrelated note stays unchanged";
+		await receipt(
+			await call(token, "create_note", {
+				path: notePath,
+				content: noteContent,
+				epoch,
+			}),
+		);
+		epoch = await epochFor(token);
+		await receipt(
+			await call(token, "create_base", {
+				path: basePath,
+				content: initialBase,
+				epoch,
+				idempotency_key: "existing-base-create",
+			}),
+		);
+		const currentBase = await base(token, basePath);
+		expect(currentBase.content).toBe(initialBase);
+		epoch = await epochFor(token);
+		const beforeBase = await published(basePath);
+		const beforeNote = await published(notePath);
+		const beforeNoteRead = await note(token, notePath);
+		const baseTag = currentBase.etag;
+
+		await failure(
+			await call(token, "update_note", {
+				path: basePath,
+				etag: baseTag,
+				content: "views: []\nupdated: true\n",
+			}),
+			epoch,
+			"invalid_request",
+		);
+		await failure(
+			await call(token, "append_to_note", {
+				path: basePath,
+				epoch,
+				text: "\nchanged: true",
+				idempotency_key: "existing-base-append",
+			}),
+			epoch,
+			"invalid_request",
+		);
+		await failure(
+			await call(token, "append_under_heading", {
+				path: basePath,
+				etag: baseTag,
+				heading: "Tasks",
+				text: "- changed",
+				idempotency_key: "existing-base-heading",
+			}),
+			epoch,
+			"invalid_request",
+		);
+
+		expect(await published(basePath)).toEqual(beforeBase);
+		expect(await published(notePath)).toEqual(beforeNote);
+		expect(await base(token, basePath)).toMatchObject({
+			content: initialBase,
+			etag: baseTag,
+		});
+		expect(await note(token, notePath)).toMatchObject({
+			content: noteContent,
+			etag: beforeNoteRead.etag,
+		});
+	});
+
+	it("refuses delete_note for an existing Base without creating a tombstone", async () => {
+		const { token } = await issueToken("vault:read vault:write vault:delete");
+		const path = "Views/DeleteTarget.BASE";
+		const content = "views: []\n";
+		const epoch = await epochFor(token);
+		await receipt(
+			await call(token, "create_base", {
+				path,
+				content,
+				epoch,
+				idempotency_key: "delete-base-seed",
+			}),
+		);
+		const current = await base(token, path);
+		const before = await published(path);
+		await failure(
+			await call(token, "delete_note", { path, etag: current.etag }),
+			await epochFor(token),
+			"invalid_request",
+		);
+		expect(await published(path)).toEqual(before);
+		expect(await base(token, path)).toMatchObject({
+			content,
+			etag: current.etag,
+		});
+	});
+
+	it("refuses restore_note for an existing Base without republishing its source", async () => {
+		const { token } = await issueToken("vault:read vault:write vault:delete");
+		const path = "Views/RestoreTarget.base";
+		const initial = "views: []\n";
+		const next = "views:\n  - type: table\n    name: Current\n";
+		const epoch = await epochFor(token);
+		const created = await receipt(
+			await call(token, "create_base", {
+				path,
+				content: initial,
+				epoch,
+				idempotency_key: "restore-base-seed",
+			}),
+		);
+		const updated = await receipt(
+			await call(token, "update_base", {
+				path,
+				content: next,
+				etag: created.etag,
+			}),
+		);
+		const current = await base(token, path);
+		expect(current.content).toBe(next);
+		expect(current.etag).toBe(updated.etag);
+		const before = await published(path);
+		await failure(
+			await call(token, "restore_note", {
+				path,
+				source_etag: created.etag,
+				current_etag: current.etag,
+			}),
+			await epochFor(token),
+			"invalid_request",
+		);
+		expect(await published(path)).toEqual(before);
+		expect(await base(token, path)).toMatchObject({
+			content: next,
+			etag: current.etag,
+		});
+	});
+
 	it("preserves live-path collisions and tombstones without hidden publications", async () => {
 		const { token, clientId } = await issueToken(
 			"vault:read vault:write vault:delete",

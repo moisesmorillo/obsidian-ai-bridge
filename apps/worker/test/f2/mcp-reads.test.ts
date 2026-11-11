@@ -717,6 +717,12 @@ describe("production MCP transport", () => {
 			"read_note",
 			"search_notes",
 			"get_history",
+			"list_bases",
+			"read_base",
+			"create_base",
+			"update_base",
+			"delete_base",
+			"validate_base",
 		]);
 		const manifestResponse = await SELF.fetch(
 			"https://service.test/v1/manifest",
@@ -1239,6 +1245,19 @@ describe("production MCP transport", () => {
 				method: "tools/call",
 				params: { name: "get_history", arguments: { path } },
 			},
+			...[
+				"list_bases",
+				"read_base",
+				"create_base",
+				"update_base",
+				"delete_base",
+				"validate_base",
+			].map((name, index) => ({
+				jsonrpc: "2.0" as const,
+				id: 26 + index,
+				method: "tools/call" as const,
+				params: { name, arguments: {} },
+			})),
 		]) {
 			const revoked = await postMcp(token, message);
 			expect(revoked.status, JSON.stringify(message)).toBe(401);

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.1.0...vaultwire-v1.1.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **plugin:** remove folders that a remote delete or rename empties ([#179](https://github.com/moisesmorillo/vaultwire/issues/179)) ([3a0391c](https://github.com/moisesmorillo/vaultwire/commit/3a0391ca8eba1abc6dc71d324fe7815fc4fc069c))
+
 ## [1.1.0](https://github.com/moisesmorillo/vaultwire/compare/vaultwire-v1.0.3...vaultwire-v1.1.0) (2026-11-11)
 
 

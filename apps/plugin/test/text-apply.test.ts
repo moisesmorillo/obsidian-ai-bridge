@@ -4399,8 +4399,8 @@ describe("TextApplyEngine", () => {
 		});
 	});
 
-	it("does not apply a remote settings entry while its category is disabled", async () => {
-		const path = ".obsidian/app.json";
+	it("does not apply a remote settings alias while its category is disabled", async () => {
+		const path = ".OBSIDIAN/app.json";
 		const localBytes = new Uint8Array([3, 0, 255]);
 		vault.binaryFiles.set(path, localBytes.slice());
 		await journal.resetEpoch(epoch);
@@ -4429,6 +4429,7 @@ describe("TextApplyEngine", () => {
 		);
 
 		expect(vault.binaryFiles.get(path)).toEqual(localBytes);
+		expect(vault.statCalls).toBe(0);
 		expect(journal.snapshot().pending_apply).toEqual([]);
 	});
 

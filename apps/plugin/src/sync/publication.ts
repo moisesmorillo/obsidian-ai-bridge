@@ -3,6 +3,7 @@ import type { DeviceJournal } from "@plugin/sync/device-journal";
 import {
 	classifyEnrollmentPath,
 	DEFAULT_SETTINGS_SYNC_POLICY,
+	hasCanonicalSettingsRoot,
 	type SettingsSyncPolicy,
 } from "@plugin/sync/enrollment-scope";
 import {
@@ -562,7 +563,7 @@ export class PublicationController {
 			...(operation.op === "rename" ? [operation.to] : []),
 		].some(
 			(path) =>
-				path.startsWith(".obsidian/") &&
+				hasCanonicalSettingsRoot(path) &&
 				classifyEnrollmentPath(path, 0, policy) === "excluded",
 		);
 	}

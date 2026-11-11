@@ -3,6 +3,7 @@ import { TFile } from "@plugin/obsidian-api";
 import {
 	classifyEnrollmentPath,
 	DEFAULT_SETTINGS_SYNC_POLICY,
+	hasCanonicalSettingsRoot,
 	type SettingsSyncPolicy,
 	shouldTraverseSettingsDirectory,
 } from "@plugin/sync/enrollment-scope";
@@ -34,7 +35,7 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Reads exact bytes from a current file without text decoding. */
 	async readBinary(path: string): Promise<Uint8Array | null> {
-		if (path.startsWith(".obsidian/")) {
+		if (hasCanonicalSettingsRoot(path)) {
 			if (!this.isSettingsPath(path)) return null;
 			const stat = await this.vault.adapter.stat(path);
 			return stat?.type === "file"
@@ -55,7 +56,7 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Returns adapter mtime and size for a file. Invalid hidden paths and absent files return null. */
 	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
-		if (path.startsWith(".obsidian/") && !this.isSettingsPath(path))
+		if (hasCanonicalSettingsRoot(path) && !this.isSettingsPath(path))
 			return null;
 		if (path.startsWith(".vaultwire/") && !isRecoveryPath(path)) return null;
 		const stat = await this.vault.adapter.stat(path);
@@ -70,7 +71,7 @@ export class ObsidianTextVault implements TextVault {
 		bytes: Uint8Array,
 		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
 	): Promise<boolean> {
-		if (path.startsWith(".obsidian/")) {
+		if (hasCanonicalSettingsRoot(path)) {
 			if (!this.isSettingsPath(path)) return false;
 			if (await this.vault.adapter.stat(path)) {
 				await onSettingsRace?.(await this.readBinary(path));
@@ -158,7 +159,7 @@ export class ObsidianTextVault implements TextVault {
 		expected?: Uint8Array,
 		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
 	): Promise<boolean> {
-		if (path.startsWith(".obsidian/")) {
+		if (hasCanonicalSettingsRoot(path)) {
 			if (!this.isSettingsPath(path)) return false;
 			if ((await this.vault.adapter.stat(path))?.type !== "file") {
 				await onSettingsRace?.(await this.readBinary(path));
@@ -249,7 +250,7 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Returns raw file size without decoding content, or null when the path is absent. */
 	async size(path: string): Promise<number | null> {
-		if (path.startsWith(".obsidian/")) {
+		if (hasCanonicalSettingsRoot(path)) {
 			if (!this.isSettingsPath(path)) return null;
 			const stat = await this.vault.adapter.stat(path);
 			return stat?.type === "file" ? stat.size : null;
@@ -300,7 +301,7 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Moves exact observed binary bytes to Obsidian trash without text decoding. */
 	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
-		if (path.startsWith(".obsidian/")) {
+		if (hasCanonicalSettingsRoot(path)) {
 			if (!this.isSettingsPath(path)) return false;
 			const adapter = this.vault.adapter;
 			const observed = await adapter.stat(path);

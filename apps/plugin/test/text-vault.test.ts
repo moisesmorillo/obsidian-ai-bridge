@@ -169,6 +169,7 @@ function makeRecoveryHostVault() {
 		}),
 		trashLocal: vi.fn(async (path: string) => {
 			visible.delete(path);
+			hidden.delete(path);
 		}),
 	};
 	const host = {
@@ -649,6 +650,68 @@ describe("ObsidianTextVault", () => {
 		);
 		engine.close();
 		journal.close();
+	});
+
+	it("routes canonical case aliases through adapter effects without changing path spelling", async () => {
+		const fake = makeRecoveryHostVault();
+		const path = ".ObSiDiAn/PlUgInS/test/main.js";
+		fake.directories.add(".ObSiDiAn");
+		fake.directories.add(".ObSiDiAn/PlUgInS");
+		fake.directories.add(".ObSiDiAn/PlUgInS/test");
+		const initial = new Uint8Array([0, 255, 7]);
+		fake.hidden.set(path, { bytes: initial.slice(), mtime: 1 });
+		const policy = {
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: true,
+		};
+		const vault = new ObsidianTextVault(
+			fake.host as unknown as Vault,
+			() => policy,
+		);
+
+		expect(await vault.readBinary(path)).toEqual(initial);
+		expect(await vault.stat(path)).toEqual({ mtime: 1, size: initial.length });
+		expect(await vault.size(path)).toBe(initial.length);
+		const replacement = new Uint8Array([9, 0, 250]);
+		expect(await vault.modifyBinary(path, replacement, initial)).toBe(true);
+		expect(fake.adapter.writeBinary).toHaveBeenCalledWith(
+			path,
+			replacement.slice().buffer,
+		);
+		const createdPath = ".ObSiDiAn/PlUgInS/test/data.json";
+		expect(await vault.createBinary(createdPath, initial)).toBe(true);
+		expect(fake.adapter.writeBinary).toHaveBeenLastCalledWith(
+			createdPath,
+			initial.slice().buffer,
+		);
+		expect(await vault.trashBinary(path, replacement)).toBe(true);
+		expect(fake.adapter.trashLocal).toHaveBeenCalledWith(path);
+	});
+
+	it("does not route hard-excluded settings aliases to adapter effects", async () => {
+		const fake = makeRecoveryHostVault();
+		const path = ".OBSIDIAN/WORKSPACE.json";
+		fake.directories.add(".OBSIDIAN");
+		fake.hidden.set(path, { bytes: new Uint8Array([1]), mtime: 1 });
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault, () => ({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		}));
+		const statCalls = fake.adapter.stat.mock.calls.length;
+
+		expect(await vault.readBinary(path)).toBeNull();
+		expect(await vault.stat(path)).toBeNull();
+		expect(await vault.size(path)).toBeNull();
+		expect(await vault.createBinary(path, new Uint8Array([2]))).toBe(false);
+		expect(await vault.modifyBinary(path, new Uint8Array([2]))).toBe(false);
+		expect(await vault.trashBinary(path, new Uint8Array([1]))).toBe(false);
+		expect(fake.adapter.stat).toHaveBeenCalledTimes(statCalls);
+		expect(fake.adapter.writeBinary).not.toHaveBeenCalled();
+		expect(fake.adapter.trashLocal).not.toHaveBeenCalled();
 	});
 
 	it("reads and writes exact selected unindexed settings bytes through the adapter", async () => {

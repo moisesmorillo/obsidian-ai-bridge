@@ -3,6 +3,7 @@ import type { DeviceJournal } from "@plugin/sync/device-journal";
 import {
 	classifyEnrollmentPath,
 	DEFAULT_SETTINGS_SYNC_POLICY,
+	hasCanonicalSettingsRoot,
 	type SettingsSyncPolicy,
 	settingsConflictExtension,
 } from "@plugin/sync/enrollment-scope";
@@ -579,7 +580,7 @@ export class TextApplyEngine {
 				});
 				return;
 			}
-			if (created && change.path.startsWith(".obsidian/"))
+			if (created && hasCanonicalSettingsRoot(change.path))
 				await this.preserveSettingsWriteRace(change, [remote.bytes, created]);
 			await this.activeJournal.clearExpectedWrite(change.path);
 			this.assertOpen();
@@ -613,7 +614,7 @@ export class TextApplyEngine {
 			const changed = await this.vault.readBinary(change.path);
 			this.assertOpen();
 			if (!changed) throw new Error("Changed binary disappeared during apply");
-			if (change.path.startsWith(".obsidian/")) {
+			if (hasCanonicalSettingsRoot(change.path)) {
 				await this.preserveSettingsWriteRace(change, [
 					local,
 					changed,
@@ -738,7 +739,7 @@ export class TextApplyEngine {
 			(await digestBytes(latest)) !== observedHash ||
 			!sameStat(beforeWrite, await this.vault.stat(change.path))
 		) {
-			if (change.path.startsWith(".obsidian/"))
+			if (hasCanonicalSettingsRoot(change.path))
 				await this.preserveSettingsWriteRace(change, [
 					local,
 					observed,
@@ -773,7 +774,7 @@ export class TextApplyEngine {
 		const readBack = await this.vault.readBinary(change.path);
 		this.assertOpen();
 		if (!readBack || (await digestBytes(readBack)) !== change.hash) {
-			if (change.path.startsWith(".obsidian/"))
+			if (hasCanonicalSettingsRoot(change.path))
 				await this.preserveSettingsWriteRace(change, [
 					observed,
 					remote.bytes,
@@ -799,7 +800,7 @@ export class TextApplyEngine {
 		change: ChangeEntry,
 		versions: Uint8Array[],
 	): Promise<void> {
-		if (!change.path.startsWith(".obsidian/")) return;
+		if (!hasCanonicalSettingsRoot(change.path)) return;
 		await this.activeJournal.recordAttention(
 			change.path,
 			"Settings changed during guarded write. Observed versions need review",
@@ -910,7 +911,7 @@ export class TextApplyEngine {
 	/** Holds remote settings changes while their local category is disabled. */
 	private isSettingsPathDisabled(path: string): boolean {
 		return (
-			path.startsWith(".obsidian/") &&
+			hasCanonicalSettingsRoot(path) &&
 			classifyEnrollmentPath(path, 0, this.settingsPolicy) === "excluded"
 		);
 	}
@@ -1506,7 +1507,7 @@ export class TextApplyEngine {
 				(await digestBytes(writtenBytes)) !== change.hash
 			) {
 				await this.activeJournal.clearExpectedWrite(change.path);
-				if (change.path.startsWith(".obsidian/") && remote.kind === "blob")
+				if (hasCanonicalSettingsRoot(change.path) && remote.kind === "blob")
 					await this.preserveSettingsWriteRace(change, [
 						remote.bytes,
 						...(destination ? [destination] : []),
@@ -3240,9 +3241,9 @@ function conflictName(
 	rev: number,
 	timestamp: number,
 ): string {
-	const isSettingsPath = path.startsWith(".obsidian/");
+	const isSettingsPath = hasCanonicalSettingsRoot(path);
 	const conflictSource = isSettingsPath
-		? path.slice(".obsidian/".length).replaceAll("/", " — ")
+		? path.split("/").slice(1).join("/").replaceAll("/", " — ")
 		: path;
 	const slash = conflictSource.lastIndexOf("/");
 	const directory = isSettingsPath

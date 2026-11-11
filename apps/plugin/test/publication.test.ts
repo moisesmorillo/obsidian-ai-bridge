@@ -694,7 +694,7 @@ describe("PublicationController", () => {
 			async () => {},
 			policy,
 		);
-		const path = ".obsidian/app.json";
+		const path = ".ObSiDiAn/app.json";
 		vault.binaryFiles.set(path, new Uint8Array([0, 255, 7]));
 		await controller.scan();
 		const queued = journal
@@ -738,7 +738,7 @@ describe("PublicationController", () => {
 			policy,
 		);
 		const readAuthority = vi.spyOn(remote, "readAuthority");
-		const path = ".obsidian/app.json";
+		const path = ".OBSIDIAN/app.json";
 		await journal.setBase(path, {
 			deleted: false,
 			rev: 1,

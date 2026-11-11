@@ -33,7 +33,11 @@ describe("classifyEnrollmentPath", () => {
 		[".obsidian/plugins/x.md", 24, "excluded"],
 		[".trash/old.md", 24, "excluded"],
 		[".vaultwire/pending/x", 24, "excluded"],
+		[".TRASH/private.md", 24, "excluded"],
+		[".VAULTWIRE/private.md", 24, "excluded"],
 		["notes/.vaultwire/note.md", 24, "text"],
+		[".OBSIDIAN/app.json", 4, "excluded"],
+		[".ObSiDiAn/app.json", 4, "excluded"],
 		["notes/.DS_Store", 24, "excluded"],
 		["notes/photo.icloud", 24, "excluded"],
 		["notes/binary.exe", 24, "excluded"],
@@ -74,6 +78,9 @@ describe("settings category enrollment", () => {
 		[".obsidian/plugins/tasks/main.js", "communityPlugins"],
 		[".obsidian/plugins/tasks/styles.css", "communityPlugins"],
 		[".obsidian/plugins/tasks/data.json", "communityPlugins"],
+		[".ObSiDiAn/appearance.json", "appearance"],
+		[".OBSIDIAN/APP.JSON", "core"],
+		[".ObSiDiAn/PLUGINS/Tasks/MAIN.JS", "communityPlugins"],
 	] as const)(
 		"admits %s only when its %s category is enabled",
 		(path, category) => {
@@ -95,6 +102,8 @@ describe("settings category enrollment", () => {
 	it.each([
 		".obsidian/themes/Example/.DS_Store",
 		".obsidian/themes/Example/font.icloud",
+		".OBSIDIAN/THEMES/Example/.DS_STORE",
+		".OBSIDIAN/THEMES/Example/font.ICLOUD",
 		".obsidian/plugins/VAULTWIRE/main.js",
 		".obsidian/PLUGINS/VAULTWIRE/data.json",
 		".obsidian/workspace.json",
@@ -104,6 +113,11 @@ describe("settings category enrollment", () => {
 		".obsidian/cache2/cache.db",
 		".obsidian/graph.json",
 		".obsidian/plugins/tasks/node_modules/pkg/main.js",
+		".OBSIDIAN/WORKSPACE.json",
+		".OBSIDIAN/PLUGINS/VAULTWIRE/main.js",
+		".OBSIDIAN/CACHE/cache.db",
+		".OBSIDIAN/GRAPH.JSON",
+		".OBSIDIAN/PLUGINS/tasks/NODE_MODULES/pkg/main.js",
 	] as const)("always excludes %s", (path) => {
 		expect(
 			classifyEnrollmentPath(path, 12, {
@@ -146,6 +160,9 @@ describe("settings category enrollment", () => {
 		).toBe("blob");
 		expect(
 			classifyEnrollmentPath(".obsidian/plugins/x/main.js", 25_000_001, policy),
+		).toBe("unsupported");
+		expect(
+			classifyEnrollmentPath(".OBSIDIAN/PLUGINS/X/MAIN.JS", 25_000_001, policy),
 		).toBe("unsupported");
 	});
 });

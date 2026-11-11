@@ -62,6 +62,8 @@ export interface TextVault {
 	create(path: string, text: string): Promise<boolean>;
 	/** Moves a current file to Obsidian trash without permanent deletion. */
 	trash(path: string, expected: string): Promise<boolean>;
+	/** Removes ancestor folders of a vacated path while each one is empty on disk. */
+	pruneEmptyParents?(path: string): Promise<void>;
 	/** Renames without link rewriting when source text and destination absence still hold. */
 	rename(from: string, to: string, expected: string): Promise<boolean>;
 	/** Renames exact binary bytes only while the destination remains absent. */
@@ -244,6 +246,7 @@ export class TextApplyEngine {
 		contentKind?: "text" | "blob",
 	): Promise<void> {
 		let activeChange = change;
+		const presentBefore = await this.vacatedPathPresent(change);
 		try {
 			try {
 				await this.applyEntry(change, contentKind);
@@ -255,6 +258,47 @@ export class TextApplyEngine {
 		} catch (error) {
 			await this.recordApplyFailure(activeChange, error);
 			throw error;
+		}
+		if (presentBefore) await this.pruneVacatedFolders(activeChange);
+	}
+
+	/** Returns the local path that a delete or rename can vacate, or null for a put. */
+	private vacatedPath(change: ChangeEntry): string | null {
+		if (change.op === "delete") return change.path;
+		if (change.op === "rename") return change.from_path;
+		return null;
+	}
+
+	/** Reports whether the path that this change can vacate exists locally before the apply. */
+	private async vacatedPathPresent(change: ChangeEntry): Promise<boolean> {
+		const vacated = this.vacatedPath(change);
+		if (vacated === null) return false;
+		try {
+			return (await this.vault.size(vacated)) !== null;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Removes folders that this remote delete or rename emptied on this device.
+	 *
+	 * The caller runs it only when the vacated path existed before the apply. So an
+	 * echo of this device's own delete or rename, a replay, or a tombstone for an
+	 * absent file never removes a folder that the user kept. It also needs an empty
+	 * pending apply and an absent vacated path, so a conflict or a retry keeps its
+	 * folder. The vault removes only folders that are empty on disk. Folders have no
+	 * sync identity, so a failure here never fails the apply.
+	 */
+	private async pruneVacatedFolders(change: ChangeEntry): Promise<void> {
+		const vacated = this.vacatedPath(change);
+		if (vacated === null) return;
+		try {
+			if (this.activeJournal.snapshot().pending_apply.length > 0) return;
+			if ((await this.vault.size(vacated)) !== null) return;
+			await this.vault.pruneEmptyParents?.(vacated);
+		} catch {
+			// Folder cleanup is cosmetic. The settled apply stays durable.
 		}
 	}
 

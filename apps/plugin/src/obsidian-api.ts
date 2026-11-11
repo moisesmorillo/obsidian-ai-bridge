@@ -11,4 +11,5 @@ export {
 	requestUrl,
 	Setting,
 	TFile,
+	TFolder,
 } from "obsidian";

@@ -53,6 +53,8 @@ class MemoryVault implements TextVault {
 	refuseTrash: ((path: string) => boolean) | null = null;
 	failNextBinaryModify = false;
 	failBinaryModifyPath: string | null = null;
+	prunedParents: string[] = [];
+	failPrune = false;
 	/** Reports synthetic placeholder metadata without reading file bytes. */
 	async isUnavailable(path: string): Promise<boolean> {
 		return this.unavailable.has(path);
@@ -185,6 +187,11 @@ class MemoryVault implements TextVault {
 		if (this.files.has(path)) return false;
 		this.files.set(path, text);
 		return true;
+	}
+	/** Records each vacated path and can fail to prove pruning stays best effort. */
+	async pruneEmptyParents(path: string): Promise<void> {
+		if (this.failPrune) throw new Error("folder removal failed");
+		this.prunedParents.push(path);
 	}
 	/** Removes a path to emulate an accepted local-trash operation. */
 	async trash(path: string, _expected: string): Promise<boolean> {
@@ -601,6 +608,170 @@ describe("TextApplyEngine", () => {
 			hash: localHash,
 		});
 		expect(saved.expected_writes[path]).toBeUndefined();
+	});
+
+	it("prunes empty parent folders after a clean remote delete settles", async () => {
+		const path = change.path;
+		const local = "clean local bytes";
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash(local),
+		});
+		vault.files.set(path, local);
+
+		await engine.apply({
+			...change,
+			op: "delete",
+			hash: "",
+			etag: `"${epoch}.2"`,
+		});
+
+		expect(vault.files.has(path)).toBe(false);
+		expect(journal.snapshot().pending_apply).toHaveLength(0);
+		expect(vault.prunedParents).toEqual([path]);
+	});
+
+	it("keeps the remote delete durable when folder pruning fails", async () => {
+		const path = change.path;
+		const local = "clean local bytes";
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash(local),
+		});
+		vault.files.set(path, local);
+		vault.failPrune = true;
+
+		await engine.apply({
+			...change,
+			op: "delete",
+			hash: "",
+			etag: `"${epoch}.2"`,
+		});
+
+		expect(journal.snapshot().pending_apply).toHaveLength(0);
+		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
+		expect(journal.snapshot().attention).toEqual([]);
+	});
+
+	it("prunes the source parents after a remote rename settles", async () => {
+		const source = "old-folder/a.md";
+		const text = "moved bytes";
+		const textHash = await hash(text);
+		await journal.resetEpoch(epoch);
+		await journal.setBase(source, { deleted: false, rev: 1, hash: textHash });
+		vault.files.set(source, text);
+		engine = makeEngine(journal, vault, {
+			read: async (_path, _epoch, rev) => (rev === 3 ? text : null),
+		});
+
+		await engine.apply({
+			...change,
+			op: "rename",
+			path: "new-folder/a.md",
+			hash: textHash,
+			etag: `"${epoch}.3"`,
+			from_path: source,
+			from_etag: `"${epoch}.2"`,
+		});
+
+		expect(vault.files.get("new-folder/a.md")).toBe(text);
+		expect(vault.files.has(source)).toBe(false);
+		expect(vault.prunedParents).toEqual([source]);
+	});
+
+	it("does not prune folders for an echo of this device's own delete", async () => {
+		const path = change.path;
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, { deleted: true, rev: 2 });
+
+		await engine.apply({
+			...change,
+			op: "delete",
+			hash: "",
+			etag: `"${epoch}.2"`,
+		});
+
+		expect(journal.snapshot().pending_apply).toHaveLength(0);
+		expect(vault.prunedParents).toEqual([]);
+	});
+
+	it("does not prune folders for a tombstone of an already absent file", async () => {
+		const path = change.path;
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash("gone"),
+		});
+
+		await engine.apply({
+			...change,
+			op: "delete",
+			hash: "",
+			etag: `"${epoch}.2"`,
+		});
+
+		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
+		expect(vault.prunedParents).toEqual([]);
+	});
+
+	it("does not prune folders for an echo of this device's own rename", async () => {
+		const text = "moved bytes";
+		const textHash = await hash(text);
+		await journal.resetEpoch(epoch);
+		await journal.setBase("old-folder/a.md", { deleted: true, rev: 2 });
+		await journal.setBase("new-folder/a.md", {
+			deleted: false,
+			rev: 3,
+			hash: textHash,
+		});
+		vault.files.set("new-folder/a.md", text);
+
+		await engine.apply({
+			...change,
+			op: "rename",
+			path: "new-folder/a.md",
+			hash: textHash,
+			etag: `"${epoch}.3"`,
+			from_path: "old-folder/a.md",
+			from_etag: `"${epoch}.2"`,
+		});
+
+		expect(vault.files.get("new-folder/a.md")).toBe(text);
+		expect(vault.prunedParents).toEqual([]);
+	});
+
+	it("does not prune folders after a remote put", async () => {
+		await journal.resetEpoch(epoch);
+
+		await engine.apply({ ...change, hash: await hash(remoteText) });
+
+		expect(vault.files.get(change.path)).toBe(remoteText);
+		expect(vault.prunedParents).toEqual([]);
+	});
+
+	it("does not prune folders after a failed delete", async () => {
+		const path = change.path;
+		const local = "current local bytes";
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash(local),
+		});
+		vault.files.set(path, local);
+		vault.unavailable.add(path);
+
+		await expect(
+			engine.apply({ ...change, op: "delete", hash: "", etag: `"${epoch}.2"` }),
+		).rejects.toThrow("unavailable");
+
+		expect(vault.files.get(path)).toBe(local);
+		expect(vault.prunedParents).toEqual([]);
 	});
 
 	it("does not trash a text delete when a placeholder appears after local read", async () => {

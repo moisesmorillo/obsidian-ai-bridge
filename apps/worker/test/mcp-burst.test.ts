@@ -9,7 +9,10 @@ import {
 	McpToolErrorSchema,
 	MutationSuccessSchema,
 } from "@vaultwire/protocol";
-import { admissionByteSnapshot } from "@worker/application/admission-budget";
+import {
+	admissionByteSnapshot,
+	MCP_ADMISSION_WAIT_MS,
+} from "@worker/application/admission-budget";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
@@ -152,6 +155,13 @@ function requestFor(operation: MigrationOperation, id: number) {
 	};
 }
 
+/**
+ * Extra time in milliseconds that one request may take after the MCP admission wait.
+ * It covers the operation work, the response, and timer jitter on shared CI runners.
+ * The spec bounds only the admission wait, so the test bound is the wait plus this margin.
+ */
+const RESPONSE_MARGIN_MS = 1_000;
+
 /** Fail on uncertain results. Only explicit admission refusal returns false to the fixture retry driver. */
 async function runOperation(
 	worker: Awaited<ReturnType<typeof fixture>>["worker"],
@@ -161,7 +171,9 @@ async function runOperation(
 	const input = requestFor(operation, id);
 	const started = Date.now();
 	const response = await worker.fetch(input.request, env);
-	expect(Date.now() - started).toBeLessThanOrEqual(2_000);
+	expect(Date.now() - started).toBeLessThanOrEqual(
+		MCP_ADMISSION_WAIT_MS + RESPONSE_MARGIN_MS,
+	);
 	if (response.status === 429) {
 		expect(Number(response.headers.get("retry-after"))).toBeGreaterThanOrEqual(
 			2,
